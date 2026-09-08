@@ -9,6 +9,27 @@ Native Kotlin + ARCore. Fully local: no network calls, no cloud anchors, no mode
 downloads. Optimised for throughput; power consumption is deliberately not a
 consideration.
 
+## Install
+
+**[Download the latest APK][latest]** and open it on the device.
+
+[![Latest release](https://img.shields.io/github/v/release/gwystylain/AR-PuzzleSolver?label=latest%20APK&sort=semver)][latest]
+
+[latest]: https://github.com/gwystylain/AR-PuzzleSolver/releases/latest
+
+It needs an arm64 or armv7 Android 8.0+ phone with [Google Play Services for
+AR][arcore] installed — an x86 emulator will not run it, since ARCore ships arm
+ABIs only. Because the APK does not come from the Play Store, Android will ask
+you to allow installing unknown apps for whichever app opened the file.
+
+Nothing leaves the device: no network calls, no cloud anchors, no model
+downloads. The camera permission is the only one requested.
+
+Building it yourself, or cutting a new release, is covered in
+[docs/RELEASING.md](docs/RELEASING.md).
+
+[arcore]: https://play.google.com/store/apps/details?id=com.google.ar.core
+
 ## The core idea
 
 A wall that curves horizontally is a **developable surface** — a vertical extrusion

@@ -20,6 +20,24 @@ android {
         }
     }
 
+    // Release signing comes from the environment, never from a file in the repo.
+    // CI exports these four from repo secrets; see .github/workflows/release.yml.
+    // When they are absent -- any local build -- signingConfigs stays empty and the
+    // release build falls back to the debug key below, so `assembleRelease` still
+    // produces something installable on your own device.
+    val keystorePath: String? = System.getenv("SIGNING_KEYSTORE_PATH")
+
+    signingConfigs {
+        if (keystorePath != null) {
+            create("release") {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("SIGNING_STORE_PASSWORD")
+                keyAlias = System.getenv("SIGNING_KEY_ALIAS")
+                keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         debug {
             isDebuggable = true
@@ -28,6 +46,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
 

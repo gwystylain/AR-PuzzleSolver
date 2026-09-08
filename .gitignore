@@ -16,3 +16,9 @@ local.properties
 # core/ and the docs cite them by name, but every test runs off the .ppm/.pgm
 # fixtures under core/src/test/resources, so the build needs none of them.
 /testVideos
+
+# Signing keys. CI gets these from repo secrets; see docs/RELEASING.md. A keystore
+# must never land in the repo -- this one is public, and the release signing key
+# cannot be rotated without breaking updates for everyone already installed.
+*.jks
+*.keystore
