@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- ARCore needs OpenGL ES 3.0 and a supported device. "required" keeps the app
+         off hardware where it could never work rather than failing at runtime. -->
+    <uses-feature android:name="android.hardware.camera.ar" android:required="true" />
+    <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.PuzzleSolver">
+
+        <!-- Tells the Play Store this app requires ARCore, so it is installed with us. -->
+        <meta-data android:name="com.google.ar.core" android:value="required" />
+
+        <!-- Hands the exported run bundle to the share sheet. Scoped to exports/ only;
+             see res/xml/file_paths.xml. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <!--
+          screenOrientation is fullUser, not fullSensor. Both allow all four
+          orientations, but fullSensor follows the accelerometer even when the user has
+          locked rotation off. On a phone locked to portrait that means every other app
+          stays portrait while this one flips to landscape as soon as it is tilted up at
+          a wall, which is the one posture this app is always held in. fullUser behaves
+          exactly like fullSensor where the user has auto-rotate on, and honours the
+          lock where they do not.
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:screenOrientation="fullUser"
+            android:theme="@style/Theme.PuzzleSolver">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

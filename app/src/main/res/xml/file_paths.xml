@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  What the share sheet is allowed to hand out.
+
+  Only exports/, and deliberately not the whole files directory: the bundle is a
+  deliberate, reviewed copy of the run, and a provider scoped to the parent would let
+  any receiving app be granted a URI to the live canvas dump or a half-written frame.
+-->
+<paths>
+    <external-files-path name="exports" path="exports/" />
+</paths>

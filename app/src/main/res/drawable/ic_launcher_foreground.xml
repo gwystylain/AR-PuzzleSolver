@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- A 3x3 grid with one cell filled: a puzzle, mid-solve. -->
+    <path android:fillColor="#4C8DFF" android:pathData="M30,30h16v16h-16z" />
+    <path android:fillColor="#2C4A7A" android:pathData="M50,30h16v16h-16z" />
+    <path android:fillColor="#2C4A7A" android:pathData="M30,50h16v16h-16z" />
+    <path android:fillColor="#33DD77" android:pathData="M50,50h16v16h-16z" />
+    <path android:fillColor="#2C4A7A" android:pathData="M70,50h16v16h-16z" />
+    <path android:fillColor="#2C4A7A" android:pathData="M50,70h16v16h-16z" />
+</vector>
