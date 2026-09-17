@@ -117,10 +117,68 @@ object GemFixture {
         40.6f, 587.2f,
     )
 
+    /**
+     * The wall at the exposure the app actually runs at: the 1/250 s LED-wall preset,
+     * from the run of 2026-09-04.
+     *
+     * A crop of the first frame in which anything matched. This is the frame the other
+     * two fixtures were always standing in for. [load] is a clip shot by the camera app
+     * at its own reduced exposure, with the rings bloomed into soft discs; [loadBlown] is
+     * two stops over. Here the LEDs resolve as individual dots with the panel black
+     * between them, every gem reads, nothing clips, and the wash figure sits at 1-2%.
+     * It is also where the next limit showed up: at this exposure each ring's glow
+     * spills onto the ring inside it, red under green reads orange, and orange sits on
+     * the red/yellow boundary. Thirty-seven gems were labelled by eye at 2x to 6x zoom.
+     */
+    const val PRESET_PITCH = 123.7f
+
+    val PRESET_LABELLED = listOf(
+        Labelled(228.0f, 60.0f, "green", "red", "green"),
+        Labelled(375.7f, 66.4f, "green", "green", "red"),
+        Labelled(517.8f, 72.3f, "green", "red", "green"),
+        Labelled(656.0f, 78.7f, "green", "red", "red"),
+        Labelled(235.6f, 209.1f, "green", "green", "green"),
+        Labelled(377.6f, 213.0f, "green", "green", "green"),
+        Labelled(514.7f, 216.2f, "green", "red", "green"),
+        Labelled(648.9f, 219.6f, "green", "green", "green"),
+        Labelled(779.4f, 223.0f, "green", "red", "green"),
+        Labelled(242.4f, 349.4f, "green", "red", "red"),
+        Labelled(380.9f, 350.1f, "green", "red", "green"),
+        Labelled(514.0f, 353.2f, "green", "green", "green"),
+        Labelled(643.5f, 354.4f, "red", "red", "red"),
+        Labelled(768.3f, 355.4f, "green", "green", "green"),
+        Labelled(248.1f, 479.7f, "green", "green", "green"),
+        Labelled(382.6f, 479.8f, "green", "green", "red"),
+        Labelled(512.1f, 479.7f, "green", "green", "green"),
+        Labelled(636.6f, 478.9f, "green", "green", "green"),
+        Labelled(758.8f, 477.9f, "green", "red", "red"),
+        Labelled(251.1f, 605.7f, "green", "red", "red"),
+        Labelled(384.0f, 603.5f, "green", "red", "red"),
+        Labelled(511.1f, 599.9f, "green", "green", "green"),
+        Labelled(634.3f, 596.6f, "green", "green", "red"),
+        Labelled(754.0f, 595.8f, "red", "yellow", "yellow"),
+        Labelled(252.2f, 735.8f, "green", "green", "green"),
+        Labelled(384.1f, 731.3f, "green", "red", "green"),
+        Labelled(512.8f, 725.7f, "green", "green", "red"),
+        Labelled(636.5f, 721.3f, "green", "green", "red"),
+        Labelled(757.1f, 718.0f, "green", "green", "red"),
+        Labelled(254.1f, 868.2f, "green", "green", "red"),
+        Labelled(387.0f, 862.2f, "green", "red", "green"),
+        Labelled(515.8f, 855.9f, "green", "green", "red"),
+        Labelled(640.8f, 851.1f, "green", "green", "red"),
+        Labelled(763.1f, 845.3f, "green", "red", "green"),
+        Labelled(66.1f, 950.7f, "red", "green", "green"),
+        Labelled(644.5f, 978.3f, "green", "red", "green"),
+        Labelled(766.8f, 971.5f, "green", "green", "green"),
+    )
+
     fun load(): CanvasView = load("gems-wall.ppm")
 
     /** The 2026-08-20 frame. See [BLOWN_PITCH]. */
     fun loadBlown(): CanvasView = load("gems-wall-blown.ppm")
+
+    /** The 2026-09-04 frame, at the preset. See [PRESET_PITCH]. */
+    fun loadPreset(): CanvasView = load("gems-wall-preset.ppm")
 
     private fun load(resource: String): CanvasView {
         val stream = GemFixture::class.java.classLoader!!.getResourceAsStream(resource)

@@ -15,6 +15,7 @@ class GemReader {
 
     private val votes = FloatArray(GemColour.ALL.size)
     private val scratch = FloatArray(3)
+    private val wash = FloatArray(3)
 
     /**
      * @param pattern the three rings, with [GemColour.UNKNOWN] where a ring could not
@@ -50,13 +51,21 @@ class GemReader {
             view, cx, cy, pitch * GemPalette.OUTER_INNER, pitch * GemPalette.OUTER_OUTER,
             votes, scratch,
         )
+        // Each inner ring is read with its neighbour's glow taken out, and the glow is
+        // measured rather than modelled: the gap between two rings has no LEDs in it,
+        // so whatever colour it carries is spill. Outermost first, because the outer
+        // ring has nothing outside it and reads clean, and each ring's gap is then the
+        // evidence for the ring inside. See GemPalette.MIDDLE_GAP_INNER for the numbers
+        // and the run that produced them.
+        washFrom(view, cx, cy, pitch * GemPalette.MIDDLE_GAP_INNER, pitch * GemPalette.MIDDLE_GAP_OUTER)
         val middle = GemPalette.classifyAnnulus(
             view, cx, cy, pitch * GemPalette.MIDDLE_INNER, pitch * GemPalette.MIDDLE_OUTER,
-            votes, scratch,
+            votes, scratch, wash[0], wash[1], wash[2],
         )
+        washFrom(view, cx, cy, pitch * GemPalette.CENTRE_GAP_INNER, pitch * GemPalette.CENTRE_GAP_OUTER)
         val centre = GemPalette.classifyAnnulus(
             view, cx, cy, pitch * GemPalette.CENTRE_INNER, pitch * GemPalette.CENTRE_OUTER,
-            votes, scratch,
+            votes, scratch, wash[0], wash[1], wash[2],
         )
         val pattern = GemPattern(
             outer = outer.colour,
@@ -73,5 +82,21 @@ class GemReader {
             washedOut = washed,
             lit = outer.lit || middle.lit || centre.lit,
         )
+    }
+
+    /**
+     * Leaves the glow to subtract from the ring inside this gap in [wash], scaled and
+     * ready. Zero when the gap is too small or too clipped to say, which reads the ring
+     * exactly as before.
+     */
+    private fun washFrom(view: CanvasView, cx: Float, cy: Float, inner: Float, outer: Float) {
+        val n = view.meanRgbInAnnulus(cx, cy, inner, outer, wash, scratch = scratch)
+        if (n < GemPalette.MIN_SAMPLES) {
+            wash.fill(0f)
+            return
+        }
+        wash[0] *= GemPalette.WASH_FRACTION
+        wash[1] *= GemPalette.WASH_FRACTION
+        wash[2] *= GemPalette.WASH_FRACTION
     }
 }

@@ -1,9 +1,23 @@
 # Releasing
 
-A tagged push builds a signed APK and attaches it to a GitHub Release, so the
-[latest release][latest] page is always a working download link.
+Every push to `main` builds the APK and attaches it to a rolling pre-release
+tagged `latest`, so the [latest build][rolling] link is always the newest code. A
+tagged push additionally cuts a proper, versioned release, so the [latest
+release][latest] page is always a working download link for that.
 
+[rolling]: https://github.com/gwystylain/AR-PuzzleSolver/releases/download/latest/PuzzleSolver-latest.apk
 [latest]: https://github.com/gwystylain/AR-PuzzleSolver/releases/latest
+
+## The rolling build
+
+Nothing to do: push to `main` and a few minutes later the `latest` pre-release
+has a fresh `PuzzleSolver-latest.apk`. The tag is moved to the new commit and the
+file replaced, so the download URL never changes. Docs-only pushes are skipped.
+
+Until the signing key below is set up, that APK is signed with the debug key.
+It installs fine, but Android will not upgrade it to a release-signed build (or
+back) without an uninstall first, so once the key exists every installed copy of
+the debug-signed one has to be removed by hand. Set the key up early.
 
 ## One-time setup: the signing key
 
@@ -58,9 +72,9 @@ If the tests fail, no release is created.
 
 ## Checking the pipeline without releasing
 
-"Run workflow" on the [Release APK action][action] builds from a branch without
-a tag. It skips signing and the release step, and leaves an unsigned APK as a
-workflow artifact — enough to confirm the build works, not enough to install.
+"Run workflow" on the [Release APK action][action] builds from any branch
+without touching either release. The APK lands as a workflow artifact, signed
+with the release key if the secrets are set and the debug key otherwise.
 
 [action]: https://github.com/gwystylain/AR-PuzzleSolver/actions/workflows/release.yml
 

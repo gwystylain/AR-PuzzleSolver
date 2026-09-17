@@ -1,26 +1,58 @@
-# Builds a signed release APK and publishes it to a GitHub Release.
+# Builds the release APK and puts it somewhere it can be downloaded.
 #
-# Triggered by pushing a version tag:
+# Two ways in:
 #
-#     git tag v0.1.0 && git push origin v0.1.0
+#   - Every push to main rebuilds the APK and attaches it to a rolling pre-release
+#     tagged `latest`, so this URL is always the newest build of main:
 #
-# The APK is attached to the release, so the "download the latest version" link
-# in the README (releases/latest) always resolves to the newest build.
+#         https://github.com/gwystylain/AR-PuzzleSolver/releases/download/latest/PuzzleSolver-latest.apk
+#
+#   - Pushing a version tag cuts a proper release:
+#
+#         git tag v0.1.0 && git push origin v0.1.0
+#
+#     The APK is attached to it, so the "download the latest version" link in the
+#     README (releases/latest) resolves to the newest *tagged* build. The rolling
+#     one is a pre-release and never claims that slot.
+#
+# Signing: when the four SIGNING_* secrets are set (docs/RELEASING.md) every build
+# is signed with the release key. Without them a main build falls back to the
+# debug key -- installable, but it will not upgrade over a release-signed install
+# and vice versa -- while a tagged release refuses to build at all, since shipping
+# a "release" nobody can update from would be worse than shipping nothing.
 name: Release APK
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
-  # Lets you produce a build from the Actions tab without cutting a tag. The
-  # release step is skipped for these -- the APK lands as a workflow artifact.
+    # Docs-only pushes do not need a new APK. (Not applied to tags.)
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+  # Lets you produce a build from the Actions tab off any branch. No release is
+  # touched for these -- the APK lands as a workflow artifact.
   workflow_dispatch:
 
 permissions:
-  contents: write # required to create the release and upload the APK
+  contents: write # required to create the release, move the tag and upload the APK
+
+# Two pushes to main in quick succession would otherwise race each other for the
+# rolling release; the newer one wins and the older is stopped.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
+    env:
+      # Secrets are not readable from a step's `if`, so the presence check is
+      # hoisted to a job-level env var that can be.
+      HAS_SIGNING_KEY: ${{ secrets.SIGNING_KEYSTORE_BASE64 != '' }}
+      IS_TAG: ${{ github.ref_type == 'tag' }}
+      IS_MAIN: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -37,22 +69,23 @@ jobs:
       - name: Run tests
         run: ./gradlew test --stacktrace
 
+      - name: Require the signing key for tagged releases
+        if: env.IS_TAG == 'true' && env.HAS_SIGNING_KEY != 'true'
+        run: |
+          echo "::error::SIGNING_KEYSTORE_BASE64 is not set. See docs/RELEASING.md for how to create the keystore and add the four repo secrets."
+          exit 1
+
       # The keystore is held as a base64 secret and written to a file that lives
       # only for this job, on an ephemeral runner. RUNNER_TEMP is outside the
       # workspace, so it can never be picked up by a later step or archived.
       - name: Decode signing keystore
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.HAS_SIGNING_KEY == 'true'
         env:
           KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
-        run: |
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "::error::SIGNING_KEYSTORE_BASE64 is not set. See docs/RELEASING.md for how to create the keystore and add the four repo secrets."
-            exit 1
-          fi
-          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+        run: echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
 
-      - name: Build release APK
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Build release APK (release key)
+        if: env.HAS_SIGNING_KEY == 'true'
         env:
           SIGNING_KEYSTORE_PATH: ${{ runner.temp }}/release.jks
           SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
@@ -60,29 +93,33 @@ jobs:
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: ./gradlew :app:assembleRelease --stacktrace
 
-      # Unsigned build for manual runs, so the workflow is still exercisable
-      # end to end without handing it the signing key.
-      - name: Build unsigned release APK (manual runs)
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+      # With no SIGNING_* in the environment, app/build.gradle.kts signs the
+      # release build with the debug key, which is enough to install.
+      - name: Build release APK (debug key)
+        if: env.HAS_SIGNING_KEY != 'true'
         run: ./gradlew :app:assembleRelease --stacktrace
 
-      # Name the file after the tag so downloads are self-identifying rather than
-      # eight copies of app-release.apk in a downloads folder.
+      # Name the file so downloads are self-identifying rather than eight copies
+      # of app-release.apk in a downloads folder. The main build keeps a fixed
+      # name so its download URL never changes.
       - name: Stage APK
         id: stage
         run: |
           set -euo pipefail
           apk=$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -print -quit)
           if [ -z "$apk" ]; then echo "::error::no APK produced"; exit 1; fi
-          version="${GITHUB_REF_NAME#v}"
-          [ "$GITHUB_REF_TYPE" = tag ] || version="$(git rev-parse --short HEAD)"
-          name="PuzzleSolver-${version}.apk"
+          if [ "$IS_TAG" = true ]; then
+            name="PuzzleSolver-${GITHUB_REF_NAME#v}.apk"
+          elif [ "$IS_MAIN" = true ]; then
+            name="PuzzleSolver-latest.apk"
+          else
+            name="PuzzleSolver-$(git rev-parse --short HEAD).apk"
+          fi
           cp "$apk" "$name"
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "Built $name ($(du -h "$name" | cut -f1))"
 
       - name: Verify APK signature
-        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
           "$apksigner" verify --print-certs "${{ steps.stage.outputs.name }}"
@@ -95,7 +132,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.IS_TAG == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -103,3 +140,34 @@ jobs:
             "${{ steps.stage.outputs.name }}" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes
+
+      # The `latest` tag is moved to this commit and the APK on its release is
+      # replaced, so the release page and the download URL stay put while the
+      # file behind them changes. Pushing with the workflow's own token does not
+      # start another run.
+      - name: Update rolling `latest` pre-release
+        if: env.IS_MAIN == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APK: ${{ steps.stage.outputs.name }}
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse --short HEAD)
+          subject=$(git log -1 --pretty=%s)
+          if [ "$HAS_SIGNING_KEY" = true ]; then
+            signed="release key"
+          else
+            signed="debug key -- will not upgrade over a tagged release, uninstall first"
+          fi
+          notes=$(printf 'Automatic build of `main` at %s: %s\n\nSigned with the %s.\n\nRebuilt on every push; this is not a versioned release. For those see the tags below.' \
+            "$sha" "$subject" "$signed")
+
+          git tag -f latest
+          git push -f origin latest
+
+          if gh release view latest >/dev/null 2>&1; then
+            gh release upload latest "$APK" --clobber
+            gh release edit latest --prerelease --title "Latest build (main)" --notes "$notes"
+          else
+            gh release create latest "$APK" --prerelease --title "Latest build (main)" --notes "$notes"
+          fi

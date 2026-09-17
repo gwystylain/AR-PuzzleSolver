@@ -11,10 +11,16 @@ consideration.
 
 ## Install
 
-**[Download the latest APK][latest]** and open it on the device.
+**[Download the latest build][rolling]** and open it on the device. It is rebuilt
+automatically on every push to `main`, so that link always has the newest code.
 
-[![Latest release](https://img.shields.io/github/v/release/gwystylain/AR-PuzzleSolver?label=latest%20APK&sort=semver)][latest]
+[![Build](https://github.com/gwystylain/AR-PuzzleSolver/actions/workflows/release.yml/badge.svg?branch=main)][actions]
+[![Latest release](https://img.shields.io/github/v/release/gwystylain/AR-PuzzleSolver?label=latest%20release&sort=semver)][latest]
 
+Versioned releases, when there are any, are on the [releases page][latest].
+
+[rolling]: https://github.com/gwystylain/AR-PuzzleSolver/releases/download/latest/PuzzleSolver-latest.apk
+[actions]: https://github.com/gwystylain/AR-PuzzleSolver/actions/workflows/release.yml
 [latest]: https://github.com/gwystylain/AR-PuzzleSolver/releases/latest
 
 It needs an arm64 or armv7 Android 8.0+ phone with [Google Play Services for
@@ -78,6 +84,11 @@ drawn anywhere on it.
   is empty. The app outlines the lowest number in green and the second lowest in yellow.
   See [docs/TERMINAL_PUZZLE.md](docs/TERMINAL_PUZZLE.md).
 
+A fourth room, **Strategy**, is in the app without any camera at all. Its stages are fixed,
+so the app carries a transcription of every level and works out the pressing order for
+each stage, with the orange tiles numbered clockwise from the top-left corner. See
+[docs/STRATEGY_PUZZLE.md](docs/STRATEGY_PUZZLE.md).
+
 Gems and Terminal do **not** use the AR pipeline. Both own the camera directly and read
 each frame in image space with no pose, wall fit or canvas — Gems because ARCore will not
 let it set an exposure the gem rings are visible at, Terminal because the wall changes
@@ -110,9 +121,11 @@ the probe that isolates it, and what would have to change are in
 
 ## Status
 
-**Builds clean, all unit tests pass. Run on a device for the camera work only** — the
-capture path, the HUD, the Gems controls and the exposure plumbing have all been
-exercised on a CPH2655; nothing has yet been pointed at any of the three rooms.
+**Builds clean, all unit tests pass.** The capture path, the HUD, the Gems controls and
+the exposure plumbing have all been exercised on a CPH2655, and **Terminal has been run
+there end to end** — 32 displays found, the two lowest numbers outlined on the right
+panels, the ranking steady on every heartbeat — against the reference clip played back on
+a monitor. Nothing has yet been pointed at any of the three rooms themselves.
 
 - `./gradlew :core:test` — 137 tests, 137 passing, including a whole terminal wall read
   off a real frame
@@ -124,12 +137,12 @@ Verified against JDK 17.0.20 (Temurin), Gradle 8.13, AGP 8.9.1, compileSdk 35 on
 Windows 11. See [docs/SETUP.md](docs/SETUP.md).
 
 What that does and does not tell you: the geometry, solvers, grid detection and the
-whole capture pipeline compile and the logic that can be tested off-device is tested.
-Nothing has yet pointed a camera at a wall *live*, so the GL shaders have never been
-executed and ARCore has never initialised. Those are the next things to find out.
-Detection and glyph reading are a step further along than the rest: Gems and Terminal
-are both tested against real frames off the real walls, and Terminal's test reads all 96
-digits of a 32-display wall out of one camera frame.
+whole capture pipeline compile, and the logic that can be tested off-device is tested.
+The AR half has still never met a real wall — the mosaic has never accumulated one, and
+no glyph has been classified off a canvas. Detection and glyph reading are further along:
+Gems and Terminal are both tested against real frames off the real walls, Terminal's test
+reads all 96 digits of a 32-display wall out of one camera frame, and Terminal has now
+done the same thing live on the phone.
 
 The two things that will need real-world tuning rather than debugging:
 
@@ -197,6 +210,8 @@ core/                      pure JVM, no Android -- unit-testable in milliseconds
                            -- see docs/GEM_PUZZLE.md
     terminal/              the number wall, also read per frame with no pose
                            -- see docs/TERMINAL_PUZZLE.md
+    strategy/              the orange-tile room: bundled stages and the pressing-order
+                           search, no camera -- see docs/STRATEGY_PUZZLE.md
   PuzzleEngine.kt          detect -> read -> solve, platform-free
 app/
   frame/                   FrameSource: live ARCore, AR dataset replay, plain video,
@@ -206,8 +221,12 @@ app/
   render/                  canvas accumulator, camera background, AR overlay, glyph atlas
   pipeline/                ScanPipeline -- GL thread and solver thread, wired together
                            AutoExposure -- solver-driven exposure search
-  ui/                      Compose HUD, including the Gems target controls
+  ui/                      Compose HUD, including the Gems target controls, and the
+                           Strategy guide screen
   record/                  where recordings live
+tools/
+  strategy/                the room transcriptions and the script that turns them into
+                           core's bundled stage file
 ```
 
 ## Performance shape

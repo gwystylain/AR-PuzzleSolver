@@ -203,18 +203,62 @@ would also keep drawing a rectangle on a display that has already been hit.
 
 ## What it costs per frame
 
-Measured on the 1280×720 fixture on a desktop JVM; the device figures will be larger, but
-the shape of them is what matters:
+| Stage | Desktop JVM, 1280×720 fixture | CPH2655, 1920×1080 live |
+| --- | --- | --- |
+| detect: decimate, blur, threshold, components | ~2 ms | 9–18 ms |
+| read: 96 tiles resampled, opened, normalised, matched | ~5 ms | 14–16 ms |
+| **whole scan** | **~7 ms** | **24–33 ms** |
 
-| Stage | Time |
-| --- | --- |
-| detect: decimate, blur, threshold, components | ~2 ms |
-| read: 96 tiles resampled, opened, normalised, matched | ~5–18 ms |
+The device is four times slower, and it does not matter: scanning runs on the solver
+thread at ~10 Hz against the newest camera frame, on the same handoff Gems uses. Newest
+frame wins; a frame that arrives while one is being read is dropped rather than queued,
+so a slow scan costs latency and never a backlog. A rectangle a tenth of a second late is
+invisible to someone holding a phone.
 
-Scanning runs on the solver thread at ~10 Hz against the newest camera frame, on the same
-handoff Gems uses: newest frame wins, a frame that arrives while one is being read is
-dropped rather than queued. A rectangle a tenth of a second late is invisible to someone
-holding a phone; a rectangle four frames stale is not.
+The frame loop's own work measured 1–2.5 ms. The `fps` in the heartbeat is not the render
+rate: it counts frames that carried a *new camera image*, so on device it reads 21 against
+a render loop running at the display's rate. Gems on the same phone reads 10, so this is
+the Camera2 path's delivery rate rather than anything either mode does.
+
+That gap between the two rates had a consequence, and it is worth writing down because it
+took a person looking at the phone to find it. The loop clears the colour buffer and then
+draws the camera over it, and `nextFrame()` returns null on every tick where the sensor
+has not delivered — which was two ticks in three. Those ticks returned early, after the
+clear and before the draw, so they presented a **black frame**, and the preview flickered
+badly. Sampling the screen put a number on it: 4 of 14 frames carried the camera before
+the fix, 14 of 14 after. A viewfinder shows the last image until a new one arrives, so the
+loop now redraws it. It cost one full-screen quad and one cached array of texture
+coordinates.
+
+The bug was in shared code, so **Gems had it too, and worse** — at 10 delivered frames a
+second, five ticks in six were black.
+
+## Verified on device
+
+Run on a CPH2655 (Android 16, ARCore 1.54) against the reference clip played back on a
+monitor, which exercises everything except the room's own light:
+
+![Terminal running on the phone](terminal-on-device.png)
+
+- All 32 displays found, every frame.
+- `settled=true` with `next=012 then=018` on every heartbeat once the wall was in frame
+  — the ranking never flickered.
+- The rectangles land on the panels: green on 012 and yellow on 018, which are in fact
+  the two lowest numbers left after 008 was hit.
+- The shipped templates load from the APK, including through R8 and resource shrinking in
+  a release build.
+- One to three displays per frame report as not legible. That is the wall mid-flip plus
+  one marginal panel, and it is reported rather than guessed at.
+- The preview holds steady rather than flickering, which it did not before this run — see
+  above.
+
+Two things this does not cover: the room's own lighting, and a wall that is not a
+recording of this one.
+
+**Turn auto-rotate on.** The manifest is deliberately `fullUser`, so with rotation locked
+the phone stays in portrait however it is held — and the preview, and the rectangles with
+it, are drawn a quarter turn round. Nothing is wrong when that happens and the boxes are
+still on the right displays, but a wall of numbers on its side is hard to read.
 
 ## What is on screen
 
@@ -224,10 +268,18 @@ holding a phone; a rectangle four frames stale is not.
   misread is visible rather than silent.
 - A status line: `next 008 · then 012 · 31 left`, or `19 numbers in view -- reading them`
   before the first ranking settles.
-- The camera dials, unprompted, as on the other two self-lit walls. Nothing moves them by
-  itself here — the auto-exposure loop closes on how much *colour* survived, which is the
-  gem wall's problem and not this one — but a user who does find the wall blown out should
-  have the dial in front of them rather than behind a debug toggle.
+- The camera dials, behind one button in the bottom-right corner, as on the other two
+  self-lit walls. The auto-exposure loop does not run here — it closes on how much
+  *colour* survived, which is the gem wall's problem and not this one — but the shutter is
+  pinned once when the mode becomes active, for the reason below, and a user who wants it
+  back is a tap away.
+
+  The card used to be on screen unprompted, which was the right call for the gem wall and
+  the wrong one here: it is tall, and in landscape it covered the top two rows of displays,
+  hiding the thing it exists to make readable. What earned it that place is kept on the
+  button instead — it is labelled with the shutter the sensor actually delivered, live, and
+  turns red saying `Camera !` when the sensor is ignoring what it was asked for. The card
+  opens upward out of it.
 - No Rescan, New wall, Record or Replay. There is no canvas to rescan and no tracked
   geometry to record, and the mode menu says `live camera -- no AR, no replay` next to
   the entry so that is not a surprise.
@@ -235,14 +287,106 @@ holding a phone; a rectangle four frames stale is not.
 Logging starts by itself when the mode becomes active, as it does for Gems, and for the
 same reason: there is one trip to the room.
 
+## What a visit to the room found
+
+The first real round, played rather than filmed, reported a quarter of the lit displays
+found and unread - steadily, all evening. Working out why is the case for the capture
+below, because the heartbeat's counts alone could not do it: they say *how many* failed
+and never *which*, or how close they came.
+
+What the counts did establish, over 157 heartbeats with the wall in frame:
+
+| | |
+| --- | --- |
+| display-slots seen | 5183 |
+| read as a number | 63% |
+| lit but unreadable | 24% |
+| correctly cleared | 13% |
+| unread as a share of *lit* displays | **27%** |
+
+- **Not cleared displays being miscounted.** `unread` held at 6.5-8 per frame from the
+  start of a round to the end; only the share rose, because the denominator shrinks as
+  displays clear. The blank test was right 683 times.
+- **Not the extra blobs.** The detector returned 34 in 73 frames, 33 in 44 and 32 in 31,
+  but mean `unread` across those was 7.9 / 7.2 / 8.2. Uncorrelated.
+- **It cost the answer.** The published `next` went backwards four times inside a round -
+  `011 to 010`, `010 to 004` twice, `026 to 024` - each one a display that was on the wall
+  the whole time and only became readable later. That is a green rectangle on the wrong
+  panel.
+
+The cause came from replaying the reference clip, which is footage of the *same wall*, at
+the same 1920x1080: 32 displays every frame, 1% unread, 99.5% of digits correlating above
+0.9. So the reader was not at its limit. Degrading those frames one axis at a time found
+which axis:
+
+| | unread | digits rejected |
+| --- | --- | --- |
+| the clip as shot | 0.5% | 0.1% |
+| sensor noise, sigma 16 | 0.4% | 0.1% |
+| the wall at 0.6x the size | 0.6% | 0.2% |
+| 9 px of motion blur | 2.5% | 1.0% |
+| **13 px blur + 0.75x + noise** | **21.3%** | 7.4% |
+| **15 px of diagonal motion blur** | **28.5%** | 10.3% |
+
+The room measured 27%. **Motion blur is the whole of it** - noise and scale are very
+nearly free, and a hand-held pan at the 1/100 s the camera was choosing for itself smears
+a digit across a dozen pixels. This reader recovers a smeared glyph exactly never: it
+correlates shapes.
+
+### Which is why the shutter is pinned
+
+Blur scales with exposure time, so the fix is upstream of everything: hold the light where
+the camera's own metering put it and buy a shorter exposure with gain. Simulated at
+1/250 s - 6 px of blur, noise at sigma 20, and a quarter less light for good measure - the
+same frames come back at **0.4% unread**.
+
+`CameraTuning.applyMotionFreezePreset` does that, and it is the opposite trade to the
+LED-wall preset that Gems uses: that one takes light away from a wall that was clipping,
+this one keeps the light and spends noise. The gain is scaled from whatever the camera had
+already settled on rather than fixed, so it is right in a room it has never seen; and when
+the gain ceiling cannot pay for the full 1/250 s it gives up shutter rather than light,
+because under-exposing a wall that is found by thresholding against a local background is
+a worse failure than a little blur. On the phone it asks for `manual 1/250s iso4735` in
+that room and the sensor honours it exactly.
+
+## Getting evidence out of the room
+
+`TerminalRecorder` is the counterpart of [`GemRecorder`](GEM_PUZZLE.md), and the visit
+above is the argument for it: a quarter of the wall unread, and nothing came back but the
+number. Reproducing that against an old clip and a simulated smear was a great deal of
+work to arrive at a conclusion that pixels would have settled in a minute.
+
+The **Capture** button arms a burst of twelve frames just under a second apart, or:
+
+```bash
+adb shell am broadcast -a com.puzzlesolver.app.DEBUG --ez termdump true --ei termframes 30 --ei termevery 300
+```
+
+Each frame is written as a gzipped **P5 PGM** - greyscale, because that *is* the reader's
+input rather than a rendering of it, and PGM because `TerminalReplay` and
+`TerminalWallTest` already load it. A wall that misread in the room becomes a failing unit
+test on a desk, or a whole run replayed frame by frame, with nothing to convert:
+
+```bash
+adb pull /storage/emulated/0/Android/data/com.puzzlesolver.app/files/terminal ./capture
+./gradlew :core:test --tests '*TerminalReplay*' -Dterminal.frames=./capture
+```
+
+Alongside them one growing sidecar carries a row per display - where it is, what came
+back, and the confidence of the worst of its three digits. That last column is the one the
+device log cannot carry and the one that separates the two failures it renders
+identically: `0?4 conf=0.00` is a threshold question, `0-4` is a segmentation one.
+
 ## What is not covered
 
-- **Replaying the reference clip through the app.** `VideoFrameSource` decodes straight
-  to a `SurfaceTexture` for the GL background and never exposes the frame to the CPU, so
-  the scanner cannot see it. Terminal needs no pose, so unlike the canvas modes there is
-  no reason in principle it could not replay ordinary footage — it wants an
-  `ImageReader` on the decoder's output, which is a real piece of work and is not done.
-  The off-device path today is `TerminalWallTest` against a still frame.
+- **Replaying footage inside the app.** `VideoFrameSource` decodes straight to a
+  `SurfaceTexture` for the GL background and never exposes the frame to the CPU, so the
+  scanner cannot see it. Terminal needs no pose, so unlike the canvas modes there is no
+  reason in principle it could not replay ordinary footage — it wants an `ImageReader` on
+  the decoder's output, which is a real piece of work and is not done. Offline there is
+  now `TerminalReplay`, which runs the real scanner over a directory of frames and prints
+  what the heartbeat would have printed; that covers the diagnostic half of what an in-app
+  replay would be for.
 - **A second installation.** The shipped templates are averaged from one clip of one
   wall. Everything else in the chain — detection, isolation, normalisation, ranking — is
   measured against real pixels, but the classifier has only ever seen this typeface.

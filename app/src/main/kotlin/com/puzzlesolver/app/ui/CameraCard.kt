@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -33,13 +32,21 @@ import com.puzzlesolver.app.pipeline.ScanPipeline
  * bright". The actual line comes from the frame metadata, so it is what the sensor did,
  * not what we asked for.
  *
- * On screen without being asked for whenever a self-lit wall is in play, because there
- * the exposure is not a refinement -- it decides whether the puzzle is in the image at
- * all. See docs/GEM_PUZZLE.md for the measurement behind that.
+ * Opened from a button in the bottom corner rather than shown unprompted, which is a
+ * reversal worth explaining. It used to be on screen whenever a self-lit wall was in
+ * play, because there the exposure is not a refinement -- it decides whether the puzzle
+ * is in the image at all (see docs/GEM_PUZZLE.md for the measurement). That is still
+ * true, and on the terminal wall it was also self-defeating: the card is tall, and in
+ * landscape it covered the top two rows of the very thing it exists to make readable.
+ *
+ * So the argument for being unprompted is honoured on the *button* instead, which
+ * carries the exposure the sensor actually delivered and flags a camera that is ignoring
+ * what it was asked for. Everything else is one tap away. See [ScanScreen].
  */
 @Composable
 fun CameraCard(
     state: ScanPipeline.UiState,
+    modifier: Modifier = Modifier,
     /** Whether the debug toggle is on; adds the lines only a developer wants. */
     verbose: Boolean = false,
     onNudgeExposure: (Boolean) -> Unit,
@@ -50,8 +57,7 @@ fun CameraCard(
     onResetCamera: () -> Unit,
 ) {
     Box(
-        Modifier
-            .fillMaxWidth()
+        modifier
             .background(Color(0xCC101418), RoundedCornerShape(12.dp))
             .padding(horizontal = 14.dp, vertical = 10.dp),
     ) {
@@ -118,7 +124,14 @@ fun CameraCard(
                 Tiny(if (state.cameraManual) "auto" else "manual") {
                     onSetManual(!state.cameraManual)
                 }
-                Tiny("LED wall", highlighted = true, onClick = onLedPreset)
+                // Named for what it does to this wall, because the two presets do
+                // opposite things: one darkens a wall whose LEDs were clipping, the
+                // other shortens the exposure of a wall that is being smeared.
+                Tiny(
+                    if (state.isTerminalMode) "freeze pan" else "LED wall",
+                    highlighted = true,
+                    onClick = onLedPreset,
+                )
             }
             // Locks, the auto-exposure loop and reset are set once and forgotten -- and
             // two of them are only meaningful if you know what 3A is. Behind the toggle.

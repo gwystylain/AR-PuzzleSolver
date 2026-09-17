@@ -11,6 +11,7 @@ import com.puzzlesolver.app.frame.FrameData
 import com.puzzlesolver.app.frame.FrameSource
 import com.puzzlesolver.app.frame.TrackingState
 import com.puzzlesolver.app.record.GemRecorder
+import com.puzzlesolver.app.record.TerminalRecorder
 import com.puzzlesolver.app.render.CameraBackgroundRenderer
 import com.puzzlesolver.app.render.CanvasAccumulator
 import com.puzzlesolver.app.render.GlUtil
@@ -109,8 +110,8 @@ class ScanPipeline(
      */
     val autoExposure = AutoExposure()
 
-    /** Set once the LED-wall camera preset has been applied, so it happens once. */
-    private var ledPresetApplied = false
+    /** Set once a mode's camera preset has been applied, so it happens once. */
+    private var cameraPresetApplied = false
 
     /** Exposure changes made this session, for the HUD and the heartbeat. */
     private var exposureChanges = 0
@@ -169,6 +170,17 @@ class ScanPipeline(
      */
     @Volatile
     private var gemRecorder: GemRecorder? = null
+
+    /**
+     * Writes out what the terminal reader saw, when asked to.
+     *
+     * Created on first use, like [gemRecorder], and for the same reason: the live path
+     * pays nothing for this existing until somebody wants evidence. It exists at all
+     * because a visit to the room reported a quarter of the wall unread and brought back
+     * nothing but that number. See [TerminalRecorder].
+     */
+    @Volatile
+    private var terminalRecorder: TerminalRecorder? = null
 
     private val registry: PuzzleRegistry by lazy {
         PuzzleRegistry(
@@ -245,6 +257,23 @@ class ScanPipeline(
 
     private var cameraTextureId = 0
     private var textureCreated = false
+
+    /**
+     * The last camera image drawn, so a render tick with no new frame is not a black one.
+     *
+     * The frame loop clears the colour buffer and then draws the camera over it, and
+     * `nextFrame()` returns null whenever the camera has not produced a new image since
+     * the last tick. On the pose-free camera that is most ticks -- the loop runs at the
+     * display's rate and the sensor delivers at 21 to 30 -- so returning early after the
+     * clear presents a black frame, and the preview visibly flickers. Measured on device:
+     * 4 of 14 sampled frames carried the camera, which is the ratio of the two rates.
+     *
+     * A viewfinder shows the last image until a new one arrives. This is that last image,
+     * and redrawing it costs one full-screen quad.
+     */
+    private var backgroundTexture = 0
+    private val backgroundTexCoords = FloatArray(8)
+    private var backgroundValid = false
 
     /** The source the camera texture is currently bound to, so swaps re-attach. */
     private var attachedSource: FrameSource? = null
@@ -446,6 +475,10 @@ class ScanPipeline(
         val gemCaptureRemaining: Int = 0,
         /** What the last gem capture wrote, so the room gets a confirmation. */
         val gemCaptureMessage: String? = null,
+        /** Frames left in an armed terminal capture, zero when idle. */
+        val terminalCaptureRemaining: Int = 0,
+        /** What the last terminal capture wrote, so the room gets a confirmation. */
+        val terminalCaptureMessage: String? = null,
         /** One line on what the auto-exposure loop is doing. */
         val autoExposure: String? = null,
         /**
@@ -527,6 +560,7 @@ class ScanPipeline(
             GLES30.GL_TEXTURE_MAG_FILTER, GLES30.GL_LINEAR,
         )
         textureCreated = true
+        backgroundValid = false
 
         // Any source present at context creation is attached by the swap check in
         // onDrawFrame, so there is nothing to do for it here.
@@ -687,14 +721,36 @@ class ScanPipeline(
             // wrong. Re-apply on every swap, not just on surface change.
             applyDisplayGeometry(source)
             attachedSource = source
+            // The external texture still holds the *previous* source's last image until
+            // the new one delivers, and its coordinates are the previous one's too, so
+            // there is nothing safe to redraw until a frame arrives.
+            backgroundValid = false
             // A different camera is a different dial, and any exposure conclusion
             // reached about the old one is about a device that is no longer in play.
             autoExposure.reset()
-            ledPresetApplied = false
+            cameraPresetApplied = false
             liveSource = source as? Camera2FrameSource
             liveResult = GemScanner.Result.EMPTY
             liveTerminalResult = TerminalScanner.Result.EMPTY
             solverThread.post { terminalScanner.reset() }
+            // Swapping *away* from the pose-free camera is the one moment that can end a
+            // live mode, and it has to be done here rather than in a publisher. The AR
+            // path has several publishers and most frames leave through the early one --
+            // no wall yet, keep panning -- so a reset written into publishFull is never
+            // reached while the phone is pointed at anything but a wall. On device that
+            // showed as the HUD keeping the live layout indefinitely after leaving
+            // Terminal: no Rescan, no New wall, and the Gems capture button on screen.
+            if (liveSource == null) {
+                publish {
+                    it.copy(
+                        liveGems = false,
+                        liveTerminal = false,
+                        gemOverlay = emptyList(),
+                        terminalOverlay = emptyList(),
+                        terminalSettled = false,
+                    )
+                }
+            }
         }
         refreshDisplayGeometryIfTurned(source)
 
@@ -716,10 +772,14 @@ class ScanPipeline(
         // a dark room it is part of what makes the wall fit possible, and a camera that
         // ignores the request should say so in the first second rather than never.
         source.tuning?.let { autoExposure.noteHonoured(it.honoured()) }
-        maybeApplyLedWallPreset(source)
+        maybeApplyCameraPreset(source)
 
         val frame = source.nextFrame()
         if (frame == null) {
+            // Before anything else, and unconditionally: everything below this can return
+            // early, and every path that does would otherwise leave the cleared buffer on
+            // screen. See [backgroundValid].
+            if (backgroundValid) background.draw(backgroundTexture, backgroundTexCoords)
             if (source.isFinished) publish { it.copy(replayFinished = true) }
             // The shared camera opens asynchronously, so "no frame yet" is a normal
             // state that lasts a second or two at startup and after every retune.
@@ -730,8 +790,10 @@ class ScanPipeline(
                     // Only while nothing has ever arrived. Once frames are flowing, a
                     // poll that finds none is the normal case -- the camera runs slower
                     // than the render loop -- and overwriting the real status with the
-                    // camera's made the HUD flicker between the two.
-                    status = if (it.liveGems) it.status else source.cameraStatus ?: it.status,
+                    // camera's made the HUD flicker between the two. Both live modes,
+                    // not just Gems: on device this held Terminal's status line on
+                    // "camera running (auto ev+0)" and its own line never appeared.
+                    status = if (it.livePoseFree) it.status else source.cameraStatus ?: it.status,
                     cameraStatus = source.cameraStatus,
                     cameraControllable = source.tuning?.capabilities?.available == true,
                     cameraRequest = source.tuning?.describeRequest(),
@@ -747,13 +809,24 @@ class ScanPipeline(
         frameCounter++
 
         background.draw(frame.textureId, frame.textureTransform)
+        backgroundTexture = frame.textureId
+        System.arraycopy(frame.textureTransform, 0, backgroundTexCoords, 0, 8)
+        backgroundValid = true
 
         // The pose-free modes end here: draw the camera, scan it, publish. No wall fit,
         // no mosaic, no solver, and nothing below this point runs.
         liveSource?.let {
             maybeDispatchLiveScan()
-            if (liveMode == LiveMode.TERMINAL) publishLiveTerminal(it, frameStart)
-            else publishLive(it, frameStart)
+            when (liveMode) {
+                LiveMode.TERMINAL -> publishLiveTerminal(it, frameStart)
+                LiveMode.GEMS -> publishLive(it, frameStart)
+                // The window between the user picking a canvas mode and the frame source
+                // actually being swapped back to ARCore for it. Claiming a mode here is
+                // not harmless: falling through to the Gems publisher is what left the
+                // HUD showing the Gems capture button after a tap on Sudoku, which was
+                // visible on device before it was visible in any test.
+                LiveMode.NONE -> Unit
+            }
             heartbeat(frame, null, frameStart)
             return
         }
@@ -845,35 +918,62 @@ class ScanPipeline(
     }
 
     /**
-     * Drops the exposure for a gem wall, once.
+     * Sets the camera up for whichever wall is in play, once.
      *
-     * Gems, and only Gems. Mines wants the opposite: its classifier reads the *glow
-     * around* a button that has clipped its own face to white, and it was verified on
-     * device at the camera's own exposure, so darkening for it would take away the very
-     * thing it reads. The dials are on screen for both walls; this is only about what
-     * happens without being asked.
+     * The two self-lit walls that need it want opposite things, which is why this is a
+     * switch rather than one preset:
+     *
+     * - **Gems** wants *less light*. Its rings clip to white at the exposure the camera
+     *   picks for itself and no amount of care downstream recovers them.
+     * - **Terminal** wants a *shorter exposure at the same brightness*. Its panels are
+     *   exposed perfectly well; what a hand-held pan does to them is smear, and a room
+     *   run measured a quarter of the wall unreadable because of it.
+     *
+     * Mines gets neither. Its classifier reads the glow around a button that has clipped
+     * its own face to white, and it was verified on device at the camera's own exposure,
+     * so touching that would take away the very thing it reads. The dials are on screen
+     * for all three walls; this is only about what happens without being asked.
      *
      * Keyed off the mode the user pinned as well as the one identification settled on,
      * because pinning is a decision made before any of the evidence arrives and it
      * should not have to wait for the evidence.
      */
-    private fun maybeApplyLedWallPreset(source: FrameSource) {
-        if (ledPresetApplied) return
-        val pinned = state.get().pinnedPuzzleId
-        val active = solverThread.latest?.adapterId
-        if (pinned != GemAdapter.ID && active != GemAdapter.ID) return
+    private fun maybeApplyCameraPreset(source: FrameSource) {
+        if (cameraPresetApplied) return
         val tuning = source.tuning ?: return
-        // Not until the camera has said what it can do. Applying the preset against
+        // Not until the camera has said what it can do. Applying a preset against
         // default capabilities silently downgrades it to the no-manual-sensor fallback,
         // which is how a phone that can hold 1/250 s ended up merely asking for -3 EV.
         if (!tuning.capabilities.available) return
-        ledPresetApplied = true
-        if (tuning.applyLedWallPreset()) {
-            // The preset is a guess -- a good one, but several stops in one move.
-            // Telling the loop it happened is what lets it climb back out if the guess
-            // was too dark for this room.
-            autoExposure.noteExternalDarkening()
-            Log.i(TAG, "gems active; applying the LED-wall camera preset")
+        val pinned = state.get().pinnedPuzzleId
+        val active = solverThread.latest?.adapterId
+
+        if (pinned == GemAdapter.ID || active == GemAdapter.ID) {
+            cameraPresetApplied = true
+            if (tuning.applyLedWallPreset()) {
+                // The preset is a guess -- a good one, but several stops in one move.
+                // Telling the loop it happened is what lets it climb back out if the
+                // guess was too dark for this room.
+                autoExposure.noteExternalDarkening()
+                Log.i(TAG, "gems active; applying the LED-wall camera preset")
+            }
+            return
+        }
+
+        if (pinned == TerminalAdapter.ID) {
+            // Deliberately *not* latched on a failure. This preset holds the brightness
+            // the camera's own metering had settled on and pays for the shorter exposure
+            // in gain, so until a frame's metadata has come back there is nothing to
+            // scale against and it declines. Asking again next frame costs nothing;
+            // latching would leave the shutter where it was for the whole visit.
+            if (tuning.applyMotionFreezePreset()) {
+                cameraPresetApplied = true
+                Log.i(
+                    TAG,
+                    "terminal active; pinning the shutter to freeze the pan -- " +
+                        tuning.describeRequest(),
+                )
+            }
         }
     }
 
@@ -922,7 +1022,7 @@ class ScanPipeline(
             " term[displays=${r.displays.size} numbers=${r.remaining} unread=${r.unread} " +
                 "settled=${r.settled} next=${r.lowest?.text ?: "-"} then=${r.second?.text ?: "-"} " +
                 "luma=$liveMeanLuma dropped=${liveSource?.droppedFrames ?: 0} " +
-                "scan=${"%.1f".format(liveScanMillis)}ms " +
+                "scan=${"%.1f".format(liveScanMillis)}ms cap=${terminalRecorder?.remaining ?: 0} " +
                 "prof='${terminalScanner.describeProfile()}' status='${r.status}']"
         } else {
             ""
@@ -1218,9 +1318,29 @@ class ScanPipeline(
         val view = source.acquireView() ?: return
         val started = System.nanoTime()
         try {
-            liveTerminalResult = terminalScanner.scan(view.luma)
+            val result = terminalScanner.scan(view.luma)
+            liveTerminalResult = result
             liveMeanLuma = meanLuma(view.luma)
             liveScanMillis = (System.nanoTime() - started) / 1e6f
+            // Inside the borrow, deliberately, and after the timing so the recorder's own
+            // cost is not charged to the scan. This is the one place where the pixels and
+            // the reading made of them are provably the same frame -- which matters more
+            // here than anywhere, because the failure being chased is a display that
+            // reads on one frame and not the next.
+            terminalRecorder?.offer(
+                TerminalRecorder.Sample(
+                    luma = view.luma,
+                    result = result,
+                    cameraAsked = source.tuning.describeRequest(),
+                    cameraActual = source.tuning.reported.describe(),
+                    cameraHonoured = source.tuning.honoured(),
+                    meanLuma = liveMeanLuma,
+                    droppedFrames = source.droppedFrames,
+                    scanMillis = liveScanMillis,
+                    profile = terminalScanner.describeProfile(),
+                    detectorReport = terminalScanner.detectorReport,
+                )
+            )
         } finally {
             source.releaseView()
         }
@@ -1263,6 +1383,8 @@ class ScanPipeline(
                 gemOverlay = emptyList(),
                 terminalOverlay = overlay,
                 terminalSettled = result.settled,
+                terminalCaptureRemaining = terminalRecorder?.remaining ?: 0,
+                terminalCaptureMessage = terminalRecorder?.lastMessage,
                 wallDescription = "live camera, no wall fitting",
                 wallConverged = true,
                 wallIssue = null,
@@ -1558,6 +1680,23 @@ class ScanPipeline(
         gemRecorder?.cancel()
     }
 
+    /**
+     * Arms a burst capture of what the terminal reader is reading, into [directory].
+     *
+     * The counterpart of [startGemCapture], and the answer to the one thing a visit to
+     * the room could not tell us: the heartbeat says how many displays went unread and
+     * never which, or how close they came. See [TerminalRecorder].
+     */
+    fun startTerminalCapture(directory: File, frames: Int, intervalMillis: Long) {
+        val recorder = terminalRecorder?.takeIf { it.directory == directory }
+            ?: TerminalRecorder(directory).also { terminalRecorder = it }
+        recorder.arm(frames, intervalMillis)
+    }
+
+    fun cancelTerminalCapture() {
+        terminalRecorder?.cancel()
+    }
+
     fun setExpectedCells(cells: Int?) {
         solverThread.post { engine.setExpectedCells(cells) }
     }
@@ -1613,8 +1752,17 @@ class ScanPipeline(
         tuning()?.update { it.copy(lockAe = lockAe, lockAwb = lockAwb) }
     }
 
-    fun applyLedWallPreset() {
-        tuning()?.applyLedWallPreset()
+    /**
+     * Re-applies the current mode's camera preset, from the button on the camera card.
+     *
+     * Worth having as well as the automatic one: the automatic pass runs once when the
+     * mode becomes active, and by the time a user has been round a round and nudged the
+     * exposure by hand, getting back to a known state is otherwise several taps of
+     * guesswork.
+     */
+    fun applyCameraPreset() {
+        val t = tuning() ?: return
+        if (liveMode == LiveMode.TERMINAL) t.applyMotionFreezePreset() else t.applyLedWallPreset()
     }
 
     fun resetCamera() {
@@ -1722,6 +1870,7 @@ class ScanPipeline(
                 }
                 try {
                     val live = liveSource
+                    if (live != null && liveMode == LiveMode.NONE) continue
                     if (live != null && liveMode == LiveMode.TERMINAL) {
                         runTerminalScan(live)
                         continue

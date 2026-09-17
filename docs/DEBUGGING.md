@@ -62,7 +62,7 @@ not something to send, and they are still there for `adb pull`.
    recorded camera and IMU streams, so poses, feature points and depth behave exactly as
    they did in front of you. That makes it a faithful regression test of the whole
    stack, and the only artifact that lets a fix be *proven* rather than argued.
-2. **Open the Mode menu and pick Mines.** Identification should manage on its own, but
+2. **Swipe in from the left edge to open the Mode menu, and pick Mines.** Identification should manage on its own, but
    pinning removes one variable, and a half-scanned board is exactly when the evidence
    is thinnest.
 3. **Pan slowly, and pan the whole wall.** The solver is `REQUIRES_FULL_SCAN` and will
@@ -78,7 +78,7 @@ both live state. Killing the app first throws away the two most useful artifacts
 
 ## In the room, on the gem wall
 
-1. **Open the Mode menu and pick Gems.** Picking it applies the LED-wall camera preset
+1. **Swipe in from the left edge to open the Mode menu, and pick Gems.** Picking it applies the LED-wall camera preset
    immediately, which is the single thing most likely to decide whether this works; the
    auto-exposure loop then starts from there rather than from whatever the room made the
    camera do.
@@ -257,9 +257,13 @@ jogging the aim, and capturing on a schedule alongside a scripted sequence of ex
 `--ez dump true` does *nothing* in Gems and is not a substitute -- there is no canvas to
 dump, and the live path returns before the dump is ever serviced.
 
-The same is true of Terminal (`--es pin terminal`), which is on the same pose-free path:
-no canvas to dump, no capture of its own yet. What it does have is a heartbeat line of
-its own, which is the whole record of a run:
+Terminal (`--es pin terminal`) is on the same pose-free path and has the same shape of
+capture: `--ez termdump true`, with `--ei termframes` and `--ei termevery`. It writes
+greyscale frames and a row per display into `files/terminal/`, and those replay offline
+through `TerminalReplay` -- see [TERMINAL_PUZZLE.md](TERMINAL_PUZZLE.md). `--ez dump true`
+does nothing there either; there is no canvas.
+
+Its heartbeat line is the cheap record of a run, and worth reading before pulling frames:
 
 ```
 term[displays=32 numbers=31 unread=0 settled=true next=008 then=012 luma=52 dropped=0

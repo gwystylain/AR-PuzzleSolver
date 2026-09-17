@@ -79,6 +79,15 @@ class TerminalScanner(
     private var publishedLowest: Int? = null
     private var publishedSecond: Int? = null
 
+    /**
+     * The detector's own account of the last pass, for the capture sidecar.
+     *
+     * "32 displays of 34 blobs" and "34 displays of 34 blobs" are different findings and
+     * the counts alone do not separate them, so the report goes into the record next to
+     * the frame it describes.
+     */
+    val detectorReport: String get() = detector.lastReport
+
     /** One line of profile, for the HUD and the heartbeat. */
     fun describeProfile(): String {
         val d = detector.stageMicros

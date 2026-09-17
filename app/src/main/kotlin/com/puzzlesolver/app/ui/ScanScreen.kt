@@ -7,8 +7,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -71,7 +73,7 @@ fun ScanScreen(
     onRestartScan: () -> Unit,
     onRestartAll: () -> Unit,
     onToggleRecording: () -> Unit,
-    onCaptureGems: () -> Unit,
+    onCapture: () -> Unit,
     isLogging: Boolean,
     logSummary: String?,
     onToggleLogging: () -> Unit,
@@ -81,8 +83,19 @@ fun ScanScreen(
     onReturnToLive: () -> Unit,
     onForceFlatWall: (Float) -> Unit,
     onExpectCells: (Int?) -> Unit,
+    // The Strategy guide is a game mode with no camera behind it. It is chosen from the
+    // same menu as the scanning modes, because to the user it is the same decision --
+    // which room am I standing in -- and it replaces the HUD outright rather than
+    // hiding pieces of it, since none of the HUD is about anything it does.
+    strategyGuide: Boolean = false,
+    onSelectStrategyGuide: () -> Unit = {},
+    strategyContent: @Composable () -> Unit = {},
 ) {
     var showDebug by remember { mutableStateOf(false) }
+    // Closed to begin with, and remembered for the session. The card is tall enough that
+    // leaving it open is a decision the user should make once, not one the app makes for
+    // them every time the mode changes.
+    var showCamera by remember { mutableStateOf(false) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
 
@@ -92,13 +105,30 @@ fun ScanScreen(
             GameModeDrawer(
                 modes = puzzleModes,
                 state = state,
+                showDebug = showDebug,
+                strategyGuide = strategyGuide,
                 onSelect = {
                     onSelectPuzzleMode(it)
+                    scope.launch { drawerState.close() }
+                },
+                onSelectStrategyGuide = {
+                    onSelectStrategyGuide()
+                    scope.launch { drawerState.close() }
+                },
+                onToggleDebug = {
+                    showDebug = !showDebug
+                    // Closes on the flip, like a mode pick does. The panel it turns on
+                    // is behind the sheet, so leaving the sheet open would hide the only
+                    // confirmation that the toggle did anything.
                     scope.launch { drawerState.close() }
                 },
             )
         },
     ) {
+    if (strategyGuide) {
+        strategyContent()
+        return@ModalNavigationDrawer
+    }
     Box(Modifier.fillMaxSize()) {
         // Under the HUD panels and over the camera: the rings have to be on top of the
         // wall and behind the controls, or a target button lands on the gem it found.
@@ -119,21 +149,6 @@ fun ScanScreen(
                 GemTargetBar(targets = gemTargets, onSetTarget = onSetGemTarget)
             }
             StatusCard(state, replayName)
-            // Unprompted on the two self-lit walls, because there the exposure decides
-            // whether the puzzle is in the image at all; behind the debug toggle
-            // everywhere else, where the camera's own metering is right.
-            if (state.isSelfLitWallMode || showDebug) {
-                CameraCard(
-                    state = state,
-                    verbose = showDebug,
-                    onNudgeExposure = onNudgeExposure,
-                    onSetManual = onSetCameraManual,
-                    onSetLocks = onSetCameraLocks,
-                    onLedPreset = onLedPreset,
-                    onAutoExposure = onAutoExposure,
-                    onResetCamera = onResetCamera,
-                )
-            }
             if (showDebug) {
                 DebugCard(state, onForceFlatWall, onExpectCells)
             }
@@ -151,14 +166,14 @@ fun ScanScreen(
             // Confirmation that the capture landed, and where. Worth the line: the whole
             // value of a capture is realised hours later at a desk, so the one chance to
             // notice it silently wrote nothing is while still standing at the wall.
-            if (state.liveGems) {
-                state.gemCaptureMessage?.let {
-                    Text(it, color = Color.White, fontSize = 11.sp)
-                }
+            val captureMessage = when {
+                state.liveTerminal -> state.terminalCaptureMessage
+                state.liveGems -> state.gemCaptureMessage
+                else -> null
             }
+            captureMessage?.let { Text(it, color = Color.White, fontSize = 11.sp) }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { scope.launch { drawerState.open() } }) { Text("Mode") }
                 // Rescan and New wall both act on the accumulated canvas and the wall
                 // fit. The live modes have neither -- every frame is read from scratch --
                 // so they would be two buttons that do nothing, taking room from a view
@@ -167,24 +182,20 @@ fun ScanScreen(
                     Button(onClick = onRestartScan) { Text("Rescan") }
                     Button(onClick = onRestartAll) { Text("New wall") }
                 }
-                // The Gems answer to Record, in the place the buttons it replaces would
-                // have been, because it is the same job: do not leave the room without
-                // evidence. It has to be a button and not only a broadcast -- a capture
-                // is worth having while the phone is pointed at the wall, which is
-                // exactly when nobody is at a terminal.
-                if (state.liveGems) {
-                    Button(onClick = onCaptureGems) {
-                        Text(
-                            if (state.gemCaptureRemaining > 0) {
-                                "Capturing ${state.gemCaptureRemaining}"
-                            } else {
-                                "Capture"
-                            }
-                        )
+                // The live modes' answer to Record, in the place the buttons it replaces
+                // would have been, because it is the same job: do not leave the room
+                // without evidence. It has to be a button and not only a broadcast -- a
+                // capture is worth having while the phone is pointed at the wall, which
+                // is exactly when nobody is at a terminal.
+                if (state.livePoseFree) {
+                    val left = if (state.liveTerminal) {
+                        state.terminalCaptureRemaining
+                    } else {
+                        state.gemCaptureRemaining
                     }
-                }
-                TextButton(onClick = { showDebug = !showDebug }) {
-                    Text(if (showDebug) "Hide debug" else "Debug", color = Color.White)
+                    Button(onClick = onCapture) {
+                        Text(if (left > 0) "Capturing $left" else "Capture")
+                    }
                 }
             }
 
@@ -237,28 +248,112 @@ fun ScanScreen(
                 }
             }
             }
+
+            // The camera dials, last and hard right: the button is the bottom corner of
+            // the screen and the card opens upward out of it. Everything else in this
+            // column is left-aligned and short, so nothing can collide with it at any
+            // width -- which is the reason it is a line of its own rather than the tail
+            // of the scan row above, where a canvas mode would have run out of room in
+            // portrait and clipped it.
+            if (state.isSelfLitWallMode || showDebug) {
+                if (showCamera) {
+                    CameraCard(
+                        state = state,
+                        modifier = Modifier.align(Alignment.End).widthIn(max = 400.dp),
+                        verbose = showDebug,
+                        onNudgeExposure = onNudgeExposure,
+                        onSetManual = onSetCameraManual,
+                        onSetLocks = onSetCameraLocks,
+                        onLedPreset = onLedPreset,
+                        onAutoExposure = onAutoExposure,
+                        onResetCamera = onResetCamera,
+                    )
+                }
+                CameraToggle(
+                    state = state,
+                    open = showCamera,
+                    modifier = Modifier.align(Alignment.End),
+                    onToggle = { showCamera = !showCamera },
+                )
+            }
         }
     }
     }
 }
 
 /**
- * The game-mode flyout.
+ * Opens and closes the camera card, and says the one thing the card used to be on screen
+ * unprompted to say.
+ *
+ * That unprompted place was earned: on a self-lit wall the exposure decides whether the
+ * puzzle is in the image at all. But the card is tall, and in landscape on the terminal
+ * wall it covered the top two rows of displays -- so it was hiding the thing it exists to
+ * make readable. Folding it behind a button only works if the number a user actually acts
+ * on comes with the button, which is what this is: the shutter the sensor delivered, and
+ * a mark when the sensor is ignoring what it was asked for.
+ */
+@Composable
+private fun CameraToggle(
+    state: ScanPipeline.UiState,
+    open: Boolean,
+    modifier: Modifier = Modifier,
+    onToggle: () -> Unit,
+) {
+    // First token of the reported settings, which is the shutter -- "1/100s iso1084 ev0
+    // ae:on" becomes "1/100s". Taken from what the frame metadata says the sensor did
+    // rather than from what was asked for, for the reason the card gives two lines to.
+    val shutter = state.cameraActual
+        ?.substringBefore(' ')
+        ?.takeIf { it.isNotBlank() && it != "-" }
+    val ignoring = state.cameraHonoured == false
+    Button(
+        onClick = onToggle,
+        modifier = modifier,
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = when {
+                ignoring -> Color(0xFFB3261E)
+                open -> Color(0xFF39424C)
+                else -> MaterialTheme.colorScheme.primary
+            },
+        ),
+    ) {
+        Text(
+            when {
+                ignoring -> "Camera !"
+                shutter != null -> shutter
+                else -> "Camera"
+            },
+            fontSize = 13.sp,
+        )
+    }
+}
+
+/**
+ * The game-mode flyout, opened by swiping in from the left edge.
  *
  * The list comes from the registry rather than from here, so a new solver appears in
  * the menu by being registered and nothing else. A hardcoded list would be one more
  * place to forget.
  *
- * Automatic stays first and stays the default. Identification is normally the right
- * answer, since each adapter scores how well the canvas looks like its own puzzle.
- * Pinning is for the cases where that is genuinely thin: a board still half-scanned,
- * or a mode being worked on.
+ * It is also where the session's settings live -- currently the debug panel. Anything
+ * chosen once and then left alone belongs here rather than on the HUD, which is read
+ * over the top of the wall being scanned and has no room for buttons that are not
+ * about this frame.
+ *
+ * Every entry pins a mode. Identification is still what the pipeline does until one is
+ * picked, but it is not offered here: a menu item that hands the choice back to the
+ * evidence reads as a mode in its own right, and one that is never the one wanted.
  */
 @Composable
 private fun GameModeDrawer(
     modes: List<ScanPipeline.PuzzleMode>,
     state: ScanPipeline.UiState,
+    showDebug: Boolean,
+    strategyGuide: Boolean,
     onSelect: (String?) -> Unit,
+    onSelectStrategyGuide: () -> Unit,
+    onToggleDebug: () -> Unit,
 ) {
     ModalDrawerSheet {
         Column(
@@ -273,32 +368,6 @@ private fun GameModeDrawer(
                 fontSize = 18.sp,
                 modifier = Modifier.padding(start = 28.dp, top = 8.dp, bottom = 12.dp),
             )
-
-            val detected = modes.firstOrNull { it.id == state.activePuzzleId }
-            NavigationDrawerItem(
-                label = {
-                    Column {
-                        Text("Automatic")
-                        Text(
-                            when {
-                                // While a mode is pinned we are not identifying at all,
-                                // so reporting the pinned mode here would dress an
-                                // override up as a detection.
-                                state.pinnedPuzzleId != null -> "overridden below"
-                                detected != null -> "reading it as ${detected.displayName}"
-                                else -> "not identified yet"
-                            },
-                            fontSize = 12.sp,
-                            color = Color(0xFF9AA6B2),
-                        )
-                    }
-                },
-                selected = state.pinnedPuzzleId == null,
-                onClick = { onSelect(null) },
-                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
-            )
-
-            HorizontalDivider(Modifier.padding(vertical = 8.dp, horizontal = 16.dp))
 
             for (mode in modes) {
                 NavigationDrawerItem(
@@ -315,12 +384,57 @@ private fun GameModeDrawer(
                             }
                         }
                     },
-                    selected = state.pinnedPuzzleId == mode.id,
+                    selected = !strategyGuide && state.pinnedPuzzleId == mode.id,
                     onClick = { onSelect(mode.id) },
                     modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
                 )
             }
 
+            // Not from the registry, because it is not a solver: the room's stages are
+            // fixed, so the answers are worked out from a transcription and the camera
+            // stays off. It sits with the scanning modes all the same, since picking a
+            // room is one decision however the app then goes about it.
+            NavigationDrawerItem(
+                label = {
+                    Column {
+                        Text("Strategy")
+                        Text(
+                            "no camera -- the room's solutions, tiles numbered clockwise",
+                            fontSize = 12.sp,
+                            color = Color(0xFF9AA6B2),
+                        )
+                    }
+                },
+                selected = strategyGuide,
+                onClick = onSelectStrategyGuide,
+                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+            )
+
+            HorizontalDivider(Modifier.padding(vertical = 8.dp, horizontal = 16.dp))
+
+            // In the menu rather than on the HUD, where it used to be a button. It is a
+            // setting -- flipped once and then lived with -- and the HUD is for things
+            // read every frame with a phone held at arm's length. A permanent button for
+            // an occasional decision costs a strip of wall on every scan.
+            NavigationDrawerItem(
+                label = {
+                    Column {
+                        Text("Debug panel")
+                        Text(
+                            if (showDebug) {
+                                "on -- timings, coverage, wall and grid overrides"
+                            } else {
+                                "off"
+                            },
+                            fontSize = 12.sp,
+                            color = Color(0xFF9AA6B2),
+                        )
+                    }
+                },
+                selected = showDebug,
+                onClick = onToggleDebug,
+                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+            )
         }
     }
 }

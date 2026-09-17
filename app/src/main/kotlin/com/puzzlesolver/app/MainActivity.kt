@@ -44,6 +44,10 @@ import com.puzzlesolver.app.record.SessionBundle
 import com.puzzlesolver.app.record.SessionStore
 import com.puzzlesolver.app.ui.PuzzleSolverTheme
 import com.puzzlesolver.app.ui.ScanScreen
+import com.puzzlesolver.app.ui.StrategyScreen
+import com.puzzlesolver.core.puzzle.strategy.StrategyPlan
+import com.puzzlesolver.core.puzzle.strategy.StrategySolver
+import com.puzzlesolver.core.puzzle.strategy.StrategyStages
 
 /**
  * Hosts the GL surface and the Compose overlay.
@@ -88,6 +92,24 @@ class MainActivity : ComponentActivity() {
 
     /** Mirror of the pipeline's gem targets, so Compose recomposes when they change. */
     private var gemTargets by mutableStateOf<List<GemPattern>>(emptyList())
+
+    /**
+     * The Strategy guide, which is a game mode with the camera off.
+     *
+     * While it is up the scan is paused the same way leaving the app pauses it: the GL
+     * view stops and the source gives the camera back. Not stopped outright, because the
+     * user is switching rooms, not leaving, and the wall fit they had is worth keeping
+     * for when they switch back.
+     */
+    private var strategyGuide by mutableStateOf(false)
+    private var strategyLevel by mutableStateOf(1)
+
+    /** How many are playing; asked the first time the guide opens and kept for the session. */
+    private var strategyPlayers by mutableStateOf<Int?>(null)
+
+    /** Plans per level, filled in on a worker the first time the guide is opened. */
+    private var strategyPlans by mutableStateOf<Map<Int, List<StrategyPlan>>>(emptyMap())
+    private var strategySolving = false
 
     /**
      * Whether to take the camera over from ARCore, so exposure can be set.
@@ -180,8 +202,14 @@ class MainActivity : ComponentActivity() {
             }
             if (intent.getBooleanExtra("gemdump", false)) {
                 startGemCapture(
-                    intent.getIntExtra("gemframes", GEM_CAPTURE_FRAMES),
-                    intent.getIntExtra("gemevery", GEM_CAPTURE_INTERVAL_MS.toInt()).toLong(),
+                    intent.getIntExtra("gemframes", CAPTURE_FRAMES),
+                    intent.getIntExtra("gemevery", CAPTURE_INTERVAL_MS.toInt()).toLong(),
+                )
+            }
+            if (intent.getBooleanExtra("termdump", false)) {
+                startTerminalCapture(
+                    intent.getIntExtra("termframes", CAPTURE_FRAMES),
+                    intent.getIntExtra("termevery", CAPTURE_INTERVAL_MS.toInt()).toLong(),
                 )
             }
             intent.getStringExtra("cam")?.let { applyCameraCommand(it) }
@@ -270,7 +298,7 @@ class MainActivity : ComponentActivity() {
             "brighter" -> pipeline.nudgeExposure(darker = false)
             "manual" -> pipeline.setCameraMode(CameraTuning.Mode.MANUAL)
             "auto" -> pipeline.setCameraMode(CameraTuning.Mode.AUTO)
-            "ledwall" -> pipeline.applyLedWallPreset()
+            "ledwall" -> pipeline.applyCameraPreset()
             "reset" -> pipeline.resetCamera()
             "aelock" -> pipeline.setCameraLocks(true, tuning.settings.lockAwb)
             "aefree" -> pipeline.setCameraLocks(false, tuning.settings.lockAwb)
@@ -291,7 +319,11 @@ class MainActivity : ComponentActivity() {
     private val requestCamera = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        if (granted) startLiveSource() else toast("Camera permission is required to scan a wall")
+        if (!granted) {
+            toast("Camera permission is required to scan a wall")
+        } else if (!strategyGuide) {
+            startLiveSource()
+        }
     }
 
     private val pickVideo = registerForActivityResult(
@@ -358,8 +390,16 @@ class MainActivity : ComponentActivity() {
                         logSummary = logSummary,
                         onToggleLogging = { toggleLogging() },
                         onExport = { exportRun() },
-                        onCaptureGems = {
-                            startGemCapture(GEM_CAPTURE_FRAMES, GEM_CAPTURE_INTERVAL_MS)
+                        // One button, routed by which live wall is in play. The two
+                        // recorders write different things -- a colour frame plus rings,
+                        // and a luma frame plus a row per display -- but from the room
+                        // they are the same action and deserve the same button.
+                        onCapture = {
+                            if (uiState.liveTerminal) {
+                                startTerminalCapture(CAPTURE_FRAMES, CAPTURE_INTERVAL_MS)
+                            } else {
+                                startGemCapture(CAPTURE_FRAMES, CAPTURE_INTERVAL_MS)
+                            }
                         },
                         onPickVideo = { pickVideo.launch(arrayOf("video/*")) },
                         onOpenLastRecording = { openLastRecording() },
@@ -386,11 +426,26 @@ class MainActivity : ComponentActivity() {
                             )
                         },
                         onSetCameraLocks = { ae, awb -> pipeline.setCameraLocks(ae, awb) },
-                        onLedPreset = { pipeline.applyLedWallPreset() },
+                        onLedPreset = { pipeline.applyCameraPreset() },
                         onAutoExposure = { pipeline.setAutoExposureEnabled(it) },
                         onResetCamera = { pipeline.resetCamera() },
                         onForceFlatWall = { pipeline.setForcedFlatWall(it) },
                         onExpectCells = { pipeline.setExpectedCells(it) },
+                        strategyGuide = strategyGuide,
+                        onSelectStrategyGuide = { enterStrategyGuide() },
+                        strategyContent = {
+                            StrategyScreen(
+                                levels = STRATEGY_LEVELS,
+                                plans = strategyPlans,
+                                level = strategyLevel,
+                                onSelectLevel = { strategyLevel = it },
+                                players = strategyPlayers,
+                                onSelectPlayers = {
+                                    Log.i(TAG, "strategy: $it players")
+                                    strategyPlayers = it
+                                },
+                            )
+                        },
                     )
                 }
             }
@@ -409,7 +464,7 @@ class MainActivity : ComponentActivity() {
                 // discovered afterwards is not one to leave to memory. An explicit Stop
                 // is respected.
                 val liveMode = uiState.isGemsMode || uiState.isTerminalMode
-                if (liveMode && !loggingSuppressed && !logCapture.isRunning) {
+                if (liveMode && !strategyGuide && !loggingSuppressed && !logCapture.isRunning) {
                     startLogging()
                 }
                 isLogging = logCapture.isRunning
@@ -445,6 +500,28 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // The guide keeps the camera off across a background trip as well as within one.
+        if (!strategyGuide) resumeScanning()
+        ContextCompat.registerReceiver(
+            this,
+            debugReceiver,
+            IntentFilter(DEBUG_ACTION),
+            ContextCompat.RECEIVER_EXPORTED,
+        )
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (!strategyGuide) pauseScanning()
+        try {
+            unregisterReceiver(debugReceiver)
+        } catch (_: IllegalArgumentException) {
+            // Not registered; harmless.
+        }
+    }
+
+    /** Starts or resumes whatever should be driving frames, asking for the camera first if need be. */
+    private fun resumeScanning() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
             != PackageManager.PERMISSION_GRANTED
         ) {
@@ -457,26 +534,52 @@ class MainActivity : ComponentActivity() {
             resumeSource(pipeline.frameSource.get())
         }
         glView.onResume()
-        ContextCompat.registerReceiver(
-            this,
-            debugReceiver,
-            IntentFilter(DEBUG_ACTION),
-            ContextCompat.RECEIVER_EXPORTED,
-        )
     }
 
-    override fun onPause() {
-        super.onPause()
+    private fun pauseScanning() {
         glView.onPause()
-        try {
-            unregisterReceiver(debugReceiver)
-        } catch (_: IllegalArgumentException) {
-            // Not registered; harmless.
-        }
         // Whatever is driving, not just ARCore: the plain camera holds the device open
         // and has to give it back, or coming out of the background finds it taken.
         pipeline.frameSource.get()?.pause()
         sessionResumed = false
+    }
+
+    // --- Strategy guide --------------------------------------------------
+
+    private fun enterStrategyGuide() {
+        if (strategyGuide) return
+        Log.i(TAG, "mode selected: strategy guide")
+        strategyGuide = true
+        pauseScanning()
+        solveStrategyLevels()
+    }
+
+    private fun leaveStrategyGuide() {
+        if (!strategyGuide) return
+        strategyGuide = false
+        resumeScanning()
+    }
+
+    /**
+     * Works out every level once, off the main thread, and publishes each as it lands.
+     *
+     * The whole set takes well under a second on a laptop and the data is fixed, so this
+     * could be a table shipped with the app. Solving it instead keeps the transcription
+     * the only thing to maintain: correct the stage file and the plan corrects itself.
+     */
+    private fun solveStrategyLevels() {
+        if (strategySolving) return
+        strategySolving = true
+        Thread({
+            for ((level, stages) in StrategyStages.levels()) {
+                val plans = stages.mapNotNull { stage ->
+                    StrategySolver(stage).solve().also {
+                        if (it == null) Log.w(TAG, "strategy: no plan for $stage")
+                    }
+                }
+                runOnUiThread { strategyPlans = strategyPlans + (level to plans) }
+            }
+        }, "strategy-solver").start()
     }
 
     override fun onDestroy() {
@@ -517,6 +620,7 @@ class MainActivity : ComponentActivity() {
      */
     private fun selectPuzzleMode(id: String?) {
         Log.i(TAG, "mode selected: ${id ?: "automatic"}")
+        leaveStrategyGuide()
         pipeline.selectPuzzleMode(id)
         val wantsLiveCamera = id == GemAdapter.ID || id == TerminalAdapter.ID
         if (wantsLiveCamera != usingLiveCamera) {
@@ -865,11 +969,28 @@ class MainActivity : ComponentActivity() {
         toast("Capturing $frames frames -- keep the wall in view")
     }
 
+    /**
+     * The same, for the terminal wall.
+     *
+     * Its own directory rather than a shared one, because the two write different formats
+     * and the offline tools that read them -- `TerminalReplay` and `TerminalWallTest` --
+     * take a directory and expect everything in it to be theirs.
+     */
+    private fun startTerminalCapture(frames: Int, intervalMillis: Long) {
+        val directory = java.io.File(getExternalFilesDir(null), "terminal")
+        pipeline.startTerminalCapture(directory, frames, intervalMillis)
+        Log.i(TAG, "terminal capture: $frames frames every ${intervalMillis}ms -> $directory")
+        toast("Capturing $frames frames -- keep the wall in view")
+    }
+
     private fun toast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     }
 
     private companion object {
+        /** Every level the guide offers; each has stages in the bundled data. */
+        private val STRATEGY_LEVELS = (1..10).toList()
+
         const val TAG = "MainActivity"
         const val DEBUG_ACTION = "com.puzzlesolver.app.DEBUG"
 
@@ -881,7 +1002,7 @@ class MainActivity : ComponentActivity() {
          * end. Both are overridable from the broadcast, because the right answer depends
          * on which of those turns out to be the problem and that is not known in advance.
          */
-        const val GEM_CAPTURE_FRAMES = 12
-        const val GEM_CAPTURE_INTERVAL_MS = 900L
+        const val CAPTURE_FRAMES = 12
+        const val CAPTURE_INTERVAL_MS = 900L
     }
 }

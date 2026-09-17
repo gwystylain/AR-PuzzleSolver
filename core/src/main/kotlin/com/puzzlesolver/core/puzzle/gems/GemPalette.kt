@@ -69,6 +69,49 @@ object GemPalette {
     const val OUTER_OUTER = 0.230f
 
     /**
+     * The gaps between the rings, where there are no LEDs and only their glow.
+     *
+     * Each ring's glow spills over its neighbours, and at the exposure the app actually
+     * runs at -- 1/250 s, LEDs resolved as individual dots -- that spill is what limits
+     * the reader. A red dot under a green ring is not red in the image: red light plus
+     * green light is orange, hue 27 degrees, and the boundary between red and yellow
+     * sits at 29. On a run off the wall on 2026-09-04 every red-under-green ring was a
+     * coin flip, every green-under-red centre read yellow, and the two targets with a
+     * centre that differed from its middle ring could not be matched at all.
+     *
+     * The gap outside a ring carries the spill and nothing else, so its mean colour is
+     * an estimate of what to take back out before the ring is read. See [WASH_FRACTION].
+     */
+    const val MIDDLE_GAP_INNER = 0.130f
+    const val MIDDLE_GAP_OUTER = 0.170f
+    const val CENTRE_GAP_INNER = 0.045f
+    const val CENTRE_GAP_OUTER = 0.080f
+
+    /**
+     * How much of the gap's colour is subtracted from each texel of the ring inside it.
+     *
+     * Less than all of it, because the gap sits between two rings and carries some of
+     * the inner ring's own glow too, and because the outer ring's spill is weaker at
+     * the inner ring than at the gap. Fitted against 56 hand-labelled gems from the
+     * 2026-09-04 frame: 0.30 to 0.65 all read 94-98% of rings, against 82% with no
+     * subtraction, and above 0.70 same-colour rings start to go dark and the figure
+     * collapses. 0.45 sits in the middle of that plateau.
+     */
+    const val WASH_FRACTION = 0.45f
+
+    /**
+     * No channel loses more than this fraction of its own value to the subtraction.
+     *
+     * The guard for rings that share a channel with the glow over them. Red under green
+     * unmixes cleanly because their channels are disjoint; this wall's blue is cyan and
+     * shares B with purple, and taking a full measure of purple out of it tips it green.
+     * Capping the loss at half keeps any colour's own channels dominant however strong
+     * the spill. On the bloomier reference clip it costs one ring in thirty-one against
+     * no subtraction at all; at the operating exposure it is worth twenty-six in 168.
+     */
+    const val WASH_CAP = 0.5f
+
+    /**
      * Measured hue centroids, in degrees.
      *
      * Note how far two of them are from their names: the wall's "blue" measures 198
@@ -146,6 +189,9 @@ object GemPalette {
     /**
      * Classifies the annulus [innerRadius, outerRadius) around a texel.
      *
+     * @param washR the glow to take out of each texel before reading it, already
+     *        scaled by [WASH_FRACTION]; zero for the outer ring, which has nothing
+     *        outside it. See [MIDDLE_GAP_INNER] for why this exists.
      * @param scratch reused RGB buffer, so a full board read allocates nothing.
      */
     fun classifyAnnulus(
@@ -156,6 +202,9 @@ object GemPalette {
         outerRadius: Float,
         votes: FloatArray = FloatArray(GemColour.ALL.size),
         scratch: FloatArray = FloatArray(3),
+        washR: Float = 0f,
+        washG: Float = 0f,
+        washB: Float = 0f,
     ): Reading {
         votes.fill(0f)
         var lit = 0
@@ -187,24 +236,36 @@ object GemPalette {
                 val d2 = dx * dx + dy * dy
                 if (d2 >= inner2 && d2 <= outer2) {
                     view.rgbAt(x, y, scratch)
-                    val r = scratch[0]
-                    val g = scratch[1]
-                    val b = scratch[2]
-                    val max = maxOf(r, g, b)
-                    if (max >= MIN_VALUE) {
+                    val rawR = scratch[0]
+                    val rawG = scratch[1]
+                    val rawB = scratch[2]
+                    val rawMax = maxOf(rawR, rawG, rawB)
+                    if (rawMax >= MIN_VALUE) {
                         lit++
-                        val min = minOf(r, g, b)
-                        val delta = max - min
-                        val saturation = delta / max
-                        // Tested before saturation rather than after, because this
-                        // failure looks nothing like the one saturation catches: a
+                        // Lit and clipped are judged on what the sensor saw. Tested
+                        // before saturation rather than after, because this failure
+                        // looks nothing like the one saturation catches: a
                         // double-clipped texel is vividly saturated and entirely wrong.
-                        val clipped = (if (r >= CLIP_LEVEL) 1 else 0) +
-                            (if (g >= CLIP_LEVEL) 1 else 0) +
-                            (if (b >= CLIP_LEVEL) 1 else 0)
-                        if (clipped < 2 && saturation >= MIN_SATURATION) {
-                            usable++
-                            votes[nearestColour(hueOf(r, g, b, max, delta))] += saturation
+                        val clipped = (if (rawR >= CLIP_LEVEL) 1 else 0) +
+                            (if (rawG >= CLIP_LEVEL) 1 else 0) +
+                            (if (rawB >= CLIP_LEVEL) 1 else 0)
+                        if (clipped < 2) {
+                            // The hue is judged on what is left once the neighbouring
+                            // ring's glow is taken out. Each channel gives up the wash or
+                            // half of itself, whichever is less -- see WASH_CAP.
+                            val r = rawR - minOf(washR, WASH_CAP * rawR)
+                            val g = rawG - minOf(washG, WASH_CAP * rawG)
+                            val b = rawB - minOf(washB, WASH_CAP * rawB)
+                            val max = maxOf(r, g, b)
+                            if (max > 0f) {
+                                val min = minOf(r, g, b)
+                                val delta = max - min
+                                val saturation = delta / max
+                                if (saturation >= MIN_SATURATION) {
+                                    usable++
+                                    votes[nearestColour(hueOf(r, g, b, max, delta))] += saturation
+                                }
+                            }
                         }
                     }
                 }

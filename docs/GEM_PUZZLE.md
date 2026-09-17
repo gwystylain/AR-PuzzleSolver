@@ -117,9 +117,11 @@ yet" behave differently — the first can never match, the second still might.
 
 ## Reading a gem
 
-Four findings shaped `GemPalette`, all measured off
-`testVideos/Gems/VID20260814182431.mp4` rather than reasoned about, and each one broke
-an approach that looked obviously right first.
+Five findings shaped `GemPalette`, all measured off real frames rather than reasoned
+about, and each one broke an approach that looked obviously right first. The first
+three came from `testVideos/Gems/VID20260814182431.mp4`; the fourth from the run of
+2026-08-20, two stops over; the fifth from the run of 2026-09-04, the first at the
+exposure the app now uses.
 
 ### The rings clip, so brightness carries nothing
 
@@ -232,13 +234,58 @@ would put every blue reading nearer green than blue. Red and purple are the clos
 pair at 26° apart, and they are where a reader that mishandles clipping goes wrong
 first — there is a test guarding that margin.
 
+### Light adds, so a ring is read through the glow of the ring outside it
+
+This is the one that showed up only once the exposure was right. At the 1/250 s preset
+the LEDs resolve as individual dots with the panel black between them, nothing clips, the
+wash figure sits at 1–2%, and the outer ring reads perfectly. And still, on 2026-09-04,
+one target in three was found and the other two were not — both of them gems whose
+centre dot differed from the ring around it.
+
+Each ring throws a glow over the ring inside it, and light is additive. A red dot under
+a green ring is not red in the image: it is red light plus green light, which is orange.
+Measured on that frame, red under green sits at **26–28°**, and the boundary between the
+red centroid (352°) and the yellow one (66°) is at 29°. A coin flip, reported with a
+confidence of 0.03. The same mixing runs the other way — a green centre under a red ring
+reads yellow — and the one gem on the wall with genuinely yellow LEDs, under a red ring,
+read red. Against 56 gems labelled by eye the reader scored **79%**: outer 100%, middle
+77%, centre 59%, and every single miss a mixture of two neighbouring rings.
+
+The dot cores are not separable from the wash — the mixing happens in the sensor, the
+whole band is orange — and shifting the hue boundaries toward the wash rescues the middle
+ring but not the centre, which under a strong glow simply *is* the wash colour. What
+works is taking the glow back out. The gap between two rings has no LEDs in it, so its
+mean colour is the spill and nothing else; subtracting a fraction of it from every texel
+of the ring inside, before the hue is read, lifts the same frame to **97%** — middle 98%,
+centre 95%. The fraction is 0.45, fitted on that frame: anything from 0.30 to 0.65 reads
+94–98%, and above 0.70 same-colour rings start going dark and the figure collapses.
+
+Two things bound it. **No channel gives up more than half of itself.** Red under green
+unmixes cleanly because their channels are disjoint, but this wall's blue is cyan and
+shares B with purple, and taking a full measure of purple out of it tips it green; the
+cap keeps a colour's own channels dominant whatever the spill. And **the outer ring is
+never touched** — it has nothing outside it, and it is the one reading that was always
+right.
+
+What it costs: on the bloomier reference clip, where the glow is heavier, it gives back
+one ring in thirty-one (87% to 83%). That clip is at an exposure the app no longer uses,
+and the trade is twenty-six rings in 168 at the one it does. What it does not fix: LEDs
+bright enough to clip to white — the yellow ring above — have no hue to recover, and
+read as whatever surrounds them. And blue and purple have not been seen at the preset at
+all; the cap is the argument that they will survive it, not a measurement.
+
 ### Accuracy
 
-On 29 hand-labelled gems from the reference frame — 87 rings — this reads **90%**
-correctly, with the **outer ring at 100%**. The residue is almost entirely the centre
-dot, which is a handful of texels across and sits under the combined glow of both rings
-outside it. `RealGemFrameTest` runs the real classifier over a crop of that frame and
-holds the outer ring to exact agreement and the whole gem to 80%.
+On 37 hand-labelled gems from the 2026-09-04 frame at the preset — 111 rings — this
+reads **98%** correctly, with the **outer ring at 100%**; the two misses are the single
+gem whose yellow LEDs clip to white. `GemWashTest` holds the middle ring to 92% and the
+centre to 85% on that frame, and pins each of the three mixtures — red under green,
+green under red, red dot under green ring — as its own assertion.
+
+On the older reference clip it originally read 90% over 29 hand-labelled gems. The
+eleven of those that are in the test fixture — 31 rings — read 87% before the glow was
+subtracted and **83%** after, for the reason given above. `RealGemFrameTest` holds the
+outer ring there to exact agreement and the whole gem to 80%.
 
 ## The exposure problem
 

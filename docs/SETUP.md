@@ -149,6 +149,6 @@ to see whether the geometry or the detection is at fault.
 `GlUtil.checkError` is called after each GL phase. It logs rather than throws, so a
 shader problem shows up as a stream of errors instead of a crash; grep for `GL error`.
 
-Turn on the **Debug** panel in the app for per-frame and per-solve timings, coverage
-percentage, and buttons to force a puzzle type — useful when identification is picking
+Turn on the **Debug panel** from the Mode menu (swipe in from the left edge) for
+per-frame and per-solve timings, coverage percentage, and buttons to force a puzzle type — useful when identification is picking
 the wrong adapter and you want to isolate whether the reader or the identifier is wrong.

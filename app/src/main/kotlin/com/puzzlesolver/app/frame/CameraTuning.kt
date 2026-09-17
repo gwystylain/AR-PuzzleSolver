@@ -193,6 +193,63 @@ class CameraTuning {
     }
 
     /**
+     * Pins the shutter fast enough to freeze a pan, and pays for it in gain.
+     *
+     * The opposite trade to [applyLedWallPreset], for the opposite problem. That one
+     * darkens a wall whose LEDs were clipping to white. This one is for a wall that is
+     * already exposed correctly and is being *smeared*: the terminal panels are read
+     * from the shape of a digit, and a digit smeared across a dozen pixels by a hand-held
+     * pan is not a shape any classifier recovers.
+     *
+     * Measured, on the reference clip degraded to match a room run that missed 27% of its
+     * displays: 13 to 15 pixels of motion blur reproduces that 27% almost exactly, while
+     * sensor noise at sigma 16 costs 0.4% and a quarter less light costs nothing at all.
+     * So blur is the whole of the problem and gain is very nearly free, which makes this
+     * an easy trade to make and a strange one to have to argue for.
+     *
+     * The gain is chosen to hold the brightness the camera's own metering had already
+     * settled on -- the same exposure paid for in a different currency -- rather than
+     * being a fixed number. A fixed ISO would be right for one room and wrong for the
+     * next, and this mode has no colour to protect and no reason to prefer a particular
+     * one.
+     *
+     * @return false when the device has no manual sensor, or when no frame metadata has
+     *         arrived yet to scale the gain against. Both are "ask again shortly" rather
+     *         than "never", so the caller must not latch on a false.
+     */
+    fun applyMotionFreezePreset(targetExposureNanos: Long = MOTION_FREEZE_EXPOSURE_NANOS): Boolean {
+        val c = capabilities
+        if (!c.available || !c.manualSensor) return false
+        val currentExposure = reported.exposureNanos ?: return false
+        val currentIso = reported.iso ?: return false
+        // As fast as the target, or as fast as the gain ceiling can actually pay for --
+        // whichever is slower. Clamping the gain instead and keeping the target would
+        // hold the shutter and quietly lose the light, which on a wall found by
+        // thresholding against a local background is a worse failure than a little blur:
+        // pointed at something genuinely dark this asked for ISO 48000, got the sensor's
+        // 6400, and would have under-exposed by three stops.
+        val floorForGain = currentExposure * currentIso / c.maxIso.coerceAtLeast(1)
+        val exposure = maxOf(targetExposureNanos, floorForGain)
+            .coerceIn(c.minExposureNanos, c.maxExposureNanos)
+        if (currentExposure <= exposure) return false      // already this fast or faster
+        val gain = (currentIso.toLong() * currentExposure / exposure)
+            .coerceIn(c.minIso.toLong(), c.maxIso.toLong())
+            .toInt()
+        return update {
+            it.copy(
+                mode = Mode.MANUAL,
+                exposureNanos = exposure,
+                iso = gain,
+                // Not AE-locked, because there is nothing left for AE to do once both
+                // dials are fixed, and not AWB-locked either: this reader never looks at
+                // colour, so freezing white balance would only be a thing to explain.
+                lockAe = false,
+                lockAwb = false,
+            )
+        }
+    }
+
+    /**
      * Halves the light, whichever dial this device gives us.
      *
      * @return false when already at the bottom, which is what tells the auto-tuner to
@@ -283,6 +340,15 @@ class CameraTuning {
 
         /** 1/250 s, which is roughly where the readable reference clips sit. */
         const val LED_WALL_EXPOSURE_NANOS = 4_000_000L
+
+        /**
+         * 1/250 s: fast enough to freeze the pan that was losing a quarter of the wall.
+         *
+         * Blur scales with exposure time, so the 13 pixels of smear measured at the
+         * 1/100 s the camera was choosing for itself become five here -- and five is
+         * below where the reader starts to care. Faster would cost gain for nothing.
+         */
+        const val MOTION_FREEZE_EXPOSURE_NANOS = 4_000_000L
 
         /**
          * Disagreeing read-backs needed before the camera is accused of ignoring us.
