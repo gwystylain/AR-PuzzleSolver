@@ -14,10 +14,12 @@ Nothing to do: push to `main` and a few minutes later the `latest` pre-release
 has a fresh `PuzzleSolver-latest.apk`. The tag is moved to the new commit and the
 file replaced, so the download URL never changes. Docs-only pushes are skipped.
 
-Until the signing key below is set up, that APK is signed with the debug key.
-It installs fine, but Android will not upgrade it to a release-signed build (or
-back) without an uninstall first, so once the key exists every installed copy of
-the debug-signed one has to be removed by hand. Set the key up early.
+It is signed with the release key, the same one a tagged release uses, so a
+phone can move between the rolling build and a versioned one freely. (If the
+`SIGNING_*` secrets are ever missing, the workflow falls back to the debug key
+instead of failing -- but a debug-signed install will not upgrade to a
+release-signed one or back without an uninstall first, so do not let that
+happen quietly.)
 
 ## One-time setup: the signing key
 
