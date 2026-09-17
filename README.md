@@ -84,10 +84,10 @@ drawn anywhere on it.
   is empty. The app outlines the lowest number in green and the second lowest in yellow.
   See [docs/TERMINAL_PUZZLE.md](docs/TERMINAL_PUZZLE.md).
 
-A fourth room, **Strategy**, is in the app without any camera at all. Its stages are fixed,
-so the app carries a transcription of every level and works out the pressing order for
-each stage, with the orange tiles numbered clockwise from the top-left corner. See
-[docs/STRATEGY_PUZZLE.md](docs/STRATEGY_PUZZLE.md).
+Two more rooms, **Strategy** and **Gridlock**, are in the app without any camera at all.
+Their stages are fixed, so the app carries a transcription of every level, works out the
+pressing order for each stage, and splits it between the players so that independent
+parts are pressed at the same time. See [docs/STRATEGY_PUZZLE.md](docs/STRATEGY_PUZZLE.md).
 
 Gems and Terminal do **not** use the AR pipeline. Both own the camera directly and read
 each frame in image space with no pose, wall fit or canvas — Gems because ARCore will not
@@ -210,8 +210,9 @@ core/                      pure JVM, no Android -- unit-testable in milliseconds
                            -- see docs/GEM_PUZZLE.md
     terminal/              the number wall, also read per frame with no pose
                            -- see docs/TERMINAL_PUZZLE.md
-    strategy/              the orange-tile room: bundled stages and the pressing-order
-                           search, no camera -- see docs/STRATEGY_PUZZLE.md
+    strategy/              the orange-tile rooms, Strategy and Gridlock: bundled stages,
+                           the pressing-order search and the split between players, no
+                           camera -- see docs/STRATEGY_PUZZLE.md
   PuzzleEngine.kt          detect -> read -> solve, platform-free
 app/
   frame/                   FrameSource: live ARCore, AR dataset replay, plain video,

@@ -161,7 +161,7 @@ class StrategySolver(private val stage: StrategyStage) {
         val needs = ArrayList<List<Cell>>()
         for (t in 0 until targetCount) {
             if (!p.targets.has(t)) continue
-            needs += stage.movingTargets?.let { m -> m.frames.map { it.getValue(m.ids[t]) } }
+            needs += stage.movingTargets?.let { m -> m.frames.mapNotNull { it[m.ids[t]] } }
                 ?: listOf(stage.targets[t])
         }
         for (m in stage.mirrors.indices) {

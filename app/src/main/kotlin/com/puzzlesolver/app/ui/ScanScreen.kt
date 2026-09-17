@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
@@ -45,6 +46,7 @@ import androidx.compose.ui.unit.sp
 import com.puzzlesolver.app.frame.FrameSource
 import com.puzzlesolver.app.pipeline.ScanPipeline
 import com.puzzlesolver.core.puzzle.gems.GemPattern
+import com.puzzlesolver.core.puzzle.strategy.StrategyRoom
 import kotlinx.coroutines.launch
 
 /**
@@ -83,13 +85,14 @@ fun ScanScreen(
     onReturnToLive: () -> Unit,
     onForceFlatWall: (Float) -> Unit,
     onExpectCells: (Int?) -> Unit,
-    // The Strategy guide is a game mode with no camera behind it. It is chosen from the
-    // same menu as the scanning modes, because to the user it is the same decision --
-    // which room am I standing in -- and it replaces the HUD outright rather than
-    // hiding pieces of it, since none of the HUD is about anything it does.
-    strategyGuide: Boolean = false,
-    onSelectStrategyGuide: () -> Unit = {},
-    strategyContent: @Composable () -> Unit = {},
+    // The guide rooms -- Strategy, Gridlock -- are game modes with no camera behind
+    // them. They are chosen from the same menu as the scanning modes, because to the
+    // user it is the same decision -- which room am I standing in -- and a guide
+    // replaces the HUD outright rather than hiding pieces of it, since none of the HUD
+    // is about anything it does.
+    guideRoom: StrategyRoom? = null,
+    onSelectGuide: (StrategyRoom) -> Unit = {},
+    guideContent: @Composable (StrategyRoom) -> Unit = {},
 ) {
     var showDebug by remember { mutableStateOf(false) }
     // Closed to begin with, and remembered for the session. The card is tall enough that
@@ -106,13 +109,13 @@ fun ScanScreen(
                 modes = puzzleModes,
                 state = state,
                 showDebug = showDebug,
-                strategyGuide = strategyGuide,
+                guideRoom = guideRoom,
                 onSelect = {
                     onSelectPuzzleMode(it)
                     scope.launch { drawerState.close() }
                 },
-                onSelectStrategyGuide = {
-                    onSelectStrategyGuide()
+                onSelectGuide = {
+                    onSelectGuide(it)
                     scope.launch { drawerState.close() }
                 },
                 onToggleDebug = {
@@ -125,8 +128,8 @@ fun ScanScreen(
             )
         },
     ) {
-    if (strategyGuide) {
-        strategyContent()
+    if (guideRoom != null) {
+        guideContent(guideRoom)
         return@ModalNavigationDrawer
     }
     Box(Modifier.fillMaxSize()) {
@@ -135,10 +138,16 @@ fun ScanScreen(
         GemOverlay(state.gemOverlay, Modifier.fillMaxSize())
         TerminalOverlay(state.terminalOverlay, Modifier.fillMaxSize())
 
+        // The two HUD columns are inset from the system bars; the camera and the overlays
+        // behind them are not. The rings are drawn in camera coordinates and have to
+        // stay full-bleed to land on the wall, but a button under a three-button
+        // navigation bar is a button that cannot be pressed, and the top card under the
+        // status bar has the clock printed over it.
         Column(
             Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
+                .systemBarsPadding()
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -158,6 +167,7 @@ fun ScanScreen(
             Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
+                .systemBarsPadding()
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -350,9 +360,9 @@ private fun GameModeDrawer(
     modes: List<ScanPipeline.PuzzleMode>,
     state: ScanPipeline.UiState,
     showDebug: Boolean,
-    strategyGuide: Boolean,
+    guideRoom: StrategyRoom?,
     onSelect: (String?) -> Unit,
-    onSelectStrategyGuide: () -> Unit,
+    onSelectGuide: (StrategyRoom) -> Unit,
     onToggleDebug: () -> Unit,
 ) {
     ModalDrawerSheet {
@@ -384,31 +394,36 @@ private fun GameModeDrawer(
                             }
                         }
                     },
-                    selected = !strategyGuide && state.pinnedPuzzleId == mode.id,
+                    selected = guideRoom == null && state.pinnedPuzzleId == mode.id,
                     onClick = { onSelect(mode.id) },
                     modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
                 )
             }
 
-            // Not from the registry, because it is not a solver: the room's stages are
-            // fixed, so the answers are worked out from a transcription and the camera
-            // stays off. It sits with the scanning modes all the same, since picking a
-            // room is one decision however the app then goes about it.
-            NavigationDrawerItem(
-                label = {
-                    Column {
-                        Text("Strategy")
-                        Text(
-                            "no camera -- the room's solutions, tiles numbered clockwise",
-                            fontSize = 12.sp,
-                            color = Color(0xFF9AA6B2),
-                        )
-                    }
-                },
-                selected = strategyGuide,
-                onClick = onSelectStrategyGuide,
-                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
-            )
+            // Not from the registry, because they are not solvers: these rooms' stages
+            // are fixed, so the answers are worked out from a transcription and the
+            // camera stays off. They sit with the scanning modes all the same, since
+            // picking a room is one decision however the app then goes about it.
+            for (room in StrategyRoom.entries) {
+                NavigationDrawerItem(
+                    label = {
+                        Column {
+                            Text(room.displayName)
+                            Text(
+                                when (room) {
+                                    StrategyRoom.STRATEGY -> "no camera -- the room's solutions, split between players"
+                                    StrategyRoom.GRIDLOCK -> "no camera -- levels 6 to 10 so far, split between players"
+                                },
+                                fontSize = 12.sp,
+                                color = Color(0xFF9AA6B2),
+                            )
+                        }
+                    },
+                    selected = guideRoom == room,
+                    onClick = { onSelectGuide(room) },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+                )
+            }
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp, horizontal = 16.dp))
 

@@ -1,4 +1,4 @@
-# The Strategy room
+# The Strategy room (and Gridlock)
 
 A wall of lit tiles. Orange tiles around the edge are guns: press one and it fires a
 shot straight across the wall, the first blue tile in its path goes out, and the gun is
@@ -11,6 +11,13 @@ app carries a transcription of every level and works out the pressing order itse
 *Strategy* from the game-mode menu and the scan stops, the camera is released, and the
 HUD — logging, exposure, recording, all of it — is replaced by the guide. Pick any
 scanning mode to get it all back.
+
+**Gridlock** is a second room that plays by the same rules and gets the same guide:
+two boards side by side, guns that block, purple tiles that light a target on the other
+board, reds that fail the wave. It is its own entry in the menu with its own stage file
+(`gridlock.txt`, levels 6–10 so far, from activate.ryflix.ca/gridlock.html); everything
+below applies to it too. In core the two are `StrategyRoom.STRATEGY` and
+`StrategyRoom.GRIDLOCK`, and `StrategyStages.bundled(room)` picks the file.
 
 ## Reading the guide
 
@@ -66,29 +73,35 @@ waits for.
 
 ## The two transcriptions
 
-There is no official map of the room. Two fan sites have transcribed it, and they
-disagree about its shape:
+There is no official map of the room. Two fan pages have transcribed it:
 
-| | activate-scores.ca | activate.ryflix.ca ("Gridlock") |
+| | activate-scores.ca | activate.ryflix.ca/strategy.html |
 | --- | --- | --- |
-| Levels | 1–6, 10 | 6–10 |
-| Board | one 12×12 grid | two 10-wide boards, side by side |
+| Levels | 1–6 | 7–10 (5 waves each), transcribed by MetaNut |
+| Board | one 12×12 grid | 12×16 with a two-column wall for 7 and 8; 12×12 for 9 and 10 |
 | Guns in the line of fire | shot passes through | shot stops there and destroys the gun |
-| Purple tiles | none | shooting one lights a target on the *other* board, in the mirror-image column |
+| Purple tiles | none | shooting one lights a target in the mirror-image column |
 | A shot into red | costs one of five lives, and clears that red | fails the wave |
-| Moving reds | per-tile animation frames | column, row, quadrant and sweep patterns |
+| Moving pieces | per-tile animation frames; level 4's targets bounce | level 9's targets swap between two layouts every 2 s; level 10's reds are alternating stripes |
 
-The app uses activate-scores.ca for levels 1–6 and 10 — it is the site this guide was
-first built against, and its level 4 was played through to *Congratulations!* with the
-sequences the solver now produces — and Gridlock for 7–9, which only it has. Both sites'
-versions of 6 and 10 are kept in `tools/strategy/sources`; `LEVEL_SOURCES` in
-`tools/strategy/convert.py` picks which one ships, and re-running the script rebuilds
-the bundled file.
+The app uses activate-scores.ca for levels 1–6 — its level 4 was played through to
+*Congratulations!* with the sequences the solver now produces — and the ryflix page for
+7–10, as the page's own note suggests; its 7-1, 9-1 and 10-1 plans were replayed on the
+page to *WAVE CLEARED*. activate-scores.ca also has a level 10 (four waves, other
+layouts); it is still in `tools/strategy/sources`, and `ROOMS` in
+`tools/strategy/convert.py` picks which one ships. Re-running the script rebuilds both
+rooms' bundled files.
 
-Rather than two solvers, both transcriptions become one shape of stage: a single wide
-grid, with two separate boards rendered as one grid with a strip of wall between them,
-plus two rule switches (`gunsBlock`, `redRule`). "The other board's mirror column" is
-then simply `width - 1 - x`, which is the same cell whether or not the boards touch.
+Gridlock's transcription (activate.ryflix.ca/gridlock.html, levels 6–10) follows the
+ryflix rules, with two boards of 10 rows by 10 or 11 columns. On levels 6, 9 and 10 the
+boards touch and a horizontal shot crosses from one to the other, so the stage is one
+22-wide panel; on 7 and 8 a wall stands between them and each board is its own panel.
+Its 7-1 and 9-1 plans were replayed on that page to *WAVE CLEARED*.
+
+Rather than two solvers, both transcriptions become one shape of stage: a single grid,
+with a strip of wall columns no shot crosses, plus two rule switches (`gunsBlock`,
+`redRule`). A level 9 target that is only on the board in one of the two layouts is a
+moving target with no position on the other frame.
 
 ## Finding the order
 

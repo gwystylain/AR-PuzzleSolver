@@ -65,7 +65,7 @@ import com.puzzlesolver.core.puzzle.strategy.TeamPlan
 import com.puzzlesolver.core.puzzle.strategy.TeamPlanner
 
 /**
- * The Strategy room, as a reference card rather than a scan.
+ * A guide room -- Strategy, or Gridlock -- as a reference card rather than a scan.
  *
  * Nothing here looks through the camera. The room's stages are fixed and transcribed,
  * so the only thing worth showing is the answer: the wall, each player's tiles in that
@@ -88,6 +88,7 @@ import com.puzzlesolver.core.puzzle.strategy.TeamPlanner
  */
 @Composable
 fun StrategyScreen(
+    title: String,
     levels: List<Int>,
     plans: Map<Int, List<StrategyPlan>>,
     level: Int,
@@ -107,7 +108,7 @@ fun StrategyScreen(
         var changingPlayers by remember { mutableStateOf(false) }
         Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Strategy", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                Text(title, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
                 Spacer(Modifier.width(10.dp))
                 if (players != null) {
                     Box(
@@ -251,14 +252,18 @@ private fun StagePage(plan: StrategyPlan, players: Int) {
     }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        // Sized to the widest panel, capped so a small stage does not become a poster,
-        // and capped again so the board leaves the lower part of the page to the lanes.
-        val widest = stage.panels.maxOf { it.last - it.first + 1 }
-        val rows = stage.height * stage.panels.size
+        // Two panels are drawn as they hang -- side by side with the wall between --
+        // when that still leaves a readable tile; otherwise one above the other. Then
+        // sized so the board leaves the lower part of the page to the lanes, and capped
+        // so a small stage does not become a poster.
+        val sideBySide = stage.panels.size == 1 || maxWidth / stage.width >= 20.dp
+        val ranges = if (sideBySide) listOf(0 until stage.width) else stage.panels
+        val widest = ranges.maxOf { it.last - it.first + 1 }
+        val rows = stage.height * ranges.size
         val cell = minOf(
             maxWidth / widest,
-            if (stage.panels.size > 1) 28.dp else 36.dp,
-            (maxHeight * 0.55f - 8.dp * (stage.panels.size - 1)) / rows,
+            if (ranges.size > 1) 28.dp else 36.dp,
+            (maxHeight * 0.55f - 8.dp * (ranges.size - 1)) / rows,
         )
         Column(Modifier.fillMaxSize()) {
             Row(verticalAlignment = Alignment.Bottom) {
@@ -281,6 +286,7 @@ private fun StagePage(plan: StrategyPlan, players: Int) {
                 state = state,
                 frame = frame,
                 highlight = if (selected >= 0) selected else null,
+                ranges = ranges,
                 cell = cell,
             )
 
@@ -293,7 +299,7 @@ private fun StagePage(plan: StrategyPlan, players: Int) {
                     .verticalScroll(rememberScrollState())
                     .padding(top = 6.dp),
             ) {
-                StageNotes(plan, team)
+                StageNotes(plan, team, sideBySide)
                 for (lane in team.lanes) {
                     LaneSection(plan, planner, team, lane, selected, onSelect = { selected = if (selected == it) -1 else it })
                     Spacer(Modifier.height(10.dp))
@@ -316,7 +322,7 @@ private fun laneGroupOf(team: TeamPlan, shot: Int): ShotGroup {
 }
 
 @Composable
-private fun StageNotes(plan: StrategyPlan, team: TeamPlan) {
+private fun StageNotes(plan: StrategyPlan, team: TeamPlan, sideBySide: Boolean) {
     val stage = plan.stage
     val notes = ArrayList<String>()
     val idle = team.lanes.filter { it.shots.isEmpty() }
@@ -326,11 +332,22 @@ private fun StageNotes(plan: StrategyPlan, team: TeamPlan) {
     }
     if (stage.isTimed) {
         val seconds = stage.periodMillis / 1000.0
-        val what = if (stage.movingTargets != null) "The targets move" else "The reds move"
+        val what = when {
+            stage.movingTargets == null -> "The reds move"
+            stage.frameCount == 2 -> "The targets swap between two layouts"
+            else -> "The targets move"
+        }
         val every = if (seconds >= 1) "%.0f s".format(seconds) else "%.1f s".format(seconds)
         notes += "$what every $every. Press each run of tiles while the board looks like its picture."
     } else if (stage.reds != null) {
         notes += "The reds do not move."
+    }
+    if (stage.gap != null) {
+        notes += if (sideBySide) {
+            "The dark strip is a wall: a shot into it is lost."
+        } else {
+            "The two boards hang side by side with a wall between; a shot off the inner edge is lost."
+        }
     }
     if (plan.redHits > 0) {
         val presses = plan.shots.indices.filter { plan.shots[it].hit == Hit.RED }
@@ -345,7 +362,11 @@ private fun StageNotes(plan: StrategyPlan, team: TeamPlan) {
         notes += "A shot stops at the first orange tile in its way and takes it out."
     }
     if (stage.redRule == RedRule.FAIL && stage.reds != null) {
-        notes += "Firing into a red fails the wave here, so the timing matters."
+        notes += if (stage.isTimed) {
+            "Firing into a red fails the wave here, so the timing matters."
+        } else {
+            "Firing into a red fails the wave here."
+        }
     }
     for (n in notes) {
         Text(n, color = Color(0xFFB9C4CF), fontSize = 12.sp, modifier = Modifier.padding(bottom = 4.dp))
@@ -484,21 +505,26 @@ private val COLOUR_LABEL_SPENT = Color(0xFFB9A98F)
 
 /**
  * The board in [state] on [frame], every gun in its player's colour, the gun of
- * [highlight] ringed and its shot drawn to where it lands.
- *
- * Two separate panels are drawn one above the other. That is not how they hang on the
- * wall, but it is how they fit on a phone held upright, and the L/R numbers say which is
- * which. A single panel, however wide, is drawn as one piece because shots cross it.
+ * [highlight] ringed and its shot drawn to where it lands. One canvas per column range
+ * in [ranges]: the whole wall, or one panel each when they have to stack.
  */
 @Composable
-private fun Board(plan: StrategyPlan, team: TeamPlan, state: BoardState, frame: Int, highlight: Int?, cell: Dp) {
+private fun Board(
+    plan: StrategyPlan,
+    team: TeamPlan,
+    state: BoardState,
+    frame: Int,
+    highlight: Int?,
+    ranges: List<IntRange>,
+    cell: Dp,
+) {
     val stage = plan.stage
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        for (panel in stage.panels) {
+        for (panel in ranges) {
             val cols = panel.last - panel.first + 1
             Panel(
                 plan = plan,
@@ -557,6 +583,11 @@ private fun Panel(
                 val c = Cell(x, y)
                 val left = (x - columns.first) * cw
                 val top = y * ch
+                if (stage.isWall(x)) {
+                    drawRect(COLOUR_WALL, Offset(left, top), Size(cw, ch))
+                    drawRect(COLOUR_LINE, Offset(left, top), Size(cw, ch), style = Stroke(1.dp.toPx()))
+                    continue
+                }
                 val gunIndex = stage.guns.indexOfFirst { it.x == x && it.y == y }
                 val live = gunIndex >= 0 && gunIndex in state.guns
                 val fill = when {

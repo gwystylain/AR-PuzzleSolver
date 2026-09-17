@@ -46,6 +46,7 @@ import com.puzzlesolver.app.ui.PuzzleSolverTheme
 import com.puzzlesolver.app.ui.ScanScreen
 import com.puzzlesolver.app.ui.StrategyScreen
 import com.puzzlesolver.core.puzzle.strategy.StrategyPlan
+import com.puzzlesolver.core.puzzle.strategy.StrategyRoom
 import com.puzzlesolver.core.puzzle.strategy.StrategySolver
 import com.puzzlesolver.core.puzzle.strategy.StrategyStages
 
@@ -94,21 +95,24 @@ class MainActivity : ComponentActivity() {
     private var gemTargets by mutableStateOf<List<GemPattern>>(emptyList())
 
     /**
-     * The Strategy guide, which is a game mode with the camera off.
+     * The guide room on screen -- Strategy or Gridlock -- or null while scanning. The
+     * guides are game modes with the camera off.
      *
-     * While it is up the scan is paused the same way leaving the app pauses it: the GL
+     * While one is up the scan is paused the same way leaving the app pauses it: the GL
      * view stops and the source gives the camera back. Not stopped outright, because the
      * user is switching rooms, not leaving, and the wall fit they had is worth keeping
      * for when they switch back.
      */
-    private var strategyGuide by mutableStateOf(false)
-    private var strategyLevel by mutableStateOf(1)
+    private var guideRoom by mutableStateOf<StrategyRoom?>(null)
 
-    /** How many are playing; asked the first time the guide opens and kept for the session. */
+    /** The level each room was last on, so switching rooms and back keeps the place. */
+    private var guideLevel by mutableStateOf<Map<StrategyRoom, Int>>(emptyMap())
+
+    /** How many are playing; asked the first time a guide opens and kept for the session. */
     private var strategyPlayers by mutableStateOf<Int?>(null)
 
-    /** Plans per level, filled in on a worker the first time the guide is opened. */
-    private var strategyPlans by mutableStateOf<Map<Int, List<StrategyPlan>>>(emptyMap())
+    /** Plans per room and level, filled in on a worker the first time a guide is opened. */
+    private var strategyPlans by mutableStateOf<Map<StrategyRoom, Map<Int, List<StrategyPlan>>>>(emptyMap())
     private var strategySolving = false
 
     /**
@@ -321,7 +325,7 @@ class MainActivity : ComponentActivity() {
     ) { granted ->
         if (!granted) {
             toast("Camera permission is required to scan a wall")
-        } else if (!strategyGuide) {
+        } else if (guideRoom == null) {
             startLiveSource()
         }
     }
@@ -431,17 +435,19 @@ class MainActivity : ComponentActivity() {
                         onResetCamera = { pipeline.resetCamera() },
                         onForceFlatWall = { pipeline.setForcedFlatWall(it) },
                         onExpectCells = { pipeline.setExpectedCells(it) },
-                        strategyGuide = strategyGuide,
-                        onSelectStrategyGuide = { enterStrategyGuide() },
-                        strategyContent = {
+                        guideRoom = guideRoom,
+                        onSelectGuide = { enterGuide(it) },
+                        guideContent = { room ->
+                            val levels = STRATEGY_LEVELS.getValue(room)
                             StrategyScreen(
-                                levels = STRATEGY_LEVELS,
-                                plans = strategyPlans,
-                                level = strategyLevel,
-                                onSelectLevel = { strategyLevel = it },
+                                title = room.displayName,
+                                levels = levels,
+                                plans = strategyPlans[room] ?: emptyMap(),
+                                level = guideLevel[room] ?: levels.first(),
+                                onSelectLevel = { guideLevel = guideLevel + (room to it) },
                                 players = strategyPlayers,
                                 onSelectPlayers = {
-                                    Log.i(TAG, "strategy: $it players")
+                                    Log.i(TAG, "guide: $it players")
                                     strategyPlayers = it
                                 },
                             )
@@ -464,7 +470,7 @@ class MainActivity : ComponentActivity() {
                 // discovered afterwards is not one to leave to memory. An explicit Stop
                 // is respected.
                 val liveMode = uiState.isGemsMode || uiState.isTerminalMode
-                if (liveMode && !strategyGuide && !loggingSuppressed && !logCapture.isRunning) {
+                if (liveMode && guideRoom == null && !loggingSuppressed && !logCapture.isRunning) {
                     startLogging()
                 }
                 isLogging = logCapture.isRunning
@@ -501,7 +507,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         // The guide keeps the camera off across a background trip as well as within one.
-        if (!strategyGuide) resumeScanning()
+        if (guideRoom == null) resumeScanning()
         ContextCompat.registerReceiver(
             this,
             debugReceiver,
@@ -512,7 +518,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
-        if (!strategyGuide) pauseScanning()
+        if (guideRoom == null) pauseScanning()
         try {
             unregisterReceiver(debugReceiver)
         } catch (_: IllegalArgumentException) {
@@ -544,40 +550,48 @@ class MainActivity : ComponentActivity() {
         sessionResumed = false
     }
 
-    // --- Strategy guide --------------------------------------------------
+    // --- Guide rooms -----------------------------------------------------
 
-    private fun enterStrategyGuide() {
-        if (strategyGuide) return
-        Log.i(TAG, "mode selected: strategy guide")
-        strategyGuide = true
-        pauseScanning()
+    private fun enterGuide(room: StrategyRoom) {
+        Log.i(TAG, "mode selected: ${room.id} guide")
+        val wasScanning = guideRoom == null
+        guideRoom = room
+        if (wasScanning) pauseScanning()
         solveStrategyLevels()
     }
 
-    private fun leaveStrategyGuide() {
-        if (!strategyGuide) return
-        strategyGuide = false
+    private fun leaveGuide() {
+        if (guideRoom == null) return
+        guideRoom = null
         resumeScanning()
     }
 
     /**
-     * Works out every level once, off the main thread, and publishes each as it lands.
+     * Works out every level of every room once, off the main thread, and publishes each
+     * as it lands.
      *
      * The whole set takes well under a second on a laptop and the data is fixed, so this
      * could be a table shipped with the app. Solving it instead keeps the transcription
      * the only thing to maintain: correct the stage file and the plan corrects itself.
+     * The room on screen goes first, so it is ready before the other is started.
      */
     private fun solveStrategyLevels() {
         if (strategySolving) return
         strategySolving = true
+        val rooms = listOfNotNull(guideRoom) + StrategyRoom.entries.filter { it != guideRoom }
         Thread({
-            for ((level, stages) in StrategyStages.levels()) {
-                val plans = stages.mapNotNull { stage ->
-                    StrategySolver(stage).solve().also {
-                        if (it == null) Log.w(TAG, "strategy: no plan for $stage")
+            for (room in rooms) {
+                for ((level, stages) in StrategyStages.levels(room)) {
+                    val plans = stages.mapNotNull { stage ->
+                        StrategySolver(stage).solve().also {
+                            if (it == null) Log.w(TAG, "${room.id}: no plan for $stage")
+                        }
+                    }
+                    runOnUiThread {
+                        val solved = strategyPlans[room] ?: emptyMap()
+                        strategyPlans = strategyPlans + (room to solved + (level to plans))
                     }
                 }
-                runOnUiThread { strategyPlans = strategyPlans + (level to plans) }
             }
         }, "strategy-solver").start()
     }
@@ -620,7 +634,7 @@ class MainActivity : ComponentActivity() {
      */
     private fun selectPuzzleMode(id: String?) {
         Log.i(TAG, "mode selected: ${id ?: "automatic"}")
-        leaveStrategyGuide()
+        leaveGuide()
         pipeline.selectPuzzleMode(id)
         val wantsLiveCamera = id == GemAdapter.ID || id == TerminalAdapter.ID
         if (wantsLiveCamera != usingLiveCamera) {
@@ -988,8 +1002,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private companion object {
-        /** Every level the guide offers; each has stages in the bundled data. */
-        private val STRATEGY_LEVELS = (1..10).toList()
+        /** The levels each guide offers; each has stages in the bundled data. */
+        private val STRATEGY_LEVELS = mapOf(
+            StrategyRoom.STRATEGY to (1..10).toList(),
+            StrategyRoom.GRIDLOCK to (6..10).toList(),
+        )
 
         const val TAG = "MainActivity"
         const val DEBUG_ACTION = "com.puzzlesolver.app.DEBUG"

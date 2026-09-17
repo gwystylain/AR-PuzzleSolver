@@ -1,6 +1,7 @@
 package com.puzzlesolver.core
 
 import com.puzzlesolver.core.puzzle.strategy.StrategyPlan
+import com.puzzlesolver.core.puzzle.strategy.StrategyRoom
 import com.puzzlesolver.core.puzzle.strategy.StrategySolver
 import com.puzzlesolver.core.puzzle.strategy.StrategyStages
 import com.puzzlesolver.core.puzzle.strategy.TeamPlanner
@@ -22,7 +23,7 @@ import kotlin.random.Random
 class TeamPlannerTest {
 
     private val plans: List<StrategyPlan> by lazy {
-        StrategyStages.bundled().map { StrategySolver(it).solve()!! }
+        StrategyRoom.entries.flatMap { room -> StrategyStages.bundled(room).map { StrategySolver(it).solve()!! } }
     }
 
     /** A random order in which every shot comes after everything it depends on. */

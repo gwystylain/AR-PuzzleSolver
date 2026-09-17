@@ -4,6 +4,7 @@ import com.puzzlesolver.core.puzzle.strategy.Cell
 import com.puzzlesolver.core.puzzle.strategy.Hit
 import com.puzzlesolver.core.puzzle.strategy.RedRule
 import com.puzzlesolver.core.puzzle.strategy.StrategyPlan
+import com.puzzlesolver.core.puzzle.strategy.StrategyRoom
 import com.puzzlesolver.core.puzzle.strategy.StrategySolver
 import com.puzzlesolver.core.puzzle.strategy.StrategyStage
 import com.puzzlesolver.core.puzzle.strategy.StrategyStages
@@ -24,6 +25,7 @@ import org.junit.Test
 class StrategySolverTest {
 
     private val stages by lazy { StrategyStages.bundled() }
+    private val gridlock by lazy { StrategyStages.bundled(StrategyRoom.GRIDLOCK) }
 
     private fun stage(level: Int, index: Int): StrategyStage =
         stages.first { it.level == level && it.index == index }
@@ -41,10 +43,13 @@ class StrategySolverTest {
 
     @Test
     fun `every bundled stage has a plan that replays clean`() {
-        assertEquals(44, stages.size)
+        assertEquals(48, stages.size)
         assertEquals((1..10).toList(), stages.map { it.level }.distinct())
+        assertEquals(20, gridlock.size)
+        assertEquals((6..10).toList(), gridlock.map { it.level }.distinct())
+        assertEquals(setOf(6, 7, 8, 9, 10), StrategyStages.levels(StrategyRoom.GRIDLOCK).keys)
         var slowest = 0L
-        for (stage in stages) {
+        for (stage in stages + gridlock) {
             val t0 = System.nanoTime()
             val plan = StrategySolver(stage).solve()
             val ms = (System.nanoTime() - t0) / 1_000_000
@@ -67,7 +72,7 @@ class StrategySolverTest {
 
     @Test
     fun `only level 4 stage 4 costs a life`() {
-        for (stage in stages) {
+        for (stage in stages + gridlock) {
             val plan = StrategySolver(stage).solve()!!
             val expected = if (stage.level == 4 && stage.index == 4) 1 else 0
             assertEquals("$stage", expected, plan.redHits)
@@ -105,10 +110,52 @@ class StrategySolverTest {
     fun `two panels are numbered separately as L and R`() {
         val s = stage(7, 1)
         assertEquals(2, s.panels.size)
-        assertEquals((1..8).map { "L$it" } + (1..8).map { "R$it" }, s.gunsByLabel.map { s.labels[it] })
-        // The inner edges face each other across the wall, and both count as border.
-        val leftInner = s.guns.indexOfFirst { it.x == 9 && it.y == 4 }
-        assertEquals("L3", s.labels[leftInner])
+        assertEquals(listOf(0..6, 9..15), s.panels)
+        assertTrue(s.isWall(7) && s.isWall(8))
+        assertEquals((1..10).map { "L$it" } + (1..10).map { "R$it" }, s.gunsByLabel.map { s.labels[it] })
+        // The inner edges face each other across the wall, and both count as border:
+        // the left panel's right-hand column runs L2..L9 top to bottom after the top
+        // gun, and the right panel's left-hand column runs bottom to top after its
+        // bottom gun.
+        assertEquals("L2", s.labels[s.guns.indexOfFirst { it.x == 6 && it.y == 2 }])
+        assertEquals("L9", s.labels[s.guns.indexOfFirst { it.x == 6 && it.y == 9 }])
+        assertEquals("R3", s.labels[s.guns.indexOfFirst { it.x == 9 && it.y == 9 }])
+        assertEquals("R10", s.labels[s.guns.indexOfFirst { it.x == 9 && it.y == 2 }])
+    }
+
+    @Test
+    fun `gridlock keeps its boards apart or joins them as the site does`() {
+        // Levels 7 and 8: two 10-wide boards with a wall between; each is its own panel.
+        val apart = gridlock.first { it.level == 7 && it.index == 1 }
+        assertEquals(listOf(0..9, 12..21), apart.panels)
+        assertTrue(apart.isWall(10) && apart.isWall(11))
+        assertEquals((1..8).map { "L$it" } + (1..8).map { "R$it" }, apart.gunsByLabel.map { apart.labels[it] })
+        assertEquals("L3", apart.labels[apart.guns.indexOfFirst { it.x == 9 && it.y == 4 }])
+        // Levels 6, 9, 10: the boards touch, shots cross, and it is one 22-wide panel.
+        val joined = gridlock.first { it.level == 9 && it.index == 1 }
+        assertEquals(listOf(0..21), joined.panels)
+        assertEquals(null, joined.gap)
+        assertTrue(joined.labels.none { it.startsWith("L") || it.startsWith("R") })
+        // A purple on the right board lights its target on the left one, mirrored.
+        val plan = StrategySolver(apart).solve()!!
+        val mirror = plan.shots.first { it.hit == Hit.MIRROR }
+        val spawned = Cell(apart.width - 1 - mirror.cell!!.x, mirror.cell.y)
+        assertTrue(plan.shots.any { it.hit == Hit.TARGET && it.cell == spawned })
+    }
+
+    @Test
+    fun `level 9 alternates two layouts of targets`() {
+        val s = stage(9, 1)
+        val moving = s.movingTargets!!
+        assertEquals(2, s.frameCount)
+        assertEquals(2000, s.periodMillis)
+        assertEquals(16, moving.ids.size)
+        // Every target is on the board in exactly one of the two layouts.
+        for (id in moving.ids) assertEquals(1, moving.frames.count { id in it })
+        val plan = StrategySolver(s).solve()!!
+        assertEquals(16, plan.shots.size)
+        // Each shot is fired on the layout its target belongs to, never both.
+        for (shot in plan.shots) assertEquals(1, shot.frames.size)
     }
 
     @Test
