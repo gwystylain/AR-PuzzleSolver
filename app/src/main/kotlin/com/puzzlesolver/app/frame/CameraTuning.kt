@@ -201,11 +201,14 @@ class CameraTuning {
      * from the shape of a digit, and a digit smeared across a dozen pixels by a hand-held
      * pan is not a shape any classifier recovers.
      *
-     * Measured, on the reference clip degraded to match a room run that missed 27% of its
-     * displays: 13 to 15 pixels of motion blur reproduces that 27% almost exactly, while
-     * sensor noise at sigma 16 costs 0.4% and a quarter less light costs nothing at all.
-     * So blur is the whole of the problem and gain is very nearly free, which makes this
-     * an easy trade to make and a strange one to have to argue for.
+     * Measured on the reference clip: sensor noise at sigma 16 costs the reader 0.4%, a
+     * quarter less light costs nothing, and 15 pixels of motion blur costs 28%. So gain
+     * is very nearly free and blur would be ruinous -- which is the case for this trade.
+     * It is not, as it was first written up, the fix for a room run that missed a
+     * quarter of the wall: that turned out to be the display housings being swallowed
+     * into the detector's boxes, found when the first capture came back with sharp
+     * digits in boxes a third too wide. See docs/TERMINAL_PUZZLE.md. The preset stays
+     * because it costs nothing and blur is real; it is just not what was wrong.
      *
      * The gain is chosen to hold the brightness the camera's own metering had already
      * settled on -- the same exposure paid for in a different currency -- rather than

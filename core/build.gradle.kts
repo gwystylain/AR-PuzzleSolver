@@ -20,7 +20,7 @@ tasks.test {
     // Forwarded so `TerminalTemplateBuilder` can be pointed at a directory of frames
     // from the command line. Gradle does not pass -D through to the test JVM on its own,
     // and the alternative -- hardcoding a path in a test -- is worse.
-    for (key in listOf("terminal.frames", "terminal.out")) {
+    for (key in listOf("terminal.frames", "terminal.out", "terminal.rows")) {
         System.getProperty(key)?.let { systemProperty(key, it) }
     }
 }

@@ -72,7 +72,7 @@ class TerminalTemplateBuilder {
         var used = 0
 
         for (file in frames) {
-            val frame = readPgm(file)
+            val frame = Pgm.read(file)
             val rows = groupIntoRows(detector.detect(frame))
             if (rows.map { it.size } != wall.map { it.size }) continue
             used++
@@ -122,34 +122,5 @@ class TerminalTemplateBuilder {
             if (row != null && b.y - row[0].y < row[0].height * 0.6f) row.add(b) else out.add(mutableListOf(b))
         }
         return out.map { it.sortedBy { b -> b.x } }
-    }
-
-    private fun readPgm(file: File): GrayImage = file.inputStream().use { input ->
-        fun token(): String {
-            val sb = StringBuilder()
-            var c = input.read()
-            while (c == ' '.code || c == '\n'.code || c == '\r'.code || c == '\t'.code) c = input.read()
-            if (c == '#'.code) {
-                while (c != '\n'.code) c = input.read()
-                return token()
-            }
-            while (c > 0 && c != ' '.code && c != '\n'.code && c != '\r'.code && c != '\t'.code) {
-                sb.append(c.toChar())
-                c = input.read()
-            }
-            return sb.toString()
-        }
-        require(token() == "P5") { "$file is not a binary PGM" }
-        val w = token().toInt()
-        val h = token().toInt()
-        token()
-        val data = ByteArray(w * h)
-        var read = 0
-        while (read < data.size) {
-            val n = input.read(data, read, data.size - read)
-            if (n <= 0) break
-            read += n
-        }
-        GrayImage(w, h, data)
     }
 }

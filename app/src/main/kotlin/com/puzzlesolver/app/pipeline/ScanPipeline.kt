@@ -961,11 +961,18 @@ class ScanPipeline(
         }
 
         if (pinned == TerminalAdapter.ID) {
-            // Deliberately *not* latched on a failure. This preset holds the brightness
-            // the camera's own metering had settled on and pays for the shorter exposure
-            // in gain, so until a frame's metadata has come back there is nothing to
-            // scale against and it declines. Asking again next frame costs nothing;
-            // latching would leave the shutter where it was for the whole visit.
+            // Only once the wall is what the camera is metering. The preset scales its
+            // gain from whatever exposure the camera has settled on, and on the first
+            // captured round it settled on the floor of a dark room -- 1/16 s at the
+            // sensor's ISO ceiling -- a second before the wall came into frame. It locked
+            // that in, and the wall then ran two stops over-exposed at 1/97 s for the
+            // whole round: no freeze, and every digit clipped to solid white. The reader
+            // is the one thing here that knows whether the wall is in view.
+            if (liveTerminalResult.displays.size < MIN_DISPLAYS_FOR_PRESET) return
+            // Deliberately *not* latched on a failure. Until a frame's metadata has come
+            // back there is nothing to scale against and it declines; asking again next
+            // frame costs nothing, and latching would leave the shutter where it was for
+            // the whole visit.
             if (tuning.applyMotionFreezePreset()) {
                 cameraPresetApplied = true
                 Log.i(
@@ -1943,6 +1950,13 @@ class ScanPipeline(
 
         /** Live gem scans at ~10 Hz on a 30 fps stream. Walls do not move that fast. */
         const val LIVE_SCAN_EVERY_N_FRAMES = 3L
+
+        /**
+         * Displays the terminal reader must have in frame before the camera preset is
+         * applied. A third of the wall: enough to be sure it is the wall the camera is
+         * metering and not the floor on the way to it.
+         */
+        const val MIN_DISPLAYS_FOR_PRESET = 10
 
         /**
          * Radius of the drawn highlight as a fraction of the button pitch. Half a pitch

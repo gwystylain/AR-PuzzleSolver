@@ -64,7 +64,11 @@ than one at the far end and no single threshold finds both without also finding 
 between them.
 
 Decimating first is free: the detector finds all 32 displays unchanged from 1920×1080
-down to 640×360. The digits are a different matter and are read at full resolution.
+down to 640×360. The digits are a different matter and are read at full resolution -- and
+so, it turned out, is the box itself. The coarse pass can swallow the dark housing round a
+display when the housing is lit, and a second pass at full resolution trims each box back
+to the lit tiles. That was found in the room and is described under
+[what the capture showed](#what-the-capture-actually-showed).
 
 ## Reading a digit
 
@@ -328,26 +332,76 @@ which axis:
 | **13 px blur + 0.75x + noise** | **21.3%** | 7.4% |
 | **15 px of diagonal motion blur** | **28.5%** | 10.3% |
 
-The room measured 27%. **Motion blur is the whole of it** - noise and scale are very
-nearly free, and a hand-held pan at the 1/100 s the camera was choosing for itself smears
-a digit across a dozen pixels. This reader recovers a smeared glyph exactly never: it
-correlates shapes.
+The room measured 27%. Blur reproduced the number, so blur was called the cause, and
+the shutter was pinned to freeze it (below). **That diagnosis was wrong**, and it is left
+here because the way it was wrong is the lesson: a simulation that lands on the right
+number is not evidence of the mechanism. The next visit brought back frames, and the
+frames showed sharp digits.
 
-### Which is why the shutter is pinned
+### What the capture actually showed
 
-Blur scales with exposure time, so the fix is upstream of everything: hold the light where
-the camera's own metering put it and buy a shorter exposure with gain. Simulated at
-1/250 s - 6 px of blur, noise at sigma 20, and a quarter less light for good measure - the
-same frames come back at **0.4% unread**.
+The first burst `TerminalRecorder` brought back -- twelve frames, mid-round, from where a
+player stands -- read 8 to 10 displays per frame as illegible, the same quarter as before.
+The sidecar said which ones, and the pattern was in the box widths: displays that read
+were 120-128 pixels wide, displays that did not were 140-176. The frame said why.
 
-`CameraTuning.applyMotionFreezePreset` does that, and it is the opposite trade to the
-LED-wall preset that Gems uses: that one takes light away from a wall that was clipping,
-this one keeps the light and spends noise. The gain is scaled from whatever the camera had
-already settled on rather than fixed, so it is right in a room it has never seen; and when
-the gain ceiling cannot pay for the full 1/250 s it gives up shutter rather than light,
-because under-exposing a wall that is found by thresholding against a local background is
-a worse failure than a little blur. On the phone it asks for `manual 1/250s iso4735` in
-that room and the sensor honours it exactly.
+![Swallowed boxes on the captured frame](terminal-housing.png)
+
+*The detector's box in red and its three tile cuts in yellow. Top row and left: boxes that
+took in the dark octagonal housing round the tiles, and cuts that land mid-digit. Bottom
+right: two that did not.*
+
+Each display sits in a housing. The coarse detector works at a twelfth of the resolution
+against a local background, and whether the housing clears that threshold depends on how
+it is lit. On the reference clip, filmed from further back and squarer on, none did. From
+where a player stands, the housings at the two ends of the wall face the camera and catch
+enough light that eight of them did -- and a box a third too wide, cut into three equal
+tiles, puts every cut through a digit. `066` read as `??6`; `076` as `07?` in all twelve
+frames; and `080` as `000`, which being the lowest number on the wall took the green
+rectangle. That last one is what the second visit reported as "another number missed".
+
+**The fix is to tighten each box to the lit tiles at full resolution.** The tiles are the
+brightest thing in the box by a wide margin -- borders and digits at the top of the range,
+the housing near the bottom -- so `DisplayDetector.refine` cuts at 55% of the box's own
+brightest content and trims to the columns and rows that carry a real run of it, thirty
+per cent or more. Measured on that capture: the swallowed boxes come down from 148-164
+wide to 121-122, which is what the clean ones were all along; on the clip, where nothing
+was swallowed, boxes move by two or three pixels.
+
+| | before | after |
+| --- | --- | --- |
+| captured round, 12 frames, unread as a share of lit | 27% | **2%** |
+| the first five frames of it | 8 of 33 unread | **32 of 32 read** |
+| the green rectangle | on `080` read as `000` | on `001` |
+| reference clip, 64 frames | 1% | 0% |
+
+What is left is honest: the score gauge on the side wall throwing a junk blob in three
+frames of twelve, and two displays caught mid-flip as the ball takes them.
+
+Two smaller things came out of the same frames. A lit rim at the left edge of the frame
+returned as a 33rd display every time, so a blob touching the frame edge is now dropped --
+it is either not a display or not one that can be read in full. And the trim's run floor
+was first set at 15%, which let a lit reflection on one housing's corner hold a box open
+by a single pixel per column; tile columns carry 85-95%, so it sits at 30% now.
+
+### The shutter is still pinned, for a narrower reason
+
+`CameraTuning.applyMotionFreezePreset` holds the light where the camera's own metering put
+it and buys a shorter exposure with gain: the opposite trade to the LED-wall preset, which
+takes light away from a wall that was clipping. It was built to freeze the blur that
+turned out not to be the problem, and it stays because the trade is still free -- this
+reader is indifferent to noise and would be fatal to blur if it ever came -- but it is not
+the fix for anything measured, and the doc no longer claims it is.
+
+It did cause one problem on the captured round, and that *is* fixed. It fired the moment
+the mode became active, which was a second before the wall came into frame, and so scaled
+its gain from the floor of a dark room: 1/16 s at the sensor's ISO ceiling. There was no
+headroom to trade, it settled for 1/97 s, and it locked that in -- so when the wall
+arrived it ran two stops over-exposed for the whole round, every digit clipped to solid
+white. It now waits until the reader has ten displays in frame, so the exposure it scales
+from is the wall's, and when the gain ceiling cannot pay for the full 1/250 s it gives up
+shutter rather than light. On the phone, applied with the wall in view, it asks for
+`manual 1/250s iso2087` and the sensor honours it exactly.
 
 ## Getting evidence out of the room
 

@@ -14,6 +14,7 @@ import android.util.Log
 import android.view.Surface
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
@@ -42,6 +43,7 @@ import com.puzzlesolver.core.puzzle.terminal.TerminalAdapter
 import com.puzzlesolver.app.record.LogCapture
 import com.puzzlesolver.app.record.SessionBundle
 import com.puzzlesolver.app.record.SessionStore
+import com.puzzlesolver.app.ui.LandingScreen
 import com.puzzlesolver.app.ui.PuzzleSolverTheme
 import com.puzzlesolver.app.ui.ScanScreen
 import com.puzzlesolver.app.ui.StrategyScreen
@@ -104,6 +106,17 @@ class MainActivity : ComponentActivity() {
      * for when they switch back.
      */
     private var guideRoom by mutableStateOf<StrategyRoom?>(null)
+
+    /**
+     * Whether the landing page is up. True at launch, cleared by any mode choice --
+     * from the page, the drawer or the debug broadcast alike -- and raised again by
+     * Back from the HUD or a guide.
+     *
+     * It is an overlay, not a state of its own: whatever was running keeps running
+     * underneath, so the camera is warm by the time the first card is tapped, and going
+     * Back to the page and picking the same room again costs nothing.
+     */
+    private var showLanding by mutableStateOf(true)
 
     /** The level each room was last on, so switching rooms and back keeps the place. */
     private var guideLevel by mutableStateOf<Map<StrategyRoom, Int>>(emptyMap())
@@ -381,6 +394,9 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             PuzzleSolverTheme {
+                // Before the HUD, so the drawer's own Back -- which closes it -- wins
+                // while it is open. Handlers composed later take precedence.
+                BackHandler(enabled = !showLanding) { showLanding = true }
                 Box(Modifier.fillMaxSize()) {
                     AndroidView(factory = { glView }, modifier = Modifier.fillMaxSize())
                     ScanScreen(
@@ -452,6 +468,12 @@ class MainActivity : ComponentActivity() {
                                 },
                             )
                         },
+                    )
+                    LandingScreen(
+                        modes = pipeline.puzzleModes,
+                        visible = showLanding,
+                        onSelectMode = { selectPuzzleMode(it) },
+                        onSelectGuide = { enterGuide(it) },
                     )
                 }
             }
@@ -554,6 +576,7 @@ class MainActivity : ComponentActivity() {
 
     private fun enterGuide(room: StrategyRoom) {
         Log.i(TAG, "mode selected: ${room.id} guide")
+        showLanding = false
         val wasScanning = guideRoom == null
         guideRoom = room
         if (wasScanning) pauseScanning()
@@ -634,6 +657,7 @@ class MainActivity : ComponentActivity() {
      */
     private fun selectPuzzleMode(id: String?) {
         Log.i(TAG, "mode selected: ${id ?: "automatic"}")
+        showLanding = false
         leaveGuide()
         pipeline.selectPuzzleMode(id)
         val wantsLiveCamera = id == GemAdapter.ID || id == TerminalAdapter.ID

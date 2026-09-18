@@ -46,40 +46,7 @@ class TerminalWallTest {
         listOf("027", "039", "093", "071", "018", "052"),
     )
 
-    private fun loadFixture(): GrayImage {
-        val stream = javaClass.classLoader!!.getResourceAsStream("terminal-wall.pgm")
-            ?: error("fixture missing")
-        stream.use { input ->
-            // PGM: "P5", width height, maxval, then raw bytes. Comments start with '#'.
-            fun token(): String {
-                val sb = StringBuilder()
-                var c = input.read()
-                while (c == ' '.code || c == '\n'.code || c == '\r'.code || c == '\t'.code) c = input.read()
-                if (c == '#'.code) {
-                    while (c != '\n'.code) c = input.read()
-                    return token()
-                }
-                while (c > 0 && c != ' '.code && c != '\n'.code && c != '\r'.code && c != '\t'.code) {
-                    sb.append(c.toChar())
-                    c = input.read()
-                }
-                return sb.toString()
-            }
-            require(token() == "P5")
-            val w = token().toInt()
-            val h = token().toInt()
-            token()                                     // maxval
-            val data = ByteArray(w * h)
-            var read = 0
-            while (read < data.size) {
-                val n = input.read(data, read, data.size - read)
-                if (n <= 0) break
-                read += n
-            }
-            require(read == data.size) { "short fixture: $read of ${data.size}" }
-            return GrayImage(w, h, data)
-        }
-    }
+    private fun loadFixture(): GrayImage = Pgm.resource("terminal-wall.pgm")
 
     private fun scanner() = TerminalScanner()
 

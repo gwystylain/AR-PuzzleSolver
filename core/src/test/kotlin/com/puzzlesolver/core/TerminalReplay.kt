@@ -30,6 +30,10 @@ import kotlin.math.sqrt
  * the correlation the winning template scored, so a run that reports displays as
  * illegible can be asked *how close* they came, and whether the floor is in the right
  * place or the glyph was never going to be read.
+ *
+ * Add `-Dterminal.rows=true` for a row per display under each frame, in the shape of the
+ * capture sidecar -- which is what to diff against it, since the sidecar holds what the
+ * reader said *on the phone* and this holds what the reader says *now*.
  */
 class TerminalReplay {
 
@@ -41,6 +45,7 @@ class TerminalReplay {
             return
         }
         val frames = framesIn(dir)
+        val rows = System.getProperty("terminal.rows") == "true"
 
         val scanner = TerminalScanner()
         var totalDisplays = 0
@@ -49,7 +54,7 @@ class TerminalReplay {
         var totalCleared = 0
 
         for (file in frames) {
-            val frame = readPgm(file)
+            val frame = Pgm.read(file)
             scanner.scan(frame)                          // settle, as the device does
             val r = scanner.scan(frame)
             val cleared = r.displays.count { it.cleared }
@@ -64,6 +69,21 @@ class TerminalReplay {
                         r.lowest?.text ?: "-", r.second?.text ?: "-",
                     )
             )
+            if (rows) {
+                for (d in r.displays.sortedWith(compareBy({ it.box.y / 40 }, { it.box.x }))) {
+                    val mark = when {
+                        d.cleared -> "cleared"
+                        d.value == null -> "UNREAD"
+                        d.rank == 0 -> "GREEN"
+                        d.rank == 1 -> "YELLOW"
+                        else -> ""
+                    }
+                    println(
+                        "    %5d %5d %4dx%-3d  %-4s %5.2f  %s"
+                            .format(d.box.x, d.box.y, d.box.width, d.box.height, d.text, d.confidence, mark)
+                    )
+                }
+            }
         }
         val lit = totalNumbers + totalUnread
         println(
@@ -103,7 +123,7 @@ class TerminalReplay {
         var total = 0
         var blank = 0
         for (file in frames) {
-            val frame = readPgm(file)
+            val frame = Pgm.read(file)
             for (box in detector.detect(frame)) {
                 for (k in 0 until DigitReader.TILES) {
                     val glyph = reader.isolate(frame, box, k)
@@ -146,43 +166,5 @@ class TerminalReplay {
             acc += v * v
         }
         return dot / (sqrt(acc) * template.norm)
-    }
-
-    private fun readPgm(file: File): GrayImage = openMaybeGzipped(file).use { input ->
-        fun token(): String {
-            val sb = StringBuilder()
-            var c = input.read()
-            while (c == ' '.code || c == '\n'.code || c == '\r'.code || c == '\t'.code) c = input.read()
-            if (c == '#'.code) {
-                while (c != '\n'.code) c = input.read()
-                return token()
-            }
-            while (c > 0 && c != ' '.code && c != '\n'.code && c != '\r'.code && c != '\t'.code) {
-                sb.append(c.toChar())
-                c = input.read()
-            }
-            return sb.toString()
-        }
-        require(token() == "P5") { "$file is not a binary PGM" }
-        val w = token().toInt()
-        val h = token().toInt()
-        token()
-        val data = ByteArray(w * h)
-        var read = 0
-        while (read < data.size) {
-            val n = input.read(data, read, data.size - read)
-            if (n <= 0) break
-            read += n
-        }
-        GrayImage(w, h, data)
-    }
-
-    /** Sniffs the gzip magic rather than trusting the name, which costs two bytes. */
-    private fun openMaybeGzipped(file: File): java.io.InputStream {
-        val raw = java.io.BufferedInputStream(file.inputStream(), 1 shl 16)
-        raw.mark(2)
-        val gzipped = raw.read() == 0x1f && raw.read() == 0x8b
-        raw.reset()
-        return if (gzipped) java.util.zip.GZIPInputStream(raw) else raw
     }
 }

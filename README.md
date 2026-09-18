@@ -222,7 +222,8 @@ app/
   render/                  canvas accumulator, camera background, AR overlay, glyph atlas
   pipeline/                ScanPipeline -- GL thread and solver thread, wired together
                            AutoExposure -- solver-driven exposure search
-  ui/                      Compose HUD, including the Gems target controls, and the
+  ui/                      Compose: the landing page the rooms are picked from, the
+                           scanning HUD with the Gems target controls, and the
                            Strategy guide screen
   record/                  where recordings live
 tools/
