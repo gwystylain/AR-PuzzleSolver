@@ -16,9 +16,10 @@ import kotlin.random.Random
  * So every plan is replayed in many random orders that respect only the graph -- not the
  * plan's own order -- and each shot has to land exactly where the plan says.
  *
- * The scheduling itself is a heuristic and is held to the things a player would notice:
- * the example from the brief comes out as two clean lanes, more players never make a
- * stage slower, and every cross-lane wait is named.
+ * The split itself is a search, and is held to the team's rules where they can be
+ * checked outright: every split is even; the case that prompted the rules -- a player
+ * whose last press waited on another's fifth -- now waits on a first; two boards and two
+ * players come out a board each; and every cross-lane wait is named.
  */
 class TeamPlannerTest {
 
@@ -146,16 +147,62 @@ class TeamPlannerTest {
     }
 
     @Test
-    fun `more players never make a stage slower`() {
+    fun `every split is even`() {
         for (plan in plans) {
             val planner = TeamPlanner(plan)
-            var previous = planner.schedule(1).makespan
-            assertTrue(previous >= plan.shots.size * TeamPlanner.PRESS)
-            for (players in 2..5) {
-                val now = planner.schedule(players).makespan
-                assertTrue("${plan.stage}: $players players take $now, ${players - 1} took $previous", now <= previous + 1e-9)
-                previous = now
+            for (players in 1..5) {
+                val sizes = planner.schedule(players).lanes.map { it.shots.size }
+                assertEquals("${plan.stage} p$players", players, sizes.size)
+                assertTrue("${plan.stage} p$players: $sizes", sizes.max() - sizes.min() <= 1)
             }
+        }
+    }
+
+    private fun plan(room: StrategyRoom, level: Int, index: Int): StrategyPlan =
+        StrategySolver(StrategyStages.bundled(room).first { it.level == level && it.index == index }).solve()!!
+
+    @Test
+    fun `a hand-off comes first and the press that waits on it last`() {
+        // Gridlock 6-1 for three players is the split that prompted the rules: a
+        // player's last press waited on another player's fifth, which a quick player
+        // could overtake. Every wait now sits at the back of its stack, and every press
+        // waited for at the front of its own.
+        val team = TeamPlanner(plan(StrategyRoom.GRIDLOCK, 6, 1)).schedule(3)
+        val waits = team.lanes.flatMap { lane -> lane.waitsFor.entries.map { lane to it } }
+        assertTrue("expected at least one hand-off to check", waits.isNotEmpty())
+        for ((lane, entry) in waits) {
+            assertEquals("P${lane.player} waits before its last press", lane.shots.last(), entry.key)
+            for (w in entry.value) {
+                val other = team.lanes.first { w in it.shots }
+                assertEquals("P${other.player} hands off late", other.shots.first(), w)
+            }
+        }
+    }
+
+    @Test
+    fun `two boards and two players come out a board each`() {
+        // Gridlock 7-1: the purple tiles on each board light targets on the other, so
+        // there is no split without hand-offs. The best has each player stay on their
+        // own board, hand off from the front and take the other's hand-offs at a margin.
+        val plan = plan(StrategyRoom.GRIDLOCK, 7, 1)
+        val team = TeamPlanner(plan).schedule(2)
+        for (lane in team.lanes) {
+            val panels = lane.shots.map { s -> plan.stage.panels.indexOfFirst { plan.stage.guns[plan.shots[s].gun].x in it } }
+            assertEquals("P${lane.player} crosses the wall", 1, panels.distinct().size)
+            for ((s, prereqs) in lane.waitsFor) {
+                for (w in prereqs) assertTrue("P${lane.player}: margin too small", team.steps[s] - team.steps[w] >= 2)
+            }
+        }
+        // Waits only ever skip no numbers: both players count 1..8 without a gap.
+        for (lane in team.lanes) assertEquals((1..8).toList(), lane.shots.map { team.steps[it] })
+    }
+
+    @Test
+    fun `the same stage always splits the same way`() {
+        for ((room, level, index) in listOf(Triple(StrategyRoom.STRATEGY, 8, 3), Triple(StrategyRoom.GRIDLOCK, 9, 3))) {
+            val a = TeamPlanner(plan(room, level, index)).schedule(3).lanes.map { it.shots }
+            val b = TeamPlanner(plan(room, level, index)).schedule(3).lanes.map { it.shots }
+            assertEquals(a, b)
         }
     }
 

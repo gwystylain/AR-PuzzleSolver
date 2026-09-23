@@ -33,6 +33,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -47,7 +48,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -57,12 +57,14 @@ import com.puzzlesolver.core.puzzle.strategy.Cell
 import com.puzzlesolver.core.puzzle.strategy.Direction
 import com.puzzlesolver.core.puzzle.strategy.Hit
 import com.puzzlesolver.core.puzzle.strategy.Lane
-import com.puzzlesolver.core.puzzle.strategy.RedRule
 import com.puzzlesolver.core.puzzle.strategy.ShotGroup
 import com.puzzlesolver.core.puzzle.strategy.StrategyPlan
 import com.puzzlesolver.core.puzzle.strategy.StrategyStage
 import com.puzzlesolver.core.puzzle.strategy.TeamPlan
 import com.puzzlesolver.core.puzzle.strategy.TeamPlanner
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlin.math.abs
 
 /**
  * A guide room -- Strategy, or Gridlock -- as a reference card rather than a scan.
@@ -89,6 +91,8 @@ import com.puzzlesolver.core.puzzle.strategy.TeamPlanner
 @Composable
 fun StrategyScreen(
     title: String,
+    /** Whether to draw a stage's wall columns, or butt the boards either side together. */
+    showWalls: Boolean = true,
     levels: List<Int>,
     plans: Map<Int, List<StrategyPlan>>,
     level: Int,
@@ -120,15 +124,25 @@ fun StrategyScreen(
                         Text("$players players", color = Color(0xFFDDE5EC), fontSize = 12.sp)
                     }
                 }
-                Spacer(Modifier.weight(1f))
-                // Dragging, not the edge: on a phone with gesture navigation the edge is Back.
-                Text("drag right for other game modes", color = Color(0xFF6F7B87), fontSize = 11.sp)
             }
             Spacer(Modifier.height(8.dp))
             LevelPicker(levels, level, onSelectLevel)
             Spacer(Modifier.height(8.dp))
 
             val stages = plans[level]
+            // One planner per plan for as long as the screen is up, so a stage split once
+            // is not split again on the way back to it -- the split is a search, and on a
+            // big stage it takes a noticeable moment on a phone.
+            val planners = remember { HashMap<StrategyPlan, TeamPlanner>() }
+            fun plannerFor(plan: StrategyPlan) = planners.getOrPut(plan) { TeamPlanner(plan) }
+            // Split every stage of the level in the background as soon as it is on screen,
+            // in page order, so swiping on finds the next stage ready.
+            LaunchedEffect(stages, players) {
+                if (stages != null && players != null) {
+                    val queue = stages.map { plannerFor(it) }
+                    withContext(Dispatchers.Default) { for (p in queue) p.schedule(players) }
+                }
+            }
             if (stages == null) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -147,7 +161,7 @@ fun StrategyScreen(
                     modifier = Modifier.fillMaxSize(),
                     key = { "$level-$it" },
                 ) { page ->
-                    StagePage(stages[page], players ?: 1)
+                    StagePage(stages[page], plannerFor(stages[page]), players ?: 1, showWalls)
                 }
             }
         }
@@ -173,16 +187,8 @@ private fun PlayerPrompt(current: Int?, onPick: (Int) -> Unit) {
             .background(Color(0xF00B0E11)),
         contentAlignment = Alignment.Center,
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 32.dp)) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text("How many players?", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 22.sp)
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "Each stage is split between you, so the parts that do not depend on " +
-                    "each other get pressed at the same time by different people.",
-                color = Color(0xFF9AA6B2),
-                fontSize = 13.sp,
-                textAlign = TextAlign.Center,
-            )
             Spacer(Modifier.height(20.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 for (n in 2..5) {
@@ -238,10 +244,29 @@ private fun LevelPicker(levels: List<Int>, selected: Int, onSelect: (Int) -> Uni
  * the stage, which is the picture the team sees when they walk up to the wall.
  */
 @Composable
-private fun StagePage(plan: StrategyPlan, players: Int) {
+private fun StagePage(plan: StrategyPlan, planner: TeamPlanner, players: Int, showWalls: Boolean) {
     val stage = plan.stage
-    val planner = remember(plan) { TeamPlanner(plan) }
-    val team = remember(plan, players) { planner.schedule(players) }
+    // Recomputed whenever the player count changes, including while the page is on
+    // screen -- and a split for another count is never shown, even for the frame
+    // before the new one arrives.
+    val split by produceState(planner.scheduled(players), planner, players) {
+        value = planner.scheduled(players) ?: withContext(Dispatchers.Default) { planner.schedule(players) }
+    }
+    val team = split?.takeIf { it.players == players }
+    if (team == null) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = Color(0xFFFF8C00))
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "splitting level ${stage.level} stage ${stage.index} between $players players",
+                    color = Color(0xFFB9C4CF),
+                    fontSize = 13.sp,
+                )
+            }
+        }
+        return
+    }
     var selected by remember(plan, players) { mutableIntStateOf(-1) }
     val state = remember(plan, selected) {
         if (selected < 0) plan.states[0] else plan.stateAfter(planner.ancestors(selected))
@@ -252,32 +277,20 @@ private fun StagePage(plan: StrategyPlan, players: Int) {
     }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        // Two panels are drawn as they hang -- side by side with the wall between --
-        // when that still leaves a readable tile; otherwise one above the other. Then
-        // sized so the board leaves the lower part of the page to the lanes, and capped
-        // so a small stage does not become a poster.
-        val sideBySide = stage.panels.size == 1 || maxWidth / stage.width >= 20.dp
-        val ranges = if (sideBySide) listOf(0 until stage.width) else stage.panels
-        val widest = ranges.maxOf { it.last - it.first + 1 }
-        val rows = stage.height * ranges.size
-        val cell = minOf(
-            maxWidth / widest,
-            if (ranges.size > 1) 28.dp else 36.dp,
-            (maxHeight * 0.55f - 8.dp * (ranges.size - 1)) / rows,
-        )
+        // Always drawn as it hangs on the wall: two boards side by side with the wall
+        // between them, never stacked, so every stage reads the same way round even
+        // where the tiles come out small. Sized to the page's width, capped so the board
+        // leaves the lower part of the page to the lanes and so a small stage does not
+        // become a poster.
+        val columns = (0 until stage.width).filter { showWalls || !stage.isWall(it) }
+        val cell = minOf(maxWidth / columns.size, 36.dp, maxHeight * 0.55f / stage.height)
         Column(Modifier.fillMaxSize()) {
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text(
-                    "Level ${stage.level}  ·  stage ${stage.index} of ${stage.stageCount}",
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 16.sp,
-                )
-                Spacer(Modifier.weight(1f))
-                if (stage.index < stage.stageCount) {
-                    Text("swipe up for stage ${stage.index + 1}", color = Color(0xFF6F7B87), fontSize = 11.sp)
-                }
-            }
+            Text(
+                "Level ${stage.level}  ·  stage ${stage.index} of ${stage.stageCount}",
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 16.sp,
+            )
             Spacer(Modifier.height(6.dp))
 
             Board(
@@ -286,7 +299,7 @@ private fun StagePage(plan: StrategyPlan, players: Int) {
                 state = state,
                 frame = frame,
                 highlight = if (selected >= 0) selected else null,
-                ranges = ranges,
+                columns = columns,
                 cell = cell,
             )
 
@@ -299,17 +312,11 @@ private fun StagePage(plan: StrategyPlan, players: Int) {
                     .verticalScroll(rememberScrollState())
                     .padding(top = 6.dp),
             ) {
-                StageNotes(plan, team, sideBySide)
                 for (lane in team.lanes) {
                     LaneSection(plan, planner, team, lane, selected, onSelect = { selected = if (selected == it) -1 else it })
                     Spacer(Modifier.height(10.dp))
                 }
-                Text(
-                    "${stage.guns.size} tiles, ${plan.shots.size} presses  ·  transcription: ${stage.source}",
-                    color = Color(0xFF6F7B87),
-                    fontSize = 11.sp,
-                )
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(14.dp))
             }
         }
     }
@@ -319,58 +326,6 @@ private fun laneGroupOf(team: TeamPlan, shot: Int): ShotGroup {
     val lane = team.lanes.first { shot in it.shots }
     val i = lane.shots.indexOf(shot)
     return lane.groups.first { i in it.first..it.last }
-}
-
-@Composable
-private fun StageNotes(plan: StrategyPlan, team: TeamPlan, sideBySide: Boolean) {
-    val stage = plan.stage
-    val notes = ArrayList<String>()
-    val idle = team.lanes.filter { it.shots.isEmpty() }
-    if (idle.isNotEmpty()) {
-        val who = idle.joinToString { "player ${it.player}" }
-        notes += "No press for $who this stage: adding them would only make someone wait."
-    }
-    if (stage.isTimed) {
-        val seconds = stage.periodMillis / 1000.0
-        val what = when {
-            stage.movingTargets == null -> "The reds move"
-            stage.frameCount == 2 -> "The targets swap between two layouts"
-            else -> "The targets move"
-        }
-        val every = if (seconds >= 1) "%.0f s".format(seconds) else "%.1f s".format(seconds)
-        notes += "$what every $every. Press each run of tiles while the board looks like its picture."
-    } else if (stage.reds != null) {
-        notes += "The reds do not move."
-    }
-    if (stage.gap != null) {
-        notes += if (sideBySide) {
-            "The dark strip is a wall: a shot into it is lost."
-        } else {
-            "The two boards hang side by side with a wall between; a shot off the inner edge is lost."
-        }
-    }
-    if (plan.redHits > 0) {
-        val presses = plan.shots.indices.filter { plan.shots[it].hit == Hit.RED }
-            .joinToString { "player ${team.playerOf(it)}'s ${team.steps[it]}" }
-        notes += "The red chip ($presses) fires into a red on purpose and costs a life -- there is " +
-            "no way round it. It clears the red for the press after."
-    }
-    if (stage.mirrors.isNotEmpty()) {
-        notes += "Purple tiles put a new target on the other side, in the mirror-image column."
-    }
-    if (stage.gunsBlock) {
-        notes += "A shot stops at the first orange tile in its way and takes it out."
-    }
-    if (stage.redRule == RedRule.FAIL && stage.reds != null) {
-        notes += if (stage.isTimed) {
-            "Firing into a red fails the wave here, so the timing matters."
-        } else {
-            "Firing into a red fails the wave here."
-        }
-    }
-    for (n in notes) {
-        Text(n, color = Color(0xFFB9C4CF), fontSize = 12.sp, modifier = Modifier.padding(bottom = 4.dp))
-    }
 }
 
 /**
@@ -396,23 +351,26 @@ private fun LaneSection(
         Box(Modifier.size(12.dp).background(colour, RoundedCornerShape(3.dp)))
         Spacer(Modifier.width(8.dp))
         Text("Player ${lane.player}", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+        Spacer(Modifier.width(8.dp))
         if (lane.shots.isEmpty()) {
-            Spacer(Modifier.width(8.dp))
             Text("nothing this stage", color = Color(0xFF6F7B87), fontSize = 12.sp)
+        } else {
+            // Sideways walking only: it is the part that takes time, and a number a
+            // player can check against the wall.
+            val guns = lane.shots.map { stage.guns[plan.shots[it].gun] }
+            val walked = guns.zipWithNext { a, b -> abs(a.x - b.x) }.sum()
+            Text(
+                "${lane.shots.size} presses  ·  " + when (walked) { 0 -> "no walking"; 1 -> "walks 1 tile"; else -> "walks $walked tiles" },
+                color = Color(0xFF6F7B87),
+                fontSize = 12.sp,
+            )
         }
     }
     for (group in lane.groups) {
         Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(bottom = 6.dp)) {
             if (stage.isTimed) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    val first = lane.shots[group.first]
-                    Thumbnail(stage, group.frame, plan.stateAfter(planner.ancestors(first)))
-                    Text(
-                        if (lane.groups.size > 1) "wait for this" else "when it looks like this",
-                        color = Color(0xFF9AA6B2),
-                        fontSize = 10.sp,
-                    )
-                }
+                val first = lane.shots[group.first]
+                Thumbnail(stage, group.frame, plan.stateAfter(planner.ancestors(first)))
                 Spacer(Modifier.width(10.dp))
             }
             FlowRow(
@@ -471,10 +429,15 @@ private fun Chip(
             )
         }
         // "after P1 2": the press on another lane this one waits for, in that lane's colour.
-        for (w in waitsFor) {
+        // Only the latest per player: each presses in order, so waiting for someone's 2
+        // is already waiting for their 1.
+        val latest = waitsFor.groupBy { team.playerOf(it) }
+            .mapValues { (_, ws) -> ws.maxOf { team.steps[it] } }
+            .toSortedMap()
+        for ((player, step) in latest) {
             Text(
-                "after P${team.playerOf(w)} ${team.steps[w]}",
-                color = PLAYER_COLOURS[team.playerOf(w) - 1],
+                "after P$player $step",
+                color = PLAYER_COLOURS[player - 1],
                 fontSize = 10.sp,
             )
         }
@@ -505,8 +468,9 @@ private val COLOUR_LABEL_SPENT = Color(0xFFB9A98F)
 
 /**
  * The board in [state] on [frame], every gun in its player's colour, the gun of
- * [highlight] ringed and its shot drawn to where it lands. One canvas per column range
- * in [ranges]: the whole wall, or one panel each when they have to stack.
+ * [highlight] ringed and its shot drawn to where it lands. The whole wall in one piece,
+ * drawing only [columns] -- which leaves out the wall between two boards where it is not
+ * part of what the team sees.
  */
 @Composable
 private fun Board(
@@ -515,29 +479,22 @@ private fun Board(
     state: BoardState,
     frame: Int,
     highlight: Int?,
-    ranges: List<IntRange>,
+    columns: List<Int>,
     cell: Dp,
 ) {
     val stage = plan.stage
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        for (panel in ranges) {
-            val cols = panel.last - panel.first + 1
-            Panel(
-                plan = plan,
-                team = team,
-                state = state,
-                frame = frame,
-                highlight = highlight,
-                columns = panel,
-                modifier = Modifier
-                    .width(cell * cols)
-                    .height(cell * stage.height),
-            )
-        }
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Panel(
+            plan = plan,
+            team = team,
+            state = state,
+            frame = frame,
+            highlight = highlight,
+            columns = columns,
+            modifier = Modifier
+                .width(cell * columns.size)
+                .height(cell * stage.height),
+        )
     }
 }
 
@@ -548,7 +505,7 @@ private fun Panel(
     state: BoardState,
     frame: Int,
     highlight: Int?,
-    columns: IntRange,
+    columns: List<Int>,
     modifier: Modifier,
 ) {
     val stage = plan.stage
@@ -566,9 +523,10 @@ private fun Panel(
             for (s in plan.shots.indices) o[plan.shots[s].gun] = team.steps[s]
         }
     }
+    // Stage column -> column on screen, or -1 where it is not drawn.
+    val slot = remember(columns) { IntArray(stage.width) { -1 }.also { a -> columns.forEachIndexed { i, x -> a[x] = i } } }
     Canvas(modifier) {
-        val cols = columns.last - columns.first + 1
-        val cw = size.width / cols
+        val cw = size.width / columns.size
         val ch = size.height / stage.height
         val reds = state.fixedReds + stage.redsAt(frame)
         val moving = stage.movingTargets?.let { m ->
@@ -581,7 +539,7 @@ private fun Panel(
         for (y in 0 until stage.height) {
             for (x in columns) {
                 val c = Cell(x, y)
-                val left = (x - columns.first) * cw
+                val left = slot[x] * cw
                 val top = y * ch
                 if (stage.isWall(x)) {
                     drawRect(COLOUR_WALL, Offset(left, top), Size(cw, ch))
@@ -623,24 +581,24 @@ private fun Panel(
         if (highlight != null) {
             val shot = plan.shots[highlight]
             val g = stage.guns[shot.gun]
-            if (g.x in columns) {
-                val gx = (g.x - columns.first + 0.5f) * cw
+            if (slot[g.x] >= 0) {
+                val gx = (slot[g.x] + 0.5f) * cw
                 val gy = (g.y + 0.5f) * ch
-                val end = shot.cell?.takeIf { it.x in columns }
+                val end = shot.cell?.takeIf { slot[it.x] >= 0 }
                 if (end != null) {
-                    val ex = (end.x - columns.first + 0.5f) * cw
+                    val ex = (slot[end.x] + 0.5f) * cw
                     val ey = (end.y + 0.5f) * ch
                     drawLine(Color.White, Offset(gx, gy), Offset(ex, ey), strokeWidth = 3.dp.toPx())
                     drawRect(
                         Color.White,
-                        Offset((end.x - columns.first) * cw, end.y * ch),
+                        Offset(slot[end.x] * cw, end.y * ch),
                         Size(cw, ch),
                         style = Stroke(3.dp.toPx()),
                     )
                 }
                 drawRect(
                     Color.White,
-                    Offset((g.x - columns.first) * cw, g.y * ch),
+                    Offset(slot[g.x] * cw, g.y * ch),
                     Size(cw, ch),
                     style = Stroke(3.dp.toPx()),
                 )

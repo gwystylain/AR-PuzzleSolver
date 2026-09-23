@@ -15,7 +15,7 @@ Two sites have transcribed the Strategy room:
                                 blue tiles alternate between two layouts every 2 s.
 
 Gridlock is a second room, transcribed at activate.ryflix.ca/gridlock.html (levels
-6-10 so far): two boards side by side, 10 rows by 10 or 11 columns each, with the
+3, 4 and 6-10 so far): two boards side by side, 10 rows by 10 or 11 columns each, with the
 same rules as the ryflix Strategy page -- guns block, purple tiles spawn a target
 on the other board in the mirror-image column, a red fails the wave. On some levels
 the boards touch and a shot crosses from one to the other; on the others a wall
@@ -53,7 +53,7 @@ ROOMS = {
         1: "scores", 2: "scores", 3: "scores", 4: "scores", 5: "scores",
         6: "scores", 7: "ryflix", 8: "ryflix", 9: "ryflix", 10: "ryflix",
     },
-    "gridlock": {6: "gridlock", 7: "gridlock", 8: "gridlock", 9: "gridlock", 10: "gridlock"},
+    "gridlock": {level: "gridlock" for level in (3, 4, 6, 7, 8, 9, 10)},
 }
 
 DIR = {"up": "U", "down": "D", "left": "L", "right": "R"}

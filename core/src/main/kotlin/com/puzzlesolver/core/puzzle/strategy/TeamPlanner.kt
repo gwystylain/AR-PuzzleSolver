@@ -32,6 +32,8 @@ class TeamPlan(
     val travel: Double,
     /** [TeamPlanner.dependencies], kept so the steps below need no second planner. */
     private val dependencies: List<Set<Int>>,
+    /** What the planner scored this split at; lower is better. */
+    val score: Double,
 ) {
     /** Which player presses a shot. */
     fun playerOf(shot: Int): Int = lanes.first { shot in it.shots }.player
@@ -76,25 +78,44 @@ class TeamPlan(
  * a shot only cares about the tiles on its own line of fire. So the presses form a
  * partial order -- shot B waits for shot A when A changes a tile B fires across, or
  * the other way round -- and any schedule that respects it clears the stage exactly as
- * the plan does. With one player that partial order is irrelevant; with several it is
- * the whole question, because a chain of dependent presses has to be walked in
- * sequence while everything off the chain can happen at the same time somewhere else.
+ * the plan does. Splitting the stage between players is choosing, within that partial
+ * order, who presses what and in what order, and the rules for a good split are the
+ * team's, in this order of importance:
  *
- * The schedule is built in two steps. A greedy pass first: whenever a player is free,
- * they take the shot they could land soonest, counting the walk to reach it and any
- * press it is waiting on, with ties going to the shot that has the longest chain still
- * hanging off it. That respects the dependencies well but is short-sighted about the
- * walking -- a free player will cross the whole wall for a tile that a busier player
- * standing next to it could have taken a moment later. So a local search then moves
- * and swaps presses between lanes, keeping any change that finishes the stage sooner
- * or, at the same finish, walks less. On a stage where nothing depends on anything,
- * that settles into one player per stretch of wall, which is the answer a team would
- * come up with by looking at it.
+ * 1. **Even.** Every player gets the same number of presses, or one fewer. This is a
+ *    hard constraint: the search only ever swaps presses between players, or moves one
+ *    from a longer lane to a shorter one, so it can never unbalance the split.
+ * 2. **Hand-offs early, waits late.** Where a press waits on another player's, the
+ *    press it waits on belongs at the front of that player's stack and the waiting
+ *    press at the back of its own. A hand-off that happens on step 1 cannot be
+ *    overtaken by a player who is on step 6; one on step 5 can, if the other player is
+ *    a little quick. So every ordinary press in front of a hand-off, or behind a waiting
+ *    press, is penalised -- unless it has to be there because the hand-off depends on
+ *    it, or it on the waiting press: "the front" is as early as a press's own
+ *    dependencies allow. A wait whose margin is a single step is penalised again. And a
+ *    wait with no margin at all, where equal pace would have the player arrive before
+ *    the press it needs, costs more than anything else -- though on a stage that is one
+ *    long chain some of that is unavoidable, since an even split means someone waits.
+ * 3. **Short walks.** Each player's walk from press to press along the wall, measured
+ *    mostly sideways since reaching up costs nothing like crossing the room: the total,
+ *    and half again for whoever walks furthest, so no one player carries the team.
+ * 4. **The level's quirks.** Which presses and on which look of the board is already
+ *    settled by the plan -- reds, moving and swapping targets, walls, mirrors. What the
+ *    split adds is how often a player has to stop and wait for the board to come round:
+ *    every extra run of presses in a lane costs a wait, so it is scored too.
  *
- * Walking is measured along the wall, mostly sideways, since reaching up costs nothing
- * like crossing the room. Both steps are heuristics; the stages are small enough that
- * they are good ones, and the search is seeded so the same stage always gets the same
- * answer.
+ * Where all else is equal, fewer presses that wait on another player at all is
+ * preferred, since a dependency inside one player's stack carries no risk.
+ *
+ * The search is in two levels. Simulated annealing decides who presses what, only ever
+ * trading presses between players or moving one from a longer stack to a shorter one,
+ * so the split stays even; each candidate split is put in order by [arrange], a rule
+ * that already follows the team's rules, and scored. The best splits then get an
+ * exhaustive polish that moves presses within the order and between players. It runs
+ * from several starts -- a stretch of wall each, the clockwise numbering dealt out, a
+ * board look each on a timed stage -- and is seeded, so a stage shows the same lanes
+ * every time it is opened. Sixteen times the search effort changes the result by a few
+ * percent of walking at most, so it is not stopping short.
  */
 class TeamPlanner(private val plan: StrategyPlan) {
 
@@ -185,78 +206,476 @@ class TeamPlanner(private val plan: StrategyPlan) {
 
     private fun gunCell(shot: Int): Cell = stage.guns[plan.shots[shot].gun].cell
 
-    /** Longest chain of presses from a shot to the end, the classic critical-path priority. */
-    private fun tail(): DoubleArray {
-        val out = DoubleArray(n)
-        val dependants = List(n) { ArrayList<Int>() }
-        for (j in 0 until n) for (d in dependencies[j]) dependants[d] += j
-        for (i in n - 1 downTo 0) {
-            out[i] = PRESS + (dependants[i].maxOfOrNull { out[it] } ?: 0.0)
+    /** Every direct edge, prerequisite first: `edgeFrom[i]` must land before `edgeTo[i]`. */
+    private val edgeFrom: IntArray by lazy { dependencies.flatMap { it }.toIntArray() }
+    private val edgeTo: IntArray by lazy { dependencies.withIndex().flatMap { (b, ds) -> List(ds.size) { b } }.toIntArray() }
+
+    private val prerequisites: Array<IntArray> by lazy { Array(n) { dependencies[it].toIntArray() } }
+    private val dependants: Array<IntArray> by lazy {
+        val out = List(n) { ArrayList<Int>() }
+        for (i in edgeFrom.indices) out[edgeFrom[i]] += edgeTo[i]
+        Array(n) { out[it].toIntArray() }
+    }
+
+    /** Frames each shot works on, as a bitmask; timed stages have at most a few dozen. */
+    private val frameMask: LongArray by lazy {
+        LongArray(n) { s -> plan.shots[s].frames.fold(0L) { m, f -> m or (1L shl f) } }
+    }
+
+    /**
+     * Everything each press waits on, directly or not, and everything that waits on it,
+     * as bitmasks -- a stage has at most 64 presses, which the stage itself enforces.
+     */
+    private val ancestorMask: LongArray by lazy {
+        val out = LongArray(n)
+        for (s in 0 until n) for (d in prerequisites[s]) out[s] = out[s] or out[d] or (1L shl d)
+        out
+    }
+    private val descendantMask: LongArray by lazy {
+        val out = LongArray(n)
+        for (s in n - 1 downTo 0) for (d in dependants[s]) out[s] = out[s] or out[d] or (1L shl d)
+        out
+    }
+
+    private val walkTable: Array<DoubleArray> by lazy {
+        Array(n) { a -> DoubleArray(n) { b -> walk(gunCell(a), gunCell(b)) } }
+    }
+
+    private val schedules = HashMap<Int, TeamPlan>()
+
+    /** The split for [players] if it has already been worked out, without working it out. */
+    @Synchronized
+    fun scheduled(players: Int): TeamPlan? = schedules[players]
+
+    /**
+     * The split for [players] people. Memoised, and safe to call from a background
+     * thread: on a big timed stage the search takes a noticeable fraction of a second.
+     */
+    @Synchronized
+    fun schedule(players: Int): TeamPlan = schedules.getOrPut(players) {
+        require(players >= 1)
+        val scorer = Scorer(players)
+        var best: State? = null
+        var bestCost = Double.MAX_VALUE
+        for ((i, start) in starts(players).withIndex()) {
+            val split = anneal(start.player, players, scorer, Random(SEED + players * 31 + i))
+            // The start itself is polished too: a natural split -- a board each, a
+            // stretch of wall each -- can be the best there is and still arrange badly
+            // enough at first for the annealing to walk away from it.
+            for (candidate in listOf(split, start.player)) {
+                val st = polish(arrange(candidate, players), scorer)
+                val c = scorer.score(st)
+                if (c < bestCost - 1e-9) {
+                    best = st
+                    bestCost = c
+                }
+            }
+        }
+        val lanes = lanesOf(best ?: error("no split for $stage")).map { it.toList() }
+        // Player 1 is whoever presses the lowest clockwise number: the search shuffles
+        // lanes freely, and a stable order is what makes "player 2" mean something.
+        val ordered = lanes.sortedBy { lane -> lane.minOfOrNull { rank(it) } ?: Int.MAX_VALUE }
+        val timing = evaluate(ordered) ?: error("schedule deadlocks for $stage")
+        TeamPlan(
+            plan = plan,
+            players = players,
+            lanes = ordered.mapIndexed { p, shots -> lane(p + 1, shots) },
+            makespan = timing.makespan,
+            travel = timing.travel,
+            dependencies = dependencies,
+            score = bestCost,
+        )
+    }
+
+    private fun rank(shot: Int): Int = stage.gunsByLabel.indexOf(plan.shots[shot].gun)
+
+    /**
+     * A split as the search holds it: one order for the whole stage, which always
+     * respects every dependency, and a player for every press. Each player's stack is
+     * their presses in that order. Holding it this way means every state the search can
+     * reach is playable -- no two stacks can end up waiting on each other in a circle,
+     * because both follow the one order -- and any playable split can be written this
+     * way, so nothing is lost.
+     */
+    private class State(val order: IntArray, val player: IntArray, val players: Int) {
+        fun copy() = State(order.copyOf(), player.copyOf(), players)
+    }
+
+    private fun lanesOf(st: State): List<IntArray> {
+        val counts = IntArray(st.players)
+        for (s in st.order) counts[st.player[s]]++
+        val out = List(st.players) { IntArray(counts[it]) }
+        val fill = IntArray(st.players)
+        for (s in st.order) {
+            val p = st.player[s]
+            out[p][fill[p]++] = s
         }
         return out
     }
 
     /**
-     * The best schedule for up to [players] people: fastest, then least walking.
-     *
-     * "Up to", because a greedy schedule is not monotone -- a fifth player can grab a
-     * press whose chain then waits on them, and finish later than four would have. So
-     * every smaller team is tried as well, under both priority rules, and a player the
-     * best schedule does not use gets an empty lane rather than a slower stage.
+     * Scores a split: lower is better; see the class comment for what each term stands
+     * for and why the weights are ordered as they are. One sweep along the order does
+     * nearly all of it, because the order already puts every press after the presses it
+     * waits for and after the one before it in its own stack. Holds its working arrays
+     * so the search's hundreds of thousands of calls allocate nothing.
      */
-    fun schedule(players: Int): TeamPlan {
-        require(players >= 1)
-        var best: Pair<List<List<Int>>, Eval>? = null
-        for (k in 1..players) {
-            val candidate = bestFor(k)
-            if (best == null || candidate.second.betterThan(best.second)) best = candidate
+    private inner class Scorer(private val players: Int) {
+        private val pos = IntArray(n)
+        private val step = IntArray(n)
+        private val handsOff = BooleanArray(n)
+        private val waits = BooleanArray(n)
+        private val laneLen = IntArray(players)
+        private val lastStep = IntArray(players)
+        private val lastShot = IntArray(players)
+        private val walked = DoubleArray(players)
+        private val common = LongArray(players)
+        private val ordinaryAll = LongArray(players)
+        private val ordinarySoFar = LongArray(players)
+
+        fun score(st: State): Double {
+            laneLen.fill(0)
+            lastStep.fill(0)
+            lastShot.fill(-1)
+            walked.fill(0.0)
+            common.fill(-1L)
+            var skipped = 0
+            var stops = 0
+            for (s in st.order) {
+                val p = st.player[s]
+                pos[s] = laneLen[p]++
+                var ready = lastStep[p]
+                for (d in prerequisites[s]) if (step[d] > ready) ready = step[d]
+                step[s] = ready + 1
+                skipped += step[s] - pos[s] - 1
+                lastStep[p] = step[s]
+                if (lastShot[p] >= 0) walked[p] += walkTable[lastShot[p]][s]
+                lastShot[p] = s
+                if (stage.isTimed) {
+                    val next = common[p] and frameMask[s]
+                    if (next == 0L) {
+                        if (common[p] != -1L) stops++
+                        common[p] = frameMask[s]
+                    } else {
+                        common[p] = next
+                    }
+                }
+            }
+
+            handsOff.fill(false)
+            waits.fill(false)
+            var cross = 0
+            var tight = 0.0
+            for (i in edgeFrom.indices) {
+                val a = edgeFrom[i]
+                val b = edgeTo[i]
+                if (st.player[a] == st.player[b]) continue
+                cross++
+                handsOff[a] = true
+                waits[b] = true
+                // The margin wanted is capped by the waiting player's stack: in a stack of
+                // two the best there is is first and second.
+                // A margin of zero or less is a wait even at equal pace, and the skipped
+                // steps already count it; this is only for orders that are legal but close.
+                val wanted = minOf(SAFE_MARGIN, laneLen[st.player[b]] - 1)
+                val margin = pos[b] - pos[a]
+                if (margin in 1 until wanted) tight += ((wanted - margin) * (wanted - margin)).toDouble()
+            }
+
+            // Hand-offs at the front of a stack, waiting presses at the back: count every
+            // ordinary press that sits in front of a hand-off, or behind a waiting press --
+            // except one that has to be there, because the hand-off depends on it or it
+            // depends on the waiting press. "The front" is as early as a press's own
+            // dependencies allow. Several hand-offs share the front in whatever order
+            // walks best.
+            ordinaryAll.fill(0L)
+            ordinarySoFar.fill(0L)
+            for (s in 0 until n) if (!handsOff[s] && !waits[s]) ordinaryAll[st.player[s]] = ordinaryAll[st.player[s]] or (1L shl s)
+            var placement = 0
+            for (s in st.order) {
+                val p = st.player[s]
+                val give = handsOff[s]
+                val take = waits[s]
+                when {
+                    give && !take -> placement += java.lang.Long.bitCount(ordinarySoFar[p] and ancestorMask[s].inv())
+                    take && !give -> placement += java.lang.Long.bitCount(
+                        ordinaryAll[p] and ordinarySoFar[p].inv() and descendantMask[s].inv(),
+                    )
+                    !give && !take -> ordinarySoFar[p] = ordinarySoFar[p] or (1L shl s)
+                }
+            }
+
+            var total = 0.0
+            var furthest = 0.0
+            for (w in walked) {
+                total += w
+                if (w > furthest) furthest = w
+            }
+            return W_SKIPPED * skipped +
+                W_TIGHT * tight +
+                W_PLACEMENT * placement +
+                W_CROSS * cross +
+                total + 0.5 * furthest +
+                W_WAIT * stops
         }
-        val (lanes, eval) = best!!
-        val padded = lanes + List(players - lanes.size) { emptyList<Int>() }
-        return TeamPlan(
-            plan = plan,
-            players = players,
-            lanes = padded.mapIndexed { p, shots -> lane(p + 1, shots) },
-            makespan = eval.makespan,
-            travel = eval.travel,
-            dependencies = dependencies,
+
+    }
+
+    /**
+     * Balanced starting splits over the plan's own order, which respects every
+     * dependency by construction. One deals the wall out left to right, a stretch per
+     * player; one deals it round the clockwise numbering; on a timed stage one groups the
+     * presses that share a look of the board; one deals the plan out in turn.
+     */
+    private fun starts(players: Int): List<State> {
+        val sizes = IntArray(players) { p -> n / players + if (p < n % players) 1 else 0 }
+        fun deal(order: List<Int>): State {
+            val player = IntArray(n)
+            var at = 0
+            for ((p, size) in sizes.withIndex()) {
+                for (s in order.subList(at, at + size)) player[s] = p
+                at += size
+            }
+            return State(IntArray(n) { it }, player, players)
+        }
+        val byWall = (0 until n).sortedWith(compareBy({ gunCell(it).x }, { gunCell(it).y }))
+        val byLabel = (0 until n).sortedBy { rank(it) }
+        val byFrame = (0 until n).sortedWith(
+            compareBy({ java.lang.Long.numberOfTrailingZeros(frameMask[it]) }, { gunCell(it).x }, { gunCell(it).y }),
         )
+        val dealt = State(IntArray(n) { it }, IntArray(n) { it % players }, players)
+        return listOfNotNull(deal(byWall), deal(byLabel), if (stage.isTimed) deal(byFrame) else null, dealt)
     }
 
-    private val bestByTeamSize = HashMap<Int, Pair<List<List<Int>>, Eval>>()
-
     /**
-     * The best schedule for exactly [k] lanes. Memoised and seeded per team size, so
-     * the answer for three players is the same whether three or five were asked for.
+     * The order each player goes in, given who presses what.
+     *
+     * The order is dealt out in rounds, one press per player per round -- a round is a
+     * step number -- so a press only goes in once everything it waits for went in an
+     * earlier round. Each player takes, of the presses they could make now:
+     *
+     * 1. a hand-off, or a press that leads to one within their own stack, since someone
+     *    else is waiting on it;
+     * 2. otherwise an ordinary press;
+     * 3. and a press that waits on another player only when nothing else is left.
+     *
+     * A press that waits on another player is held back until the press it waits for is
+     * [SAFE_MARGIN] rounds behind it, unless there is nothing else to do. Ties go to a
+     * press that shares the look of the board the player is already waiting for, then to
+     * the shortest walk, then to the clockwise number.
      */
-    private fun bestFor(k: Int): Pair<List<List<Int>>, Eval> = bestByTeamSize.getOrPut(k) {
-        var best: Pair<List<List<Int>>, Eval>? = null
-        for ((variant, criticalFirst) in listOf(false, true).withIndex()) {
-            val lanes = improve(greedy(k, criticalFirst), Random(SEED + k * 2 + variant))
-            val eval = evaluate(lanes) ?: continue
-            if (best == null || eval.betterThan(best.second)) best = lanes to eval
+    private fun arrange(player: IntArray, players: Int): State {
+        val handsOff = BooleanArray(n)
+        val waits = BooleanArray(n)
+        for (i in edgeFrom.indices) {
+            if (player[edgeFrom[i]] != player[edgeTo[i]]) {
+                handsOff[edgeFrom[i]] = true
+                waits[edgeTo[i]] = true
+            }
         }
-        val (lanes, eval) = best ?: error("dependency cycle in plan for $stage")
-        // Player 1 is whoever presses the lowest number: the search shuffles lanes
-        // freely, and a stable order is what makes "player 2" mean something.
-        val ordered = lanes.sortedBy { lane -> lane.minOfOrNull { rank(it) } ?: Int.MAX_VALUE }
-        ordered to eval
+        // A press leads to a hand-off if one is downstream of it in its own stack. The
+        // plan order puts every dependant after its prerequisites, so one backwards pass.
+        val leads = BooleanArray(n)
+        for (s in n - 1 downTo 0) {
+            leads[s] = handsOff[s] || dependants[s].any { player[it] == player[s] && leads[it] }
+        }
+        val round = IntArray(n) { -1 }
+        val lastShot = IntArray(players) { -1 }
+        val run = LongArray(players) { -1L }
+        val order = IntArray(n)
+        var placed = 0
+        var r = 0
+        while (placed < n) {
+            for (p in 0 until players) {
+                var best = -1
+                var bestKey = 0
+                var bestWalk = 0.0
+                for (s in 0 until n) {
+                    if (player[s] != p || round[s] >= 0) continue
+                    var close = 0
+                    var ready = true
+                    for (d in prerequisites[s]) {
+                        if (round[d] < 0 || round[d] >= r) {
+                            ready = false
+                            break
+                        }
+                        if (player[d] != p && round[d] > r - SAFE_MARGIN) close = 1
+                    }
+                    if (!ready) continue
+                    val cls = when {
+                        leads[s] && !waits[s] -> 0
+                        leads[s] -> 1
+                        !waits[s] -> 2
+                        else -> 3
+                    }
+                    val frame = if (run[p] and frameMask[s] != 0L) 0 else 1
+                    // Close to its prerequisite first, then class, then the board's look.
+                    val key = close * 100 + cls * 10 + frame
+                    val walk = if (lastShot[p] < 0) 0.0 else walkTable[lastShot[p]][s]
+                    val better = best < 0 || key < bestKey || key == bestKey && (
+                        walk < bestWalk - 1e-9 || walk < bestWalk + 1e-9 && rankOf[s] < rankOf[best]
+                        )
+                    if (better) {
+                        best = s
+                        bestKey = key
+                        bestWalk = walk
+                    }
+                }
+                if (best < 0) continue
+                round[best] = r
+                order[placed++] = best
+                lastShot[p] = best
+                val next = run[p] and frameMask[best]
+                run[p] = if (next == 0L) frameMask[best] else next
+            }
+            r++
+        }
+        return State(order, player.copyOf(), players)
     }
 
-    private fun rank(shot: Int): Int = stage.gunsByLabel.indexOf(plan.shots[shot].gun)
+    private val rankOf: IntArray by lazy { IntArray(n) { rank(it) } }
 
-    private class Eval(val makespan: Double, val travel: Double) {
-        fun betterThan(o: Eval): Boolean =
-            makespan < o.makespan - 1e-9 || (makespan < o.makespan + 1e-9 && travel < o.travel - 1e-9)
-
-        fun noWorseThan(o: Eval): Boolean =
-            makespan < o.makespan + 1e-9 && travel < o.travel + 1e-9
+    /**
+     * Simulated annealing over who presses what, from [start]; each candidate split is
+     * put in order by [arrange] and scored as played. Every move keeps the split even:
+     * two presses trade players, or a press moves from a longer stack to a shorter one.
+     */
+    private fun anneal(start: IntArray, players: Int, scorer: Scorer, random: Random): IntArray {
+        var current = start
+        var currentCost = scorer.score(arrange(current, players))
+        var best = current
+        var bestCost = currentCost
+        if (n < 2 || players < 2) return best
+        val steps = SEARCH_STEPS_PER_PRESS * n
+        var temperature = T_START
+        val cooling = Math.pow(T_END / T_START, 1.0 / steps)
+        val counts = IntArray(players)
+        repeat(steps) {
+            temperature *= cooling
+            val trial = current.copyOf()
+            if (random.nextInt(3) > 0) {
+                // Two presses trade players.
+                val a = random.nextInt(n)
+                val b = random.nextInt(n)
+                if (trial[a] == trial[b]) return@repeat
+                trial[a] = current[b]
+                trial[b] = current[a]
+            } else {
+                // A press moves from a longer stack to a shorter one.
+                counts.fill(0)
+                for (p in trial) counts[p]++
+                val longest = counts.max()
+                val s = random.nextInt(n)
+                if (counts[trial[s]] != longest) return@repeat
+                val to = random.nextInt(players)
+                if (counts[to] != longest - 1) return@repeat
+                trial[s] = to
+            }
+            val c = scorer.score(arrange(trial, players))
+            if (c <= currentCost || random.nextDouble() < Math.exp((currentCost - c) / temperature)) {
+                current = trial
+                currentCost = c
+                if (c < bestCost - 1e-9) {
+                    best = trial
+                    bestCost = c
+                }
+            }
+        }
+        return best
     }
 
     /**
-     * Runs the lanes as written and reports when the last press lands and how far
-     * everyone walked. Null when the lanes wait on each other in a circle -- one lane's
-     * next press needs a press that sits later in another lane that is itself waiting.
+     * Where press [s] could go in [order]: the range of places, counted in the order
+     * without it, after the last press it waits for and before the first press that
+     * waits for it.
+     */
+    private fun window(order: IntArray, s: Int): Pair<Int, Int> {
+        var lo = 0
+        var hi = n - 1
+        var k = 0
+        for (x in order) {
+            if (x == s) continue
+            if (x in prerequisites[s]) lo = k + 1
+            if (x in dependants[s] && k < hi) hi = k
+            k++
+        }
+        return lo to hi
+    }
+
+    /** Takes [s] out of [order] and puts it back at [at], counted without it. */
+    private fun insert(order: IntArray, s: Int, at: Int) {
+        var from = order.indexOf(s)
+        if (from < at) {
+            while (from < at) {
+                order[from] = order[from + 1]
+                from++
+            }
+        } else {
+            while (from > at) {
+                order[from] = order[from - 1]
+                from--
+            }
+        }
+        order[at] = s
+    }
+
+    /**
+     * Steepest descent after the annealing: every press to every other allowed place in
+     * the order, every pair of presses traded between players, every press moved to a
+     * shorter stack -- the best change taken, until none helps. Annealing gets close;
+     * this makes sure nothing one move away is better.
+     */
+    private fun polish(start: State, scorer: Scorer): State {
+        var st = start
+        var current = scorer.score(st)
+        while (true) {
+            var bestTrial: State? = null
+            var bestCost = current - 1e-9
+            fun consider(trial: State) {
+                val c = scorer.score(trial)
+                if (c < bestCost) {
+                    bestCost = c
+                    bestTrial = trial
+                }
+            }
+            for (s in 0 until n) {
+                val (lo, hi) = window(st.order, s)
+                for (j in lo..hi) {
+                    val trial = st.copy()
+                    insert(trial.order, s, j)
+                    if (!trial.order.contentEquals(st.order)) consider(trial)
+                }
+            }
+            val counts = IntArray(st.players)
+            for (p in st.player) counts[p]++
+            val longest = counts.max()
+            for (a in 0 until n) {
+                for (b in a + 1 until n) {
+                    if (st.player[a] == st.player[b]) continue
+                    val trial = st.copy()
+                    trial.player[a] = st.player[b]
+                    trial.player[b] = st.player[a]
+                    consider(trial)
+                }
+                if (counts[st.player[a]] == longest) {
+                    for (p in 0 until st.players) {
+                        if (counts[p] != longest - 1) continue
+                        consider(st.copy().also { it.player[a] = p })
+                    }
+                }
+            }
+            val next = bestTrial ?: return st
+            st = next
+            current = bestCost
+        }
+    }
+
+    private class Eval(val makespan: Double, val travel: Double)
+
+    /**
+     * Runs the lanes in time -- a press takes [PRESS], walking takes a unit a cell, and a
+     * press cannot start before the presses it waits on have landed -- and reports when
+     * the last one lands and how far everyone walked. Null on a deadlock.
      */
     private fun evaluate(lanes: List<List<Int>>): Eval? {
         val finish = DoubleArray(n) { -1.0 }
@@ -286,85 +705,7 @@ class TeamPlanner(private val plan: StrategyPlan) {
             }
             if (!progressed) return null
         }
-        return Eval(finish.max(), travel)
-    }
-
-    /**
-     * Hill-climbs from a schedule by moving one press to another place in the lanes, or
-     * swapping two, and keeping the result whenever it is no worse. Accepting equals
-     * lets it drift across plateaus -- most single moves on a stage change nothing --
-     * to where an improvement is.
-     */
-    private fun improve(start: List<List<Int>>, random: Random): List<List<Int>> {
-        if (n < 2 || start.size < 2) return start
-        var lanes = start.map { it.toMutableList() }
-        var current = evaluate(lanes) ?: return start
-        repeat(SEARCH_STEPS) {
-            val trial = lanes.map { it.toMutableList() }
-            if (random.nextBoolean()) {
-                // Move: pull a press out of its lane and drop it anywhere in any lane.
-                val from = trial.indices.filter { trial[it].isNotEmpty() }.random(random)
-                val shot = trial[from].removeAt(random.nextInt(trial[from].size))
-                val to = random.nextInt(trial.size)
-                trial[to].add(random.nextInt(trial[to].size + 1), shot)
-            } else {
-                // Swap: two presses change places, across lanes or within one.
-                val a = trial.indices.filter { trial[it].isNotEmpty() }.random(random)
-                val b = trial.indices.filter { trial[it].isNotEmpty() }.random(random)
-                val i = random.nextInt(trial[a].size)
-                val j = random.nextInt(trial[b].size)
-                val t = trial[a][i]
-                trial[a][i] = trial[b][j]
-                trial[b][j] = t
-            }
-            val eval = evaluate(trial) ?: return@repeat
-            if (eval.noWorseThan(current)) {
-                lanes = trial
-                current = eval
-            }
-        }
-        return lanes
-    }
-
-    private fun greedy(players: Int, criticalFirst: Boolean): List<List<Int>> {
-        val tail = tail()
-        val finish = DoubleArray(n) { -1.0 }
-        val lanes = List(players) { ArrayList<Int>() }
-        val free = DoubleArray(players)
-        val at = arrayOfNulls<Cell>(players)
-        val pending = (0 until n).toMutableSet()
-        while (pending.isNotEmpty()) {
-            var best: Choice? = null
-            var bestKey: DoubleArray? = null
-            for (s in pending) {
-                if (dependencies[s].any { finish[it] < 0 }) continue
-                val ready = dependencies[s].maxOfOrNull { finish[it] } ?: 0.0
-                for (p in 0 until players) {
-                    val here = at[p]
-                    val distance = if (here == null) 0.0 else walk(here, gunCell(s))
-                    val start = maxOf(free[p] + distance, ready)
-                    // Soonest landing first, then the longest chain hanging off it -- or
-                    // the other way round -- then the shorter walk, then the plan's own
-                    // order, which is the clockwise one.
-                    val key = if (criticalFirst) {
-                        doubleArrayOf(-tail[s], start, distance, s.toDouble())
-                    } else {
-                        doubleArrayOf(start, -tail[s], distance, s.toDouble())
-                    }
-                    if (bestKey == null || compare(key, bestKey) < 0) {
-                        bestKey = key
-                        best = Choice(s, p, start, distance)
-                    }
-                }
-            }
-            val c = best ?: error("dependency cycle in plan for $stage")
-            finish[c.shot] = c.start + PRESS
-            free[c.player] = finish[c.shot]
-            at[c.player] = gunCell(c.shot)
-            lanes[c.player] += c.shot
-            pending -= c.shot
-        }
-        return lanes
+        return Eval(finish.maxOrNull() ?: 0.0, travel)
     }
 
     private fun lane(player: Int, shots: List<Int>): Lane {
@@ -377,25 +718,36 @@ class TeamPlanner(private val plan: StrategyPlan) {
         return Lane(player, shots, groupRuns(shots.map { plan.shots[it].frames }, stage.frameCount), waits)
     }
 
-    private class Choice(val shot: Int, val player: Int, val start: Double, val distance: Double)
-
-    private fun compare(a: DoubleArray, b: DoubleArray): Int {
-        for (i in a.indices) {
-            val c = a[i].compareTo(b[i])
-            if (c != 0) return c
-        }
-        return 0
-    }
-
     companion object {
         /** A press, in cells walked. Pressing and watching the shot is a few strides' worth. */
         const val PRESS = 4.0
 
-        /** Moves tried per start. Each is a few hundred operations; a stage has at most 27 presses. */
-        private const val SEARCH_STEPS = 1500
+        /** Annealing moves per press. Each move orders and scores a whole split. */
+        private const val SEARCH_STEPS_PER_PRESS = 200
+        private const val T_START = 150.0
+        private const val T_END = 0.3
 
         /** Fixed, so a stage shows the same lanes every time it is opened. */
         private const val SEED = 7L
+
+        /**
+         * Steps of margin a cross-player wait should have before it stops being penalised:
+         * the press it waits for at least this many of the waiting player's own steps
+         * earlier. Two players keep roughly the same pace, but not exactly.
+         */
+        private const val SAFE_MARGIN = 2
+
+        // The weights, in cells walked. Their order is the order of the team's rules.
+        /** A step a player would stand waiting even at equal pace. */
+        private const val W_SKIPPED = 1000.0
+        /** Squared shortfall of a cross-player wait's margin below [SAFE_MARGIN]. */
+        private const val W_TIGHT = 40.0
+        /** An ordinary press in front of a hand-off, or behind a waiting press. */
+        private const val W_PLACEMENT = 25.0
+        /** A dependency split across two players at all. */
+        private const val W_CROSS = 2.0
+        /** An extra stop in a lane to wait for the board to come round. */
+        private const val W_WAIT = 50.0
 
         /**
          * Cuts a sequence into the fewest runs that each share a frame. Greedy is optimal

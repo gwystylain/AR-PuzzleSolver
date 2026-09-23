@@ -3,6 +3,254 @@
 # edit those and re-run rather than this file. Coordinates are x,y from the
 # top-left; a gun's letter is the way it fires. Read by StrategyStages.parse().
 
+stage level=3 index=1 of=4 width=22 height=10 source=activate.ryflix.ca
+panel 0-21
+rules gunsblock=1 redrule=fail
+gun 0,4,R
+gun 0,5,R
+gun 9,9,U
+gun 10,9,U
+gun 21,4,L
+gun 21,5,L
+gun 11,9,U
+gun 12,9,U
+target 9,4
+target 10,4
+target 9,5
+target 10,5
+target 11,4
+target 12,4
+target 11,5
+target 12,5
+
+stage level=3 index=2 of=4 width=22 height=10 source=activate.ryflix.ca
+panel 0-21
+rules gunsblock=1 redrule=fail
+gun 3,0,D
+gun 6,0,D
+gun 9,0,D
+gun 3,9,U
+gun 6,9,U
+gun 9,9,U
+gun 0,4,R
+gun 12,0,D
+gun 15,0,D
+gun 18,0,D
+gun 12,9,U
+gun 15,9,U
+gun 18,9,U
+gun 21,5,L
+target 3,4
+target 6,4
+target 9,4
+target 10,4
+target 3,5
+target 6,5
+target 9,5
+target 12,4
+target 15,4
+target 18,4
+target 11,5
+target 12,5
+target 15,5
+target 18,5
+
+stage level=3 index=3 of=4 width=22 height=10 source=activate.ryflix.ca
+panel 0-21
+rules gunsblock=1 redrule=fail
+gun 0,3,R
+gun 0,6,R
+gun 10,9,U
+gun 12,0,D
+gun 11,9,U
+gun 21,5,L
+target 10,3
+target 10,6
+target 12,3
+target 11,4
+target 11,5
+target 12,5
+
+stage level=3 index=4 of=4 width=22 height=10 source=activate.ryflix.ca
+panel 0-21
+rules gunsblock=1 redrule=fail
+gun 0,2,R
+gun 2,9,U
+gun 9,9,U
+gun 19,0,D
+gun 21,6,L
+gun 21,7,L
+target 9,2
+target 2,4
+target 2,6
+target 9,7
+target 18,2
+target 19,6
+
+stage level=4 index=1 of=4 width=22 height=10 source=activate.ryflix.ca
+panel 0-21
+rules gunsblock=1 redrule=fail
+gun 5,0,D
+gun 8,0,D
+gun 0,3,R
+gun 0,6,R
+gun 5,9,U
+gun 8,9,U
+gun 16,0,D
+gun 16,9,U
+gun 21,4,L
+gun 21,5,L
+target 5,3
+target 5,4
+target 8,4
+target 5,5
+target 8,5
+target 5,6
+target 12,4
+target 16,4
+target 12,5
+target 16,5
+
+stage level=4 index=2 of=4 width=22 height=10 source=activate.ryflix.ca
+panel 0-21
+rules gunsblock=1 redrule=fail
+gun 2,0,D
+gun 3,0,D
+gun 4,0,D
+gun 5,0,D
+gun 6,0,D
+gun 7,0,D
+gun 8,0,D
+gun 9,0,D
+gun 10,0,D
+gun 2,9,U
+gun 3,9,U
+gun 4,9,U
+gun 5,9,U
+gun 6,9,U
+gun 7,9,U
+gun 8,9,U
+gun 9,9,U
+gun 10,9,U
+gun 0,3,R
+gun 0,6,R
+gun 11,0,D
+gun 12,0,D
+gun 13,0,D
+gun 14,0,D
+gun 15,0,D
+gun 16,0,D
+gun 17,0,D
+gun 18,0,D
+gun 19,0,D
+gun 11,9,U
+gun 12,9,U
+gun 13,9,U
+gun 14,9,U
+gun 15,9,U
+gun 16,9,U
+gun 17,9,U
+gun 18,9,U
+gun 19,9,U
+gun 21,3,L
+gun 21,6,L
+target 2,3
+target 3,3
+target 4,3
+target 5,3
+target 6,3
+target 7,3
+target 8,3
+target 9,3
+target 10,3
+target 2,6
+target 3,6
+target 4,6
+target 5,6
+target 6,6
+target 7,6
+target 8,6
+target 9,6
+target 10,6
+target 3,4
+target 7,5
+target 11,3
+target 12,3
+target 13,3
+target 14,3
+target 15,3
+target 16,3
+target 17,3
+target 18,3
+target 19,3
+target 11,6
+target 12,6
+target 13,6
+target 14,6
+target 15,6
+target 16,6
+target 17,6
+target 18,6
+target 19,6
+target 14,4
+target 18,5
+
+stage level=4 index=3 of=4 width=22 height=10 source=activate.ryflix.ca
+panel 0-21
+rules gunsblock=1 redrule=fail
+gun 6,0,D
+gun 10,0,D
+gun 0,2,R
+gun 0,7,R
+gun 7,9,U
+gun 17,0,D
+gun 21,3,L
+gun 21,6,L
+target 6,2
+target 10,3
+target 7,4
+target 10,5
+target 7,6
+target 6,7
+target 17,3
+target 16,7
+
+stage level=4 index=4 of=4 width=22 height=10 source=activate.ryflix.ca
+panel 0-21
+rules gunsblock=1 redrule=fail
+gun 7,0,D
+gun 8,0,D
+gun 9,0,D
+gun 10,0,D
+gun 0,2,R
+gun 0,3,R
+gun 0,6,R
+gun 0,7,R
+gun 21,1,L
+gun 21,4,L
+gun 21,5,L
+gun 21,8,L
+gun 11,9,U
+gun 12,9,U
+gun 13,9,U
+gun 14,9,U
+target 7,1
+target 8,2
+target 9,3
+target 10,4
+target 10,5
+target 9,6
+target 8,7
+target 7,8
+target 14,1
+target 13,2
+target 12,3
+target 11,4
+target 11,5
+target 12,6
+target 13,7
+target 14,8
+
 stage level=6 index=1 of=4 width=22 height=10 source=activate.ryflix.ca
 panel 0-21
 rules gunsblock=1 redrule=fail

@@ -15,18 +15,24 @@ scanning mode to get it all back.
 **Gridlock** is a second room that plays by the same rules and gets the same guide:
 two boards side by side, guns that block, purple tiles that light a target on the other
 board, reds that fail the wave. It is its own entry in the menu with its own stage file
-(`gridlock.txt`, levels 6–10 so far, from activate.ryflix.ca/gridlock.html); everything
+(`gridlock.txt`, levels 3, 4 and 6–10 so far, from activate.ryflix.ca/gridlock.html); everything
 below applies to it too. In core the two are `StrategyRoom.STRATEGY` and
 `StrategyRoom.GRIDLOCK`, and `StrategyStages.bundled(room)` picks the file.
 
 ## Reading the guide
+
+The screen carries no instructions: it is for teams who already know the room, and
+anything that is not the answer is clutter over the board. What it shows:
 
 - **Players** is asked first, 2 to 5, and can be changed from the button next to the
   title. Every stage is then split into a lane per player (see below).
 - **Level** is the row of buttons across the top, 1 to 10.
 - **Stages** are pages: swipe up for the next stage, down for the previous. The board
   stays put; the lanes scroll underneath it.
-- **The board** is drawn as the wall. Each gun tile is filled in the colour of the
+- **The board** is drawn as the wall, always landscape: two boards side by side. In
+  Gridlock the gap between separate boards (levels 7 and 8) is left out and the boards
+  are drawn edge to edge; Strategy's green strip on its levels 7 and 8 is drawn, since
+  it is tiles on the wall. Each gun tile is filled in the colour of the
   player who presses it and carries **that player's own count**: their first press is
   1, their second 2, and so on. A tile nobody presses stays plain orange with no number.
 - **The presses** are one lane per player, in the same colour and numbers as the board.
@@ -34,13 +40,14 @@ below applies to it too. In core the two are `StrategyRoom.STRATEGY` and
   player get to their 2 before pressing their own 3, and the chip says so underneath
   ("after P1 2", in that player's colour). Two players with nothing between them both
   read 1, 2, 3. A red chip is a tile that has to be fired into a red on purpose — there
-  is exactly one in the game, level 4 stage 4, and the note says so.
+  is exactly one in the game, level 4 stage 4. Each player's header gives their number
+  of presses and how many tiles they walk.
 - Internally the solver numbers tiles clockwise from the top-left corner (`labels` on a
   stage; `L`/`R` for two panels, the level 6 hub after the edge) and that is the order
   its plans are found in; it never reaches the screen.
 - On a stage where the reds (or, on level 4 stage 2, the targets) move, the presses come
-  in **runs**, each with a small picture of the board. Wait until the wall looks like the
-  picture, then press that run. The runs are cut so that each is as long as the moving
+  in **runs**, each beside a small picture of the board. Wait until the wall looks like
+  the picture, then press that run. The runs are cut so that each is as long as the moving
   reds allow.
 - **Tap any chip** to see the board at that press: everything it waits on already gone,
   the reds where they are for that shot, and where it lands. That is how to find your
@@ -55,16 +62,38 @@ the other way round -- and any schedule that respects it clears the stage exactl
 plan does. `TeamPlannerTest` checks that by replaying every stage in dozens of random
 orders that respect only the graph.
 
-The split between players is then a scheduling problem: presses take a fixed time,
-walking along the wall costs a cell per tile sideways (and much less up and down, since
-reaching costs nothing like crossing the room), and a press cannot start until the
-presses it waits on have landed. A greedy pass assigns each free player the press they
-could land soonest; a seeded local search then moves and swaps presses between lanes,
-keeping any change that finishes the stage sooner or, at the same finish, walks less. On
-a stage where nothing depends on anything that settles into one player per stretch of
-wall; on a stage that is one long chain, one player walks it while the others take what
-is off it. Every team size up to the one asked for is tried, so an extra player who
-would only make someone wait gets an empty lane and a note rather than a slower stage.
+Within that partial order, the split follows the team's rules, in this order:
+
+1. **Even.** Every player gets the same number of presses, or one fewer. The search can
+   only trade presses between players, so it cannot break this.
+2. **Hand-offs first, waits last.** A press another player waits on goes at the front
+   of its player's stack; a press that waits on another player goes at the back of its
+   own. "Front" means as early as the press's own prerequisites allow -- a hand-off that
+   needs two of the same player's presses first comes third. A wait that would be only
+   one step behind the press it needs is penalised on top, since a quick player could
+   overtake it. On a stage that is one long chain an even split cannot avoid waiting
+   altogether, and the numbers show where (see below).
+3. **Short walks.** Each player's walk along the wall, press to press: the total, and
+   half again for whoever walks furthest. Walking is measured mostly sideways, since
+   reaching up costs nothing like crossing the room.
+4. **The level's quirks.** Walls, mirrors, reds, moving and swapping targets are all
+   settled by the plan already; the split adds how often a player has to stop and wait
+   for the board to come round, and that counts against it too.
+
+These become one score, weighted in that order. The search runs in two levels:
+simulated annealing over who presses what, with each candidate split put in order by a
+rule that already follows the list above (hand-offs as soon as possible, waits held back
+until they have a margin, the rest by shortest walk and same board look); then an
+exhaustive polish of the best splits, moving single presses within the order and between
+players. It starts from a stretch of wall each, the clockwise numbering dealt out, and on
+a timed stage a board look each, and it is seeded, so a stage shows the same lanes every
+time. Sixteen times the search effort changes the result by a few percent of walking at
+most. The largest stage splits in under two tenths of a second on a laptop; on the phone
+it runs in the background, a level at a time, while the first stage is on screen.
+
+On Gridlock 7-1 with two players this comes out as a board each: each player's first two
+presses are the purple tiles the other player needs, and each takes the other's
+hand-offs two steps later. Each player's header on screen says how far they walk.
 
 Each player's numbers come last: a press is numbered one past the later of that
 player's previous press and every press it waits on. Independent lanes count 1, 2, 3
@@ -92,8 +121,8 @@ layouts); it is still in `tools/strategy/sources`, and `ROOMS` in
 `tools/strategy/convert.py` picks which one ships. Re-running the script rebuilds both
 rooms' bundled files.
 
-Gridlock's transcription (activate.ryflix.ca/gridlock.html, levels 6–10) follows the
-ryflix rules, with two boards of 10 rows by 10 or 11 columns. On levels 6, 9 and 10 the
+Gridlock's transcription (activate.ryflix.ca/gridlock.html, levels 3, 4 and 6–10) follows
+the ryflix rules, with two boards of 10 rows by 10 or 11 columns. On levels 3, 4, 6, 9 and 10 the
 boards touch and a horizontal shot crosses from one to the other, so the stage is one
 22-wide panel; on 7 and 8 a wall stands between them and each board is its own panel.
 Its 7-1 and 9-1 plans were replayed on that page to *WAVE CLEARED*.

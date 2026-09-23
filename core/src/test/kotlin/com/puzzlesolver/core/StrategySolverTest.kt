@@ -45,9 +45,9 @@ class StrategySolverTest {
     fun `every bundled stage has a plan that replays clean`() {
         assertEquals(48, stages.size)
         assertEquals((1..10).toList(), stages.map { it.level }.distinct())
-        assertEquals(20, gridlock.size)
-        assertEquals((6..10).toList(), gridlock.map { it.level }.distinct())
-        assertEquals(setOf(6, 7, 8, 9, 10), StrategyStages.levels(StrategyRoom.GRIDLOCK).keys)
+        assertEquals(28, gridlock.size)
+        assertEquals(listOf(3, 4, 6, 7, 8, 9, 10), gridlock.map { it.level }.distinct())
+        assertEquals(setOf(3, 4, 6, 7, 8, 9, 10), StrategyStages.levels(StrategyRoom.GRIDLOCK).keys)
         var slowest = 0L
         for (stage in stages + gridlock) {
             val t0 = System.nanoTime()
@@ -74,7 +74,7 @@ class StrategySolverTest {
     fun `only level 4 stage 4 costs a life`() {
         for (stage in stages + gridlock) {
             val plan = StrategySolver(stage).solve()!!
-            val expected = if (stage.level == 4 && stage.index == 4) 1 else 0
+            val expected = if (stage in stages && stage.level == 4 && stage.index == 4) 1 else 0
             assertEquals("$stage", expected, plan.redHits)
         }
         // The red at (5,5) walls off the last target from the only gun that can reach it;

@@ -412,7 +412,7 @@ private fun GameModeDrawer(
                             Text(
                                 when (room) {
                                     StrategyRoom.STRATEGY -> "no camera -- the room's solutions, split between players"
-                                    StrategyRoom.GRIDLOCK -> "no camera -- levels 6 to 10 so far, split between players"
+                                    StrategyRoom.GRIDLOCK -> "no camera -- two boards, split between players"
                                 },
                                 fontSize = 12.sp,
                                 color = Color(0xFF9AA6B2),

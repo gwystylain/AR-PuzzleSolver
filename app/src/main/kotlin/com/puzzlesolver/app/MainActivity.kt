@@ -118,6 +118,15 @@ class MainActivity : ComponentActivity() {
      */
     private var showLanding by mutableStateOf(true)
 
+    /**
+     * The levels each guide offers, read from the bundled stages rather than written
+     * down here, so a newly transcribed level shows up by being in the data. Two small
+     * text files, read once.
+     */
+    private val guideLevels: Map<StrategyRoom, List<Int>> by lazy {
+        StrategyRoom.entries.associateWith { StrategyStages.levels(it).keys.toList() }
+    }
+
     /** The level each room was last on, so switching rooms and back keeps the place. */
     private var guideLevel by mutableStateOf<Map<StrategyRoom, Int>>(emptyMap())
 
@@ -454,9 +463,13 @@ class MainActivity : ComponentActivity() {
                         guideRoom = guideRoom,
                         onSelectGuide = { enterGuide(it) },
                         guideContent = { room ->
-                            val levels = STRATEGY_LEVELS.getValue(room)
+                            val levels = guideLevels.getValue(room)
                             StrategyScreen(
                                 title = room.displayName,
+                                // Gridlock's boards are drawn butted together: the gap
+                                // between them is not part of the wall the team sees.
+                                // Strategy's is a strip of green tiles on the wall itself.
+                                showWalls = room != StrategyRoom.GRIDLOCK,
                                 levels = levels,
                                 plans = strategyPlans[room] ?: emptyMap(),
                                 level = guideLevel[room] ?: levels.first(),
@@ -1026,12 +1039,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private companion object {
-        /** The levels each guide offers; each has stages in the bundled data. */
-        private val STRATEGY_LEVELS = mapOf(
-            StrategyRoom.STRATEGY to (1..10).toList(),
-            StrategyRoom.GRIDLOCK to (6..10).toList(),
-        )
-
         const val TAG = "MainActivity"
         const val DEBUG_ACTION = "com.puzzlesolver.app.DEBUG"
 
