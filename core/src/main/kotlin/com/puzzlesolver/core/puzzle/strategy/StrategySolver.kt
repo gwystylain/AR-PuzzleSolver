@@ -1,5 +1,7 @@
 package com.puzzlesolver.core.puzzle.strategy
 
+import kotlin.random.Random
+
 /**
  * Finds a pressing order that clears a stage.
  *
@@ -25,8 +27,21 @@ package com.puzzlesolver.core.puzzle.strategy
  * its way, and the search prefers to stay in the frames of the shot before, so the plan
  * needs as few waits as the ordering allows. That preference is a heuristic, not a
  * guarantee of the fewest waits possible.
+ *
+ * The first plan found is not always the one a team splits best, so [plans] finds
+ * others too, for [TeamSolver] to choose among.
  */
 class StrategySolver(private val stage: StrategyStage) {
+
+    /** Set while [plans] looks for other plans: the order to try guns in, instead of clockwise. */
+    private var shuffle: Random? = null
+
+    /** Positions searched so far, and how many [plans] lets one more try run to. */
+    private var expanded = 0L
+    private var expansionLimit = Long.MAX_VALUE
+
+    /** Thrown to abandon a try at [expansionLimit]; without a stack trace, it costs nothing. */
+    private object OutOfBudget : RuntimeException(null, null, false, false)
 
     private val width = stage.width
     private val cells = stage.width * stage.height
@@ -214,6 +229,9 @@ class StrategySolver(private val stage: StrategyStage) {
                 out += Move(priority, gun, shot, frames)
             }
         }
+        // While [plans] looks for others, a shuffled order stands in for the clockwise
+        // one; the sort is stable, so the rest of it still applies.
+        shuffle?.let { out.shuffle(it) }
         // Staying in the current window comes before the clockwise order, because a
         // wait is what the player actually pays for.
         return out.sortedWith(
@@ -225,6 +243,7 @@ class StrategySolver(private val stage: StrategyStage) {
     private class Step(val gun: Int, val shot: Shot, val frames: List<Int>)
 
     private fun search(p: Position, redBudget: Int, currentFrames: Set<Int>?): List<Step>? {
+        if (++expanded > expansionLimit) throw OutOfBudget
         if (p.targets == 0L && p.mirrors == 0L) return emptyList()
         if ((dead[p] ?: -1) >= redBudget) return null
         if (!feasible(p)) {
@@ -242,26 +261,80 @@ class StrategySolver(private val stage: StrategyStage) {
         return null
     }
 
+    private val start = Position(
+        guns = mask(stage.guns.size),
+        targets = mask(targetCount),
+        mirrors = mask(stage.mirrors.size),
+        reds = mask(staticReds.size),
+    )
+
+    private fun plan(steps: List<Step>): StrategyPlan {
+        val shots = steps.map { s ->
+            PlannedShot(s.gun, stage.labels[s.gun], s.shot.hit, s.shot.index, s.shot.cell, s.frames)
+        }
+        return StrategyPlan(stage, shots, TeamPlanner.groupRuns(shots.map { it.frames }, frameCount))
+    }
+
     /** The plan, or null when the stage cannot be cleared under its rules with the lives available. */
     fun solve(): StrategyPlan? {
-        val start = Position(
-            guns = mask(stage.guns.size),
-            targets = mask(targetCount),
-            mirrors = mask(stage.mirrors.size),
-            reds = mask(staticReds.size),
-        )
         // Five lives, so at most four can be spent and still finish the wave.
         for (budget in 0..4) {
             val steps = search(start, budget, null) ?: continue
-            val shots = steps.map { s ->
-                PlannedShot(s.gun, stage.labels[s.gun], s.shot.hit, s.shot.index, s.shot.cell, s.frames)
-            }
-            return StrategyPlan(stage, shots, TeamPlanner.groupRuns(shots.map { it.frames }, frameCount))
+            return plan(steps)
         }
         return null
     }
 
+    /**
+     * [solve]'s plan first, then others that clear the stage for the same lives: the
+     * same search with the guns tried in shuffled orders, up to [tries] of them, each
+     * different plan kept once.
+     *
+     * Plans differ in which gun takes which tile, and so in which presses wait on
+     * which: one gun taking the near tile and another the far one can leave two players
+     * free, where the other way round has one waiting on the other across the room. The
+     * team split chooses among them. The tries share what the first search learned
+     * about dead positions, so most cost a fraction of it; the few that would not are
+     * cut off. The limits are counted in positions searched, not in time, so a slow
+     * phone finds exactly the plans a fast one does.
+     */
+    fun plans(tries: Int, seed: Long): List<StrategyPlan> {
+        val first = solve() ?: return emptyList()
+        val out = LinkedHashMap<Set<Triple<Int, Hit, Int>>, StrategyPlan>()
+        fun key(p: StrategyPlan) = p.shots.mapTo(HashSet()) { Triple(it.gun, it.hit, it.hitIndex) }
+        out[key(first)] = first
+        val unit = maxOf(expanded, MIN_EXPANSIONS)
+        val stopAt = expanded + unit * ALL_TRIES
+        try {
+            for (i in 1..tries) {
+                if (expanded >= stopAt) break
+                shuffle = Random(seed * 1_000_003 + i)
+                expansionLimit = minOf(expanded + unit * ONE_TRY, stopAt)
+                val steps = try {
+                    search(start, first.redHits, null)
+                } catch (_: OutOfBudget) {
+                    null
+                } ?: continue
+                val p = plan(steps)
+                out.putIfAbsent(key(p), p)
+            }
+        } finally {
+            shuffle = null
+            expansionLimit = Long.MAX_VALUE
+        }
+        return out.values.toList()
+    }
+
     private companion object {
+        /**
+         * What [plans] allows, in multiples of what the first plan took to find: one try,
+         * and all of them together. The least a try is allowed, in positions searched, is
+         * [MIN_EXPANSIONS] however quickly the first plan was found.
+         */
+        const val ONE_TRY = 2L
+        const val ALL_TRIES = 10L
+        const val MIN_EXPANSIONS = 2_000L
+
         fun mask(n: Int): Long = if (n >= 64) -1L else (1L shl n) - 1
         fun Long.has(bit: Int): Boolean = (this ushr bit) and 1L == 1L
         fun Long.with(bit: Int): Long = this or (1L shl bit)

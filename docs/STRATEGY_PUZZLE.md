@@ -1,7 +1,7 @@
 # The Strategy room (and Gridlock)
 
-A wall of lit tiles. Orange tiles around the edge are guns: press one and it fires a
-shot straight across the wall, the first blue tile in its path goes out, and the gun is
+A floor of lit tiles. Orange tiles around the edge are guns: step on one and it fires a
+shot straight across the board, the first blue tile in its path goes out, and the gun is
 spent. Red tiles are hazards. A level is several stages, each a fresh layout, and each
 has to be cleared with exactly the guns it gives you — so the whole puzzle is the order
 to press them in, and on the later stages, *when*.
@@ -32,10 +32,10 @@ anything that is not the answer is clutter over the board. What it shows:
   stage to stage, so a player who has scrolled down to their own lane finds it there on
   the next stage too. A swipe that starts on the lanes and turns the page does not
   count as scrolling them.
-- **The board** is drawn as the wall, always landscape: two boards side by side. In
+- **The board** is drawn as the floor, always landscape: two boards side by side. In
   Gridlock the gap between separate boards (levels 7 and 8) is left out and the boards
   are drawn edge to edge; Strategy's green strip on its levels 7 and 8 is drawn, since
-  it is tiles on the wall. Each gun tile is filled in the colour of the
+  it is tiles on the floor. Each gun tile is filled in the colour of the
   player who presses it and carries **that player's own count**: their first press is
   1, their second 2, and so on. A tile nobody presses stays plain orange with no number.
 - **The presses** are one lane per player, in the same colour and numbers as the board.
@@ -49,7 +49,7 @@ anything that is not the answer is clutter over the board. What it shows:
   stage; `L`/`R` for two panels, the level 6 hub after the edge) and that is the order
   its plans are found in; it never reaches the screen.
 - On a stage where the reds (or, on level 4 stage 2, the targets) move, the presses come
-  in **runs**, each beside a small picture of the board. Wait until the wall looks like
+  in **runs**, each beside a small picture of the board. Wait until the floor looks like
   the picture, then press that run. The runs are cut so that each is as long as the moving
   reds allow.
 - **Tap any chip** to see the board at that press: everything it waits on already gone,
@@ -65,38 +65,72 @@ the other way round -- and any schedule that respects it clears the stage exactl
 plan does. `TeamPlannerTest` checks that by replaying every stage in dozens of random
 orders that respect only the graph.
 
-Within that partial order, the split follows the team's rules, in this order:
+Both rooms are floors: a press is a step onto a tile, and walking is measured straight
+across the room, rows the same as columns. That puts most of a stage's time into
+walking -- crossing the room for one tile costs more than two presses -- and within the
+partial order the split follows the team's rules:
 
-1. **Even.** Every player gets the same number of presses, or one fewer. The search can
-   only trade presses between players, so it cannot break this.
+1. **Finish early, walk little.** The stage is done when the last press lands, so a
+   split is scored on when that is (walking, pressing, and standing waiting for other
+   players) and on how far everyone walks in total. A tile one player would cross the
+   room for goes to whoever is standing next to it, even if that gives them more presses
+   than the rest. On Gridlock 4-4 with five players, the player on the top row takes all
+   four top tiles rather than leaving one for a player who would walk up from the bottom
+   row for it.
 2. **Hand-offs first, waits last.** A press another player waits on goes at the front
    of its player's stack; a press that waits on another player goes at the back of its
    own. "Front" means as early as the press's own prerequisites allow -- a hand-off that
    needs two of the same player's presses first comes third. A wait that would be only
    one step behind the press it needs is penalised on top, since a quick player could
-   overtake it. On a stage that is one long chain an even split cannot avoid waiting
-   altogether, and the numbers show where (see below).
-3. **Short walks.** Each player's walk along the wall, press to press: the total, and
-   half again for whoever walks furthest. Walking is measured mostly sideways, since
-   reaching up costs nothing like crossing the room.
-4. **The level's quirks.** Walls, mirrors, reds, moving and swapping targets are all
+   overtake it. A wait with no margin at all, where the player gets there first and
+   stands (their numbers skip, see below), costs as much as a press: on a chain, players
+   standing at their own tiles and waiting their turn beat one player walking it.
+3. **The level's quirks.** Walls, mirrors, reds, moving and swapping targets are all
    settled by the plan already; the split adds how often a player has to stop and wait
    for the board to come round, and that counts against it too.
+4. **Even, where nothing else decides.** Presses are shared out evenly only as far as
+   the rules above allow. On a stage where another pair of feet saves nothing, a player
+   can have nothing to press, and their lane says so.
 
-These become one score, weighted in that order. The search runs in two levels:
-simulated annealing over who presses what, with each candidate split put in order by a
-rule that already follows the list above (hand-offs as soon as possible, waits held back
-until they have a margin, the rest by shortest walk and same board look); then an
+These become one score, every term counted in tiles walked. It used to put an even split
+first, as a hard rule; across every stage for two to five players, dropping it made the
+splits an eighth faster and cut walking by a quarter, and a stage no longer finishes
+later with one more player -- under the even rule, fourteen did. The search runs in two
+levels: simulated annealing over who presses what, with each candidate split put in order
+by a rule that already follows the list above (hand-offs as soon as possible, waits held
+back until they have a margin, the rest by shortest walk and same board look); then an
 exhaustive polish of the best splits, moving single presses within the order and between
-players. It starts from a stretch of wall each, the clockwise numbering dealt out, and on
+players. It starts from a stretch of edge each, the clockwise numbering dealt out, and on
 a timed stage a board look each, and it is seeded, so a stage shows the same lanes every
-time. Sixteen times the search effort changes the result by a few percent of walking at
-most. The largest stage splits in under two tenths of a second on a laptop; on the phone
-it runs in the background, a level at a time, while the first stage is on screen.
+time. Eight times the search effort changes the result by under one percent.
 
 On Gridlock 7-1 with two players this comes out as a board each: each player's first two
 presses are the purple tiles the other player needs, and each takes the other's
-hand-offs two steps later. Each player's header on screen says how far they walk.
+hand-offs two steps later. Each player's header on screen says how far they walk,
+straight across the floor, as the split measures it.
+
+**The plan is chosen for the team too.** The partial order comes from the plan, and the
+plan is one way to clear the stage of several: often a different gun could take a
+different tile, and then different presses wait on each other. `StrategySolver.plans`
+finds up to two dozen others with the same search, trying the guns in shuffled orders
+and sharing what the first search learned, so most tries cost a fraction of it; a try
+that runs long is cut off, counted in positions searched rather than time, so every
+phone finds the same plans. `TeamSolver` gives each a quick split for the team size (a
+tenth of the annealing, no polish), splits the three most promising in full alongside
+the solver's own, and keeps the best, so it is never worse than the solver's plan
+alone. Across every stage and team size that takes another 2.7% off the time and 4.7%
+off the walking, and it is concentrated where the choice is: on Gridlock 7-4 for three
+players the first plan has players crossing between the two boards and waiting on each
+other across the wall, and the one chosen keeps each mostly to one board, 92 down to 69
+in time and 125 down to 84 tiles walked. About half the stages have only one way to be
+cleared, and there nothing changes -- Gridlock 4-4 included: each of its four rings of
+tiles has one tile that is second in line for both guns that reach it, so one of those
+guns has to wait for the other whichever plan is played.
+
+The splits run side by side on all the phone's cores. The largest stage takes about a
+quarter of a second on a laptop; on the phone it runs in the background, a level at a
+time, while the first stage is on screen. The screen draws whichever plan the split is
+of, so the board, the chips and the tap-to-see pictures all match the lanes.
 
 Each player's numbers come last: a press is numbered one past the later of that
 player's previous press and every press it waits on. Independent lanes count 1, 2, 3
@@ -139,7 +173,7 @@ moving target with no position on the other frame.
 
 `StrategySolver` is a depth-first search over the guns still standing, trying them in
 clockwise-number order so the first plan found is the one that reads most like "go
-round the wall". Two things keep it from being exponential on a 27-gun stage:
+round the board". Two things keep it from being exponential on a 27-gun stage:
 
 - **A matching check before every expansion.** Every remaining target — and every
   purple tile, and the target it will spawn — needs its own gun with it in the line of
@@ -170,7 +204,7 @@ the ones that cleared the real game.
 - The fast stages are fast. Level 3's last stage and all of level 6 cycle their reds
   every tenth of a second on activate-scores.ca. The guide still says which look of the
   board each run needs, but timing a press to a 100 ms window is a matter of watching
-  the wall, not the phone.
+  the floor, not the phone.
 - Levels 6 and 10 exist in both transcriptions as different puzzles, and there is no
-  way to tell from here which matches the room. If the wall does not look like the
+  way to tell from here which matches the room. If the floor does not look like the
   board, that is the first thing to suspect — switch the source in `convert.py`.

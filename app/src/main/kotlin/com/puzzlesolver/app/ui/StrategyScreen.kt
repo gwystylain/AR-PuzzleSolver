@@ -66,22 +66,23 @@ import com.puzzlesolver.core.puzzle.strategy.ShotGroup
 import com.puzzlesolver.core.puzzle.strategy.StrategyPlan
 import com.puzzlesolver.core.puzzle.strategy.StrategyStage
 import com.puzzlesolver.core.puzzle.strategy.TeamPlan
-import com.puzzlesolver.core.puzzle.strategy.TeamPlanner
+import com.puzzlesolver.core.puzzle.strategy.TeamSolver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * A guide room -- Strategy, or Gridlock -- as a reference card rather than a scan.
  *
  * Nothing here looks through the camera. The room's stages are fixed and transcribed,
- * so the only thing worth showing is the answer: the wall, each player's tiles in that
+ * so the only thing worth showing is the answer: the floor, each player's tiles in that
  * player's colour and numbered in the order they press them, and which presses have to
  * wait for another player's. (The clockwise numbering the solver plans in never reaches
- * the screen -- at the wall a player wants "my third", not "tile 11".) It is read
+ * the screen -- on the floor a player wants "my third", not "tile 11".) It is read
  * on a phone in one hand while the other hand presses tiles, which drives the layout:
  * the level is a row of big buttons, one stage fills the screen, the next stage is a
  * swipe up, the board stays put while the presses scroll under it, the presses stay
@@ -89,7 +90,7 @@ import kotlin.math.abs
  * enough to hit with a thumb.
  *
  * The room is played by a team, so the first thing asked is how many. The stage is then
- * split into a lane per player -- each a stretch of wall and a sequence of presses --
+ * split into a lane per player -- each a patch of floor and a sequence of presses --
  * so that independent parts of the puzzle happen at the same time, and a press that has
  * to wait for another player's says whose.
  *
@@ -139,16 +140,16 @@ fun StrategyScreen(
             Spacer(Modifier.height(8.dp))
 
             val stages = plans[level]
-            // One planner per plan for as long as the screen is up, so a stage split once
+            // One solver per stage for as long as the screen is up, so a stage split once
             // is not split again on the way back to it -- the split is a search, and on a
             // big stage it takes a noticeable moment on a phone.
-            val planners = remember { HashMap<StrategyPlan, TeamPlanner>() }
-            fun plannerFor(plan: StrategyPlan) = planners.getOrPut(plan) { TeamPlanner(plan) }
+            val solvers = remember { HashMap<StrategyPlan, TeamSolver>() }
+            fun solverFor(plan: StrategyPlan) = solvers.getOrPut(plan) { TeamSolver(plan) }
             // Split every stage of the level in the background as soon as it is on screen,
             // in page order, so swiping on finds the next stage ready.
             LaunchedEffect(stages, players) {
                 if (stages != null && players != null) {
-                    val queue = stages.map { plannerFor(it) }
+                    val queue = stages.map { solverFor(it) }
                     withContext(Dispatchers.Default) { for (p in queue) p.schedule(players) }
                 }
             }
@@ -174,7 +175,7 @@ fun StrategyScreen(
                     modifier = Modifier.fillMaxSize(),
                     key = { "$level-$it" },
                 ) { page ->
-                    StagePage(stages[page], plannerFor(stages[page]), players ?: 1, showWalls, lanesAt, pager, page)
+                    StagePage(solverFor(stages[page]), players ?: 1, showWalls, lanesAt, pager, page)
                 }
             }
         }
@@ -254,27 +255,26 @@ private fun LevelPicker(levels: List<Int>, selected: Int, onSelect: (Int) -> Uni
  * One stage: the board, fixed, then the lanes scrolling under it.
  *
  * The board redraws for the selected chip. With nothing selected it shows the start of
- * the stage, which is the picture the team sees when they walk up to the wall.
+ * the stage, which is the picture the team sees when they walk into the room.
  *
  * The lanes open at [lanesAt], and scrolling them here moves it for every other stage;
  * [page] is this stage's page in [pager].
  */
 @Composable
 private fun StagePage(
-    plan: StrategyPlan,
-    planner: TeamPlanner,
+    solver: TeamSolver,
     players: Int,
     showWalls: Boolean,
     lanesAt: MutableState<LanesAt>,
     pager: PagerState,
     page: Int,
 ) {
-    val stage = plan.stage
+    val stage = solver.plan.stage
     // Recomputed whenever the player count changes, including while the page is on
     // screen -- and a split for another count is never shown, even for the frame
     // before the new one arrives.
-    val split by produceState(planner.scheduled(players), planner, players) {
-        value = planner.scheduled(players) ?: withContext(Dispatchers.Default) { planner.schedule(players) }
+    val split by produceState(solver.scheduled(players), solver, players) {
+        value = solver.scheduled(players) ?: withContext(Dispatchers.Default) { solver.schedule(players) }
     }
     val team = split?.takeIf { it.players == players }
     if (team == null) {
@@ -291,9 +291,13 @@ private fun StagePage(
         }
         return
     }
+    // The plan this split is of, which for this many players may not be the solver's
+    // first: another gun taking another tile can split better. Everything below is drawn
+    // from it.
+    val plan = team.plan
     var selected by remember(plan, players) { mutableIntStateOf(-1) }
     val state = remember(plan, selected) {
-        if (selected < 0) plan.states[0] else plan.stateAfter(planner.ancestors(selected))
+        if (selected < 0) plan.states[0] else plan.stateAfter(team.ancestors(selected))
     }
     val frame = when {
         selected >= 0 -> laneGroupOf(team, selected).frame
@@ -324,7 +328,7 @@ private fun StagePage(
     }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        // Always drawn as it hangs on the wall: two boards side by side with the wall
+        // Always drawn as it lies on the floor: two boards side by side with the wall
         // between them, never stacked, so every stage reads the same way round even
         // where the tiles come out small. Sized to the page's width, capped so the board
         // leaves the lower part of the page to the lanes and so a small stage does not
@@ -360,7 +364,7 @@ private fun StagePage(
             ) {
                 items(team.lanes, key = { it.player }) { lane ->
                     Column(Modifier.padding(bottom = 10.dp)) {
-                        LaneSection(plan, planner, team, lane, selected, onSelect = { selected = if (selected == it) -1 else it })
+                        LaneSection(plan, team, lane, selected, onSelect = { selected = if (selected == it) -1 else it })
                     }
                 }
             }
@@ -415,14 +419,13 @@ private fun LanesAt.position(team: TeamPlan): Pair<Int, Int> {
  * One player's presses, in runs.
  *
  * On a timed stage each run gets a thumbnail of the board it needs, so the player can
- * match the wall against the picture before pressing anything. A chip that has to wait
+ * match the floor against the picture before pressing anything. A chip that has to wait
  * for another player's press says which one, in that player's colour.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun LaneSection(
     plan: StrategyPlan,
-    planner: TeamPlanner,
     team: TeamPlan,
     lane: Lane,
     selected: Int,
@@ -438,10 +441,9 @@ private fun LaneSection(
         if (lane.shots.isEmpty()) {
             Text("nothing this stage", color = Color(0xFF6F7B87), fontSize = 12.sp)
         } else {
-            // Sideways walking only: it is the part that takes time, and a number a
-            // player can check against the wall.
-            val guns = lane.shots.map { stage.guns[plan.shots[it].gun] }
-            val walked = guns.zipWithNext { a, b -> abs(a.x - b.x) }.sum()
+            // Straight across the floor, the same measure the split is made on, to the
+            // nearest tile.
+            val walked = lane.walked.roundToInt()
             Text(
                 "${lane.shots.size} presses  ·  " + when (walked) { 0 -> "no walking"; 1 -> "walks 1 tile"; else -> "walks $walked tiles" },
                 color = Color(0xFF6F7B87),
@@ -453,7 +455,7 @@ private fun LaneSection(
         Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(bottom = 6.dp)) {
             if (stage.isTimed) {
                 val first = lane.shots[group.first]
-                Thumbnail(stage, group.frame, plan.stateAfter(planner.ancestors(first)))
+                Thumbnail(stage, group.frame, plan.stateAfter(team.ancestors(first)))
                 Spacer(Modifier.width(10.dp))
             }
             FlowRow(
@@ -551,7 +553,7 @@ private val COLOUR_LABEL_SPENT = Color(0xFFB9A98F)
 
 /**
  * The board in [state] on [frame], every gun in its player's colour, the gun of
- * [highlight] ringed and its shot drawn to where it lands. The whole wall in one piece,
+ * [highlight] ringed and its shot drawn to where it lands. The whole floor in one piece,
  * drawing only [columns] -- which leaves out the wall between two boards where it is not
  * part of what the team sees.
  */

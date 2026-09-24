@@ -5,7 +5,7 @@ import kotlin.math.atan2
 /**
  * One stage of the Strategy room, as transcribed by the fan sites.
  *
- * The room is a wall of lit tiles. Orange tiles on the edge are guns: press one and it
+ * The room is a floor of lit tiles. Orange tiles on the edge are guns: step on one and it
  * fires a shot straight across the board that destroys the first blue target it meets,
  * and the gun is spent. Red tiles are hazards -- a shot into one is a life lost, or the
  * wave failed, depending on which transcription is being followed. Every stage has to be
@@ -87,8 +87,8 @@ class StrategyStage(
      *
      * Numbering starts at the top-left corner of the panel and walks the border: along
      * the top, down the right side, back along the bottom, up the left side. That is the
-     * order a player scans a wall from in front of it, which is the point: the solution
-     * is read off a phone and pressed on a wall, and "the third orange tile from the
+     * order a player reads the board in, which is the point: the solution
+     * is read off a phone and pressed on the floor, and "the third orange tile from the
      * top-left, going round" has to mean the same thing in both places.
      *
      * With two panels the numbers carry an `L` or `R`. A gun that is not on a border --

@@ -71,6 +71,20 @@ class StrategySolverTest {
     }
 
     @Test
+    fun `other plans clear the stage too, for the same lives`() {
+        for (stage in stages + gridlock) {
+            val first = StrategySolver(stage).solve()!!
+            val plans = StrategySolver(stage).plans(24, 11L)
+            assertEquals("$stage: the solver's own plan comes first", sequence(first), sequence(plans.first()))
+            for (plan in plans) assertEquals("$stage: ${sequence(plan)}", first.redHits, replay(stage, plan))
+            val hits = plans.map { p -> p.shots.map { Triple(it.gun, it.hit, it.hitIndex) }.toSet() }
+            assertEquals("$stage: the same plan twice", hits.size, hits.toSet().size)
+            // Cut off by positions searched rather than time, so the same plans every time.
+            assertEquals(plans.map(::sequence), StrategySolver(stage).plans(24, 11L).map(::sequence))
+        }
+    }
+
+    @Test
     fun `only level 4 stage 4 costs a life`() {
         for (stage in stages + gridlock) {
             val plan = StrategySolver(stage).solve()!!

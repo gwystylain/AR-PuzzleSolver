@@ -1,6 +1,6 @@
 package com.puzzlesolver.core.puzzle.strategy
 
-import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.random.Random
 
 /**
@@ -20,6 +20,8 @@ class Lane(
      * names rather than the whole history.
      */
     val waitsFor: Map<Int, List<Int>>,
+    /** Cells walked from the first press to the last, straight across the floor. */
+    val walked: Double,
 )
 
 class TeamPlan(
@@ -39,13 +41,27 @@ class TeamPlan(
     fun playerOf(shot: Int): Int = lanes.first { shot in it.shots }.player
 
     /**
+     * Everything a shot waits on, directly or through other shots: what has certainly
+     * landed by the time it is pressed, whoever pressed it.
+     */
+    fun ancestors(shot: Int): Set<Int> {
+        val out = HashSet<Int>()
+        val todo = ArrayDeque(dependencies[shot])
+        while (todo.isNotEmpty()) {
+            val d = todo.removeFirst()
+            if (out.add(d)) todo += dependencies[d]
+        }
+        return out
+    }
+
+    /**
      * Each player's own count, indexed by shot.
      *
      * A press is numbered one past the later of the player's previous press and every
      * press it waits on, so two players with nothing between them both read 1, 2, 3,
      * while a player whose second press needs the other's second reads 1, 3, 4: the
      * gap is the wait, and the number says when. This is what the board and the chips
-     * show, since a player standing at the wall wants "my third" and not "tile 11".
+     * show, since a player out on the floor wants "my third" and not "tile 11".
      */
     val steps: IntArray by lazy {
         val out = IntArray(plan.shots.size) { 0 }
@@ -79,12 +95,18 @@ class TeamPlan(
  * partial order -- shot B waits for shot A when A changes a tile B fires across, or
  * the other way round -- and any schedule that respects it clears the stage exactly as
  * the plan does. Splitting the stage between players is choosing, within that partial
- * order, who presses what and in what order, and the rules for a good split are the
- * team's, in this order of importance:
+ * order, who presses what and in what order.
  *
- * 1. **Even.** Every player gets the same number of presses, or one fewer. This is a
- *    hard constraint: the search only ever swaps presses between players, or moves one
- *    from a longer lane to a shorter one, so it can never unbalance the split.
+ * Both rooms are floors: a press is a step onto a tile, and getting to the next one is
+ * a walk straight across the room, so the rows count as much as the columns. That makes
+ * walking, not pressing, where a stage's time goes -- crossing the room for one tile
+ * costs more than two presses -- and the rules for a good split, the team's, are:
+ *
+ * 1. **Finish early, walk little.** The stage is done when the last press lands, so a
+ *    split is scored on when that is -- walking, pressing and standing waiting for other
+ *    players, on the same clock as [evaluate] -- and, on top, on how far everyone walks
+ *    in total. A tile one player would cross the room for goes to whoever is standing
+ *    next to it, even if that leaves them with more presses than the rest.
  * 2. **Hand-offs early, waits late.** Where a press waits on another player's, the
  *    press it waits on belongs at the front of that player's stack and the waiting
  *    press at the back of its own. A hand-off that happens on step 1 cannot be
@@ -92,49 +114,49 @@ class TeamPlan(
  *    a little quick. So every ordinary press in front of a hand-off, or behind a waiting
  *    press, is penalised -- unless it has to be there because the hand-off depends on
  *    it, or it on the waiting press: "the front" is as early as a press's own
- *    dependencies allow. A wait whose margin is a single step is penalised again. And a
+ *    dependencies allow. A wait whose margin is a single step is penalised again, and a
  *    wait with no margin at all, where equal pace would have the player arrive before
- *    the press it needs, costs more than anything else -- though on a stage that is one
- *    long chain some of that is unavoidable, since an even split means someone waits.
- * 3. **Short walks.** Each player's walk from press to press along the wall, measured
- *    mostly sideways since reaching up costs nothing like crossing the room: the total,
- *    and half again for whoever walks furthest, so no one player carries the team.
- * 4. **The level's quirks.** Which presses and on which look of the board is already
+ *    the press it needs and stand there, costs as much as a press. It is worth paying:
+ *    on a chain, a player standing at the next tile and waiting their turn beats one
+ *    player walking the whole chain, and pricing the wait above the walk it saves only
+ *    sends someone round the room.
+ * 3. **The level's quirks.** Which presses and on which look of the board is already
  *    settled by the plan -- reds, moving and swapping targets, walls, mirrors. What the
  *    split adds is how often a player has to stop and wait for the board to come round:
  *    every extra run of presses in a lane costs a wait, so it is scored too.
+ * 4. **Even, where nothing else decides.** Presses are shared out as evenly as the
+ *    rules above allow, and no further: a player whose tiles are close together takes
+ *    more of them, and on a stage where another pair of feet saves nothing, a player
+ *    can have nothing to press.
  *
- * Where all else is equal, fewer presses that wait on another player at all is
+ * Every term is counted in tiles walked, so each weight below says what it is worth in
+ * walking. Where all else is equal, fewer presses that wait on another player at all is
  * preferred, since a dependency inside one player's stack carries no risk.
  *
- * The search is in two levels. Simulated annealing decides who presses what, only ever
- * trading presses between players or moving one from a longer stack to a shorter one,
- * so the split stays even; each candidate split is put in order by [arrange], a rule
- * that already follows the team's rules, and scored. The best splits then get an
- * exhaustive polish that moves presses within the order and between players. It runs
- * from several starts -- a stretch of wall each, the clockwise numbering dealt out, a
- * board look each on a timed stage -- and is seeded, so a stage shows the same lanes
- * every time it is opened. Sixteen times the search effort changes the result by a few
- * percent of walking at most, so it is not stopping short.
+ * The search is in two levels. Simulated annealing decides who presses what, trading
+ * presses between players or moving one to another player; each candidate split is put
+ * in order by [arrange], a rule that already follows the team's rules, and scored. The
+ * best splits then get an exhaustive polish that moves presses within the order and
+ * between players. It runs from several starts -- a stretch of edge each, the clockwise
+ * numbering dealt out, a board look each on a timed stage -- and is seeded, so a stage
+ * shows the same lanes every time it is opened. Eight times the search effort changes
+ * the result by under one percent of time or walking, so it is not stopping short.
  */
-class TeamPlanner(private val plan: StrategyPlan) {
+class TeamPlanner(
+    private val plan: StrategyPlan,
+    /**
+     * A quick look, to compare plans by rather than to play: a tenth of the annealing
+     * and no polish. It ranks plans nearly as the full search would, at a fraction of
+     * the cost.
+     */
+    private val quick: Boolean = false,
+) {
 
     private val stage = plan.stage
     private val n = plan.shots.size
 
     /** For each shot, the earlier-in-plan shots it must come after. Direct edges only. */
     val dependencies: List<Set<Int>> by lazy { reduce(rawDependencies()) }
-
-    /** Everything a shot waits on, directly or through other shots. */
-    fun ancestors(shot: Int): Set<Int> {
-        val out = HashSet<Int>()
-        val todo = ArrayDeque(dependencies[shot])
-        while (todo.isNotEmpty()) {
-            val d = todo.removeFirst()
-            if (out.add(d)) todo += dependencies[d]
-        }
-        return out
-    }
 
     private fun touched(shot: PlannedShot): Set<Cell> {
         val g = stage.guns[shot.gun]
@@ -202,7 +224,7 @@ class TeamPlanner(private val plan: StrategyPlan) {
         }
     }
 
-    private fun walk(a: Cell, b: Cell): Double = abs(a.x - b.x) + 0.3 * abs(a.y - b.y)
+    private fun walk(a: Cell, b: Cell): Double = hypot((a.x - b.x).toDouble(), (a.y - b.y).toDouble())
 
     private fun gunCell(shot: Int): Cell = stage.guns[plan.shots[shot].gun].cell
 
@@ -260,10 +282,10 @@ class TeamPlanner(private val plan: StrategyPlan) {
         for ((i, start) in starts(players).withIndex()) {
             val split = anneal(start.player, players, scorer, Random(SEED + players * 31 + i))
             // The start itself is polished too: a natural split -- a board each, a
-            // stretch of wall each -- can be the best there is and still arrange badly
+            // stretch of edge each -- can be the best there is and still arrange badly
             // enough at first for the annealing to walk away from it.
             for (candidate in listOf(split, start.player)) {
-                val st = polish(arrange(candidate, players), scorer)
+                val st = arrange(candidate, players).let { if (quick) it else polish(it, scorer) }
                 val c = scorer.score(st)
                 if (c < bestCost - 1e-9) {
                     best = st
@@ -315,7 +337,7 @@ class TeamPlanner(private val plan: StrategyPlan) {
 
     /**
      * Scores a split: lower is better; see the class comment for what each term stands
-     * for and why the weights are ordered as they are. One sweep along the order does
+     * for and what each weight is worth. One sweep along the order does
      * nearly all of it, because the order already puts every press after the presses it
      * waits for and after the one before it in its own stack. Holds its working arrays
      * so the search's hundreds of thousands of calls allocate nothing.
@@ -329,6 +351,8 @@ class TeamPlanner(private val plan: StrategyPlan) {
         private val lastStep = IntArray(players)
         private val lastShot = IntArray(players)
         private val walked = DoubleArray(players)
+        private val free = DoubleArray(players)
+        private val finish = DoubleArray(n)
         private val common = LongArray(players)
         private val ordinaryAll = LongArray(players)
         private val ordinarySoFar = LongArray(players)
@@ -338,9 +362,11 @@ class TeamPlanner(private val plan: StrategyPlan) {
             lastStep.fill(0)
             lastShot.fill(-1)
             walked.fill(0.0)
+            free.fill(0.0)
             common.fill(-1L)
             var skipped = 0
             var stops = 0
+            var makespan = 0.0
             for (s in st.order) {
                 val p = st.player[s]
                 pos[s] = laneLen[p]++
@@ -349,7 +375,18 @@ class TeamPlanner(private val plan: StrategyPlan) {
                 step[s] = ready + 1
                 skipped += step[s] - pos[s] - 1
                 lastStep[p] = step[s]
-                if (lastShot[p] >= 0) walked[p] += walkTable[lastShot[p]][s]
+                // The same clock as [evaluate]: walk over, wait for what this press
+                // needs, press. The order already has every prerequisite finished.
+                var start = free[p]
+                if (lastShot[p] >= 0) {
+                    val w = walkTable[lastShot[p]][s]
+                    walked[p] += w
+                    start += w
+                }
+                for (d in prerequisites[s]) if (finish[d] > start) start = finish[d]
+                finish[s] = start + PRESS
+                free[p] = finish[s]
+                if (finish[s] > makespan) makespan = finish[s]
                 lastShot[p] = s
                 if (stage.isTimed) {
                     val next = common[p] and frameMask[s]
@@ -406,24 +443,25 @@ class TeamPlanner(private val plan: StrategyPlan) {
             }
 
             var total = 0.0
-            var furthest = 0.0
-            for (w in walked) {
-                total += w
-                if (w > furthest) furthest = w
-            }
+            for (w in walked) total += w
+            val mean = n.toDouble() / players
+            var uneven = 0.0
+            for (len in laneLen) uneven += (len - mean) * (len - mean)
             return W_SKIPPED * skipped +
                 W_TIGHT * tight +
                 W_PLACEMENT * placement +
                 W_CROSS * cross +
-                total + 0.5 * furthest +
-                W_WAIT * stops
+                W_WALK * total +
+                W_TIME * makespan +
+                W_WAIT * stops +
+                W_UNEVEN * uneven
         }
 
     }
 
     /**
      * Balanced starting splits over the plan's own order, which respects every
-     * dependency by construction. One deals the wall out left to right, a stretch per
+     * dependency by construction. One deals the board out left to right, a stretch per
      * player; one deals it round the clockwise numbering; on a timed stage one groups the
      * presses that share a look of the board; one deals the plan out in turn.
      */
@@ -537,8 +575,8 @@ class TeamPlanner(private val plan: StrategyPlan) {
 
     /**
      * Simulated annealing over who presses what, from [start]; each candidate split is
-     * put in order by [arrange] and scored as played. Every move keeps the split even:
-     * two presses trade players, or a press moves from a longer stack to a shorter one.
+     * put in order by [arrange] and scored as played. A move is two presses trading
+     * players, or one press going to another player.
      */
     private fun anneal(start: IntArray, players: Int, scorer: Scorer, random: Random): IntArray {
         var current = start
@@ -546,10 +584,9 @@ class TeamPlanner(private val plan: StrategyPlan) {
         var best = current
         var bestCost = currentCost
         if (n < 2 || players < 2) return best
-        val steps = SEARCH_STEPS_PER_PRESS * n
+        val steps = SEARCH_STEPS_PER_PRESS * n / if (quick) 10 else 1
         var temperature = T_START
         val cooling = Math.pow(T_END / T_START, 1.0 / steps)
-        val counts = IntArray(players)
         repeat(steps) {
             temperature *= cooling
             val trial = current.copyOf()
@@ -561,15 +598,10 @@ class TeamPlanner(private val plan: StrategyPlan) {
                 trial[a] = current[b]
                 trial[b] = current[a]
             } else {
-                // A press moves from a longer stack to a shorter one.
-                counts.fill(0)
-                for (p in trial) counts[p]++
-                val longest = counts.max()
+                // A press moves to another player.
                 val s = random.nextInt(n)
-                if (counts[trial[s]] != longest) return@repeat
-                val to = random.nextInt(players)
-                if (counts[to] != longest - 1) return@repeat
-                trial[s] = to
+                val to = random.nextInt(players - 1)
+                trial[s] = if (to >= current[s]) to + 1 else to
             }
             val c = scorer.score(arrange(trial, players))
             if (c <= currentCost || random.nextDouble() < Math.exp((currentCost - c) / temperature)) {
@@ -621,8 +653,8 @@ class TeamPlanner(private val plan: StrategyPlan) {
 
     /**
      * Steepest descent after the annealing: every press to every other allowed place in
-     * the order, every pair of presses traded between players, every press moved to a
-     * shorter stack -- the best change taken, until none helps. Annealing gets close;
+     * the order, every pair of presses traded between players, every press moved to
+     * every other player -- the best change taken, until none helps. Annealing gets close;
      * this makes sure nothing one move away is better.
      */
     private fun polish(start: State, scorer: Scorer): State {
@@ -646,9 +678,6 @@ class TeamPlanner(private val plan: StrategyPlan) {
                     if (!trial.order.contentEquals(st.order)) consider(trial)
                 }
             }
-            val counts = IntArray(st.players)
-            for (p in st.player) counts[p]++
-            val longest = counts.max()
             for (a in 0 until n) {
                 for (b in a + 1 until n) {
                     if (st.player[a] == st.player[b]) continue
@@ -657,11 +686,8 @@ class TeamPlanner(private val plan: StrategyPlan) {
                     trial.player[b] = st.player[a]
                     consider(trial)
                 }
-                if (counts[st.player[a]] == longest) {
-                    for (p in 0 until st.players) {
-                        if (counts[p] != longest - 1) continue
-                        consider(st.copy().also { it.player[a] = p })
-                    }
+                for (p in 0 until st.players) {
+                    if (p != st.player[a]) consider(st.copy().also { it.player[a] = p })
                 }
             }
             val next = bestTrial ?: return st
@@ -715,7 +741,8 @@ class TeamPlanner(private val plan: StrategyPlan) {
             val others = dependencies[s].filter { it !in mine }
             if (others.isNotEmpty()) waits[s] = others.sorted()
         }
-        return Lane(player, shots, groupRuns(shots.map { plan.shots[it].frames }, stage.frameCount), waits)
+        val walked = shots.zipWithNext { a, b -> walk(gunCell(a), gunCell(b)) }.sum()
+        return Lane(player, shots, groupRuns(shots.map { plan.shots[it].frames }, stage.frameCount), waits, walked)
     }
 
     companion object {
@@ -737,17 +764,24 @@ class TeamPlanner(private val plan: StrategyPlan) {
          */
         private const val SAFE_MARGIN = 2
 
-        // The weights, in cells walked. Their order is the order of the team's rules.
-        /** A step a player would stand waiting even at equal pace. */
-        private const val W_SKIPPED = 1000.0
+        // The weights, in cells walked. Tried across every stage for two to five players,
+        // these came out an eighth faster and a quarter less walking than an even split.
+        /** When the last press lands: a moment of the team's time is worth three cells of anyone's walk. */
+        private const val W_TIME = 3.0
+        /** Every cell walked, by anyone. */
+        private const val W_WALK = 1.0
+        /** A step a player would stand waiting even at equal pace: a press's worth. */
+        private const val W_SKIPPED = PRESS
         /** Squared shortfall of a cross-player wait's margin below [SAFE_MARGIN]. */
-        private const val W_TIGHT = 40.0
+        private const val W_TIGHT = 10.0
         /** An ordinary press in front of a hand-off, or behind a waiting press. */
-        private const val W_PLACEMENT = 25.0
+        private const val W_PLACEMENT = 6.0
         /** A dependency split across two players at all. */
         private const val W_CROSS = 2.0
         /** An extra stop in a lane to wait for the board to come round. */
-        private const val W_WAIT = 50.0
+        private const val W_WAIT = 12.0
+        /** Squared distance of each lane's size from an even share: only a tie-break. */
+        private const val W_UNEVEN = 1.0
 
         /**
          * Cuts a sequence into the fewest runs that each share a frame. Greedy is optimal
