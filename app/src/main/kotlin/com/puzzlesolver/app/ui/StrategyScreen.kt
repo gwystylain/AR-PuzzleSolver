@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,22 +21,26 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -63,6 +68,9 @@ import com.puzzlesolver.core.puzzle.strategy.StrategyStage
 import com.puzzlesolver.core.puzzle.strategy.TeamPlan
 import com.puzzlesolver.core.puzzle.strategy.TeamPlanner
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
@@ -76,8 +84,9 @@ import kotlin.math.abs
  * the screen -- at the wall a player wants "my third", not "tile 11".) It is read
  * on a phone in one hand while the other hand presses tiles, which drives the layout:
  * the level is a row of big buttons, one stage fills the screen, the next stage is a
- * swipe up, the board stays put while the presses scroll under it, and every press is
- * a chip big enough to hit with a thumb.
+ * swipe up, the board stays put while the presses scroll under it, the presses stay
+ * scrolled to the same player from one stage to the next, and every press is a chip big
+ * enough to hit with a thumb.
  *
  * The room is played by a team, so the first thing asked is how many. The stage is then
  * split into a lane per player -- each a stretch of wall and a sequence of presses --
@@ -143,6 +152,10 @@ fun StrategyScreen(
                     withContext(Dispatchers.Default) { for (p in queue) p.schedule(players) }
                 }
             }
+            // Where the lanes are scrolled to, carried from stage to stage and level to
+            // level: a player who has scrolled down to their own lane finds it there
+            // again on the next stage instead of scrolling down through everyone else's.
+            val lanesAt = remember { mutableStateOf(LanesAt()) }
             if (stages == null) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -161,7 +174,7 @@ fun StrategyScreen(
                     modifier = Modifier.fillMaxSize(),
                     key = { "$level-$it" },
                 ) { page ->
-                    StagePage(stages[page], plannerFor(stages[page]), players ?: 1, showWalls)
+                    StagePage(stages[page], plannerFor(stages[page]), players ?: 1, showWalls, lanesAt, pager, page)
                 }
             }
         }
@@ -242,9 +255,20 @@ private fun LevelPicker(levels: List<Int>, selected: Int, onSelect: (Int) -> Uni
  *
  * The board redraws for the selected chip. With nothing selected it shows the start of
  * the stage, which is the picture the team sees when they walk up to the wall.
+ *
+ * The lanes open at [lanesAt], and scrolling them here moves it for every other stage;
+ * [page] is this stage's page in [pager].
  */
 @Composable
-private fun StagePage(plan: StrategyPlan, planner: TeamPlanner, players: Int, showWalls: Boolean) {
+private fun StagePage(
+    plan: StrategyPlan,
+    planner: TeamPlanner,
+    players: Int,
+    showWalls: Boolean,
+    lanesAt: MutableState<LanesAt>,
+    pager: PagerState,
+    page: Int,
+) {
     val stage = plan.stage
     // Recomputed whenever the player count changes, including while the page is on
     // screen -- and a split for another count is never shown, even for the frame
@@ -274,6 +298,29 @@ private fun StagePage(plan: StrategyPlan, planner: TeamPlanner, players: Int, sh
     val frame = when {
         selected >= 0 -> laneGroupOf(team, selected).frame
         else -> team.lanes.firstOrNull { it.groups.isNotEmpty() }?.groups?.first()?.frame ?: 0
+    }
+
+    val lanes = remember(team) { lanesAt.value.position(team).let { (i, o) -> LazyListState(i, o) } }
+    LaunchedEffect(lanes) {
+        // Off screen -- sliding in, or just left -- keep up with the lanes being scrolled
+        // on the stage that is on screen.
+        launch {
+            snapshotFlow { lanesAt.value.takeIf { pager.currentPage != page } }
+                .filterNotNull()
+                .collect { at ->
+                    if (at != lanes.scrolledTo(team)) at.position(team).let { (i, o) -> lanes.requestScrollToItem(i, o) }
+                }
+        }
+        // On screen, pass on where the lanes are left once a scroll of them stops. A
+        // swipe that starts on the lanes runs them to their end before it reaches the
+        // pager, so first see where the pager comes to rest: if the swipe turned the
+        // page, it was not a scroll of these lanes, just a swipe that passed through them.
+        while (true) {
+            snapshotFlow { lanes.isScrollInProgress }.first { it }
+            snapshotFlow { lanes.isScrollInProgress }.first { !it }
+            snapshotFlow { pager.currentPageOffsetFraction }.first { abs(it) < 1e-3f }
+            if (pager.currentPage == page) lanesAt.value = lanes.scrolledTo(team)
+        }
     }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -306,17 +353,16 @@ private fun StagePage(plan: StrategyPlan, planner: TeamPlanner, players: Int, sh
             Spacer(Modifier.height(6.dp))
             HorizontalDivider(color = Color(0xFF1B222A))
 
-            Column(
-                Modifier
-                    .weight(1f)
-                    .verticalScroll(rememberScrollState())
-                    .padding(top = 6.dp),
+            LazyColumn(
+                state = lanes,
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(top = 6.dp, bottom = 14.dp),
             ) {
-                for (lane in team.lanes) {
-                    LaneSection(plan, planner, team, lane, selected, onSelect = { selected = if (selected == it) -1 else it })
-                    Spacer(Modifier.height(10.dp))
+                items(team.lanes, key = { it.player }) { lane ->
+                    Column(Modifier.padding(bottom = 10.dp)) {
+                        LaneSection(plan, planner, team, lane, selected, onSelect = { selected = if (selected == it) -1 else it })
+                    }
                 }
-                Spacer(Modifier.height(14.dp))
             }
         }
     }
@@ -326,6 +372,43 @@ private fun laneGroupOf(team: TeamPlan, shot: Int): ShotGroup {
     val lane = team.lanes.first { shot in it.shots }
     val i = lane.shots.indexOf(shot)
     return lane.groups.first { i in it.first..it.last }
+}
+
+/**
+ * Where a stage's lanes are scrolled to, in terms that mean the same on another stage.
+ *
+ * Not a pixel offset: the lanes are a different length on every stage, so the same
+ * offset lands on somebody else's presses. What carries over is the player whose lane
+ * is at the top of the list and how far into it the list is scrolled -- or, once the
+ * lane below shows more than is left of that one, the lane below, since that is the one
+ * being read. A list scrolled all the way down opens scrolled down to the last lane
+ * instead, since that is where the last player always has it.
+ */
+private data class LanesAt(val player: Int = 1, val offset: Int = 0, val atEnd: Boolean = false)
+
+/** Where these lanes, showing [team], are scrolled to now. */
+private fun LazyListState.scrolledTo(team: TeamPlan): LanesAt {
+    if (canScrollBackward && !canScrollForward) return LanesAt(atEnd = true)
+    val info = layoutInfo
+    val top = info.visibleItemsInfo.firstOrNull { it.index == firstVisibleItemIndex } ?: return LanesAt()
+    val next = info.visibleItemsInfo.firstOrNull { it.index == top.index + 1 }
+    val topShows = top.size - firstVisibleItemScrollOffset
+    val nextShows = next?.let { minOf(it.size, info.viewportEndOffset - it.offset) } ?: 0
+    return if (next != null && nextShows > topShows) {
+        LanesAt(team.lanes[next.index].player)
+    } else {
+        LanesAt(team.lanes[top.index].player, firstVisibleItemScrollOffset)
+    }
+}
+
+/** This place as a lane index and an offset into it, for [team]'s lanes. */
+private fun LanesAt.position(team: TeamPlan): Pair<Int, Int> {
+    // The last lane at the top, which the list only gets as far towards as its bottom
+    // allows -- and where the last lane is longer than the list is tall, the start of it.
+    if (atEnd) return team.lanes.lastIndex to 0
+    val i = team.lanes.indexOfFirst { it.player == player }
+    // A player the team no longer has, after the count went down.
+    return if (i < 0) team.lanes.lastIndex to 0 else i to offset
 }
 
 /**

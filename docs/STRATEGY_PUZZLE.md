@@ -28,7 +28,10 @@ anything that is not the answer is clutter over the board. What it shows:
   title. Every stage is then split into a lane per player (see below).
 - **Level** is the row of buttons across the top, 1 to 10.
 - **Stages** are pages: swipe up for the next stage, down for the previous. The board
-  stays put; the lanes scroll underneath it.
+  stays put; the lanes scroll underneath it, and stay scrolled to the same player from
+  stage to stage, so a player who has scrolled down to their own lane finds it there on
+  the next stage too. A swipe that starts on the lanes and turns the page does not
+  count as scrolling them.
 - **The board** is drawn as the wall, always landscape: two boards side by side. In
   Gridlock the gap between separate boards (levels 7 and 8) is left out and the boards
   are drawn edge to edge; Strategy's green strip on its levels 7 and 8 is drawn, since
