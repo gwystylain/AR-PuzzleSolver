@@ -239,6 +239,25 @@ class TeamPlannerTest {
     }
 
     @Test
+    fun `a split rebuilt from its lanes is the split`() {
+        // What the app does with a bundled split: only the lanes are stored, and the
+        // steps, waits, timing and score have to come out as the search reported them.
+        for (plan in plans.filter { it.stage.level in listOf(4, 7, 9) }) {
+            val planner = TeamPlanner(plan)
+            for (players in 1..5) {
+                val found = planner.schedule(players)
+                val rebuilt = TeamPlanner(plan).split(found.lanes.map { it.shots })
+                assertEquals(found.lanes.map { it.shots }, rebuilt.lanes.map { it.shots })
+                assertEquals(found.lanes.map { it.waitsFor }, rebuilt.lanes.map { it.waitsFor })
+                assertEquals(found.steps.toList(), rebuilt.steps.toList())
+                assertEquals(found.makespan, rebuilt.makespan, 1e-9)
+                assertEquals(found.travel, rebuilt.travel, 1e-9)
+                assertEquals(found.score, rebuilt.score, 1e-6)
+            }
+        }
+    }
+
+    @Test
     fun `the same stage always splits the same way`() {
         for ((room, level, index) in listOf(Triple(StrategyRoom.STRATEGY, 8, 3), Triple(StrategyRoom.GRIDLOCK, 9, 3))) {
             val a = TeamPlanner(plan(room, level, index)).schedule(3).lanes.map { it.shots }

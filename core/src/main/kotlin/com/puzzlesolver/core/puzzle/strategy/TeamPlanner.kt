@@ -142,15 +142,7 @@ class TeamPlan(
  * shows the same lanes every time it is opened. Eight times the search effort changes
  * the result by under one percent of time or walking, so it is not stopping short.
  */
-class TeamPlanner(
-    private val plan: StrategyPlan,
-    /**
-     * A quick look, to compare plans by rather than to play: a tenth of the annealing
-     * and no polish. It ranks plans nearly as the full search would, at a fraction of
-     * the cost.
-     */
-    private val quick: Boolean = false,
-) {
+class TeamPlanner(private val plan: StrategyPlan) {
 
     private val stage = plan.stage
     private val n = plan.shots.size
@@ -285,7 +277,7 @@ class TeamPlanner(
             // stretch of edge each -- can be the best there is and still arrange badly
             // enough at first for the annealing to walk away from it.
             for (candidate in listOf(split, start.player)) {
-                val st = arrange(candidate, players).let { if (quick) it else polish(it, scorer) }
+                val st = polish(arrange(candidate, players), scorer)
                 val c = scorer.score(st)
                 if (c < bestCost - 1e-9) {
                     best = st
@@ -296,16 +288,33 @@ class TeamPlanner(
         val lanes = lanesOf(best ?: error("no split for $stage")).map { it.toList() }
         // Player 1 is whoever presses the lowest clockwise number: the search shuffles
         // lanes freely, and a stable order is what makes "player 2" mean something.
-        val ordered = lanes.sortedBy { lane -> lane.minOfOrNull { rank(it) } ?: Int.MAX_VALUE }
-        val timing = evaluate(ordered) ?: error("schedule deadlocks for $stage")
-        TeamPlan(
+        split(lanes.sortedBy { lane -> lane.minOfOrNull { rank(it) } ?: Int.MAX_VALUE })
+    }
+
+    /**
+     * The split with these [lanes] -- each player's presses in order, player 1 first --
+     * with its steps, waits, timing and score worked out as [schedule] reports them. For
+     * a split found beforehand, such as the ones bundled with the app. Fails if a press
+     * is missing or doubled, or the lanes wait on each other in a circle.
+     */
+    fun split(lanes: List<List<Int>>): TeamPlan {
+        require(lanes.isNotEmpty())
+        require(lanes.flatten().sorted() == (0 until n).toList()) { "lanes must hold every press of $stage once: $lanes" }
+        val timing = evaluate(lanes) ?: error("lanes wait on each other in a circle on $stage: $lanes")
+        val player = IntArray(n)
+        for ((p, lane) in lanes.withIndex()) for (s in lane) player[s] = p
+        // When each press lands is an order for the whole stage that keeps every lane's
+        // own and puts every press after the ones it waits for, which is all the score
+        // needs of it: the score does not depend on how the lanes interleave.
+        val order = (0 until n).sortedBy { timing.finish[it] }.toIntArray()
+        return TeamPlan(
             plan = plan,
-            players = players,
-            lanes = ordered.mapIndexed { p, shots -> lane(p + 1, shots) },
+            players = lanes.size,
+            lanes = lanes.mapIndexed { p, shots -> lane(p + 1, shots) },
             makespan = timing.makespan,
             travel = timing.travel,
             dependencies = dependencies,
-            score = bestCost,
+            score = Scorer(lanes.size).score(State(order, player, lanes.size)),
         )
     }
 
@@ -584,7 +593,7 @@ class TeamPlanner(
         var best = current
         var bestCost = currentCost
         if (n < 2 || players < 2) return best
-        val steps = SEARCH_STEPS_PER_PRESS * n / if (quick) 10 else 1
+        val steps = SEARCH_STEPS_PER_PRESS * n
         var temperature = T_START
         val cooling = Math.pow(T_END / T_START, 1.0 / steps)
         repeat(steps) {
@@ -696,7 +705,7 @@ class TeamPlanner(
         }
     }
 
-    private class Eval(val makespan: Double, val travel: Double)
+    private class Eval(val makespan: Double, val travel: Double, val finish: DoubleArray)
 
     /**
      * Runs the lanes in time -- a press takes [PRESS], walking takes a unit a cell, and a
@@ -731,7 +740,7 @@ class TeamPlanner(
             }
             if (!progressed) return null
         }
-        return Eval(finish.maxOrNull() ?: 0.0, travel)
+        return Eval(finish.maxOrNull() ?: 0.0, travel, finish)
     }
 
     private fun lane(player: Int, shots: List<Int>): Lane {

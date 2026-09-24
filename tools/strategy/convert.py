@@ -203,6 +203,9 @@ def main():
         with open(out, "w", newline="\n") as f:
             f.write(header + "\n" + "\n\n".join(blocks) + "\n")
         print(f"wrote {len(blocks)} stages to {os.path.relpath(out)}")
+    # The guide's team splits are worked out from these files ahead of time, and the
+    # tests fail on any stage that has changed since.
+    print("now regenerate the team splits: ./gradlew :core:generateStrategySplits")
 
 
 if __name__ == "__main__":

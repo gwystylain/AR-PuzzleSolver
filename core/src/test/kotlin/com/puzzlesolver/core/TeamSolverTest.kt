@@ -14,9 +14,9 @@ import org.junit.Test
 
 /**
  * Choosing the plan as well as the split: it has to pay where a stage leaves a choice,
- * never cost anything where it does not, and come out the same every time. Whether the
- * other plans are safe to split at all -- their dependencies complete -- is
- * [TeamPlannerTest]'s, which replays every one of them in random orders.
+ * keep the solver's plan where it does not, and come out the same every time. That it
+ * is never worse than the solver's own plan is [StrategySplitsTest]'s, on every bundled
+ * split; that the other plans are safe to split at all is [TeamPlannerTest]'s.
  */
 class TeamSolverTest {
 
@@ -41,26 +41,10 @@ class TeamSolverTest {
     }
 
     @Test
-    fun `the split is never worse than the solver's own plan's`() {
-        // The solver's plan is always split in full alongside the others, so this holds by
-        // construction; the stages are the two-board levels, where the choice is widest.
-        for (room in StrategyRoom.entries) {
-            for (stage in StrategyStages.bundled(room).filter { it.level in 7..8 }) {
-                val plan = StrategySolver(stage).solve()!!
-                val solver = TeamSolver(plan)
-                for (players in 2..5) {
-                    val own = TeamPlanner(plan).schedule(players).score
-                    assertTrue("$stage p$players", solver.schedule(players).score <= own + 1e-9)
-                }
-            }
-        }
-    }
-
-    @Test
     fun `a stage with one way to clear it keeps the solver's plan`() {
         // Strategy 1-1 is twelve guns each with one tile in its line: nothing to choose.
         val plan = plan(StrategyRoom.STRATEGY, 1, 1)
-        assertEquals(1, StrategySolver(plan.stage).plans(24, 11L).size)
+        assertEquals(1, StrategySolver(plan.stage).plans(64, 11L).size)
         assertSame(plan, TeamSolver(plan).schedule(2).plan)
     }
 

@@ -47,9 +47,9 @@ import com.puzzlesolver.app.ui.LandingScreen
 import com.puzzlesolver.app.ui.PuzzleSolverTheme
 import com.puzzlesolver.app.ui.ScanScreen
 import com.puzzlesolver.app.ui.StrategyScreen
-import com.puzzlesolver.core.puzzle.strategy.StrategyPlan
+import com.puzzlesolver.core.puzzle.strategy.StageSplits
 import com.puzzlesolver.core.puzzle.strategy.StrategyRoom
-import com.puzzlesolver.core.puzzle.strategy.StrategySolver
+import com.puzzlesolver.core.puzzle.strategy.StrategySplits
 import com.puzzlesolver.core.puzzle.strategy.StrategyStages
 
 /**
@@ -133,9 +133,9 @@ class MainActivity : ComponentActivity() {
     /** How many are playing; asked the first time a guide opens and kept for the session. */
     private var strategyPlayers by mutableStateOf<Int?>(null)
 
-    /** Plans per room and level, filled in on a worker the first time a guide is opened. */
-    private var strategyPlans by mutableStateOf<Map<StrategyRoom, Map<Int, List<StrategyPlan>>>>(emptyMap())
-    private var strategySolving = false
+    /** Stages and their team splits per room and level, read on a worker the first time a guide is opened. */
+    private var strategyGuides by mutableStateOf<Map<StrategyRoom, Map<Int, List<StageSplits>>>>(emptyMap())
+    private var strategyLoading = false
 
     /**
      * Whether to take the camera over from ARCore, so exposure can be set.
@@ -471,7 +471,7 @@ class MainActivity : ComponentActivity() {
                                 // Strategy's is a strip of green tiles on the wall itself.
                                 showWalls = room != StrategyRoom.GRIDLOCK,
                                 levels = levels,
-                                plans = strategyPlans[room] ?: emptyMap(),
+                                stages = strategyGuides[room] ?: emptyMap(),
                                 level = guideLevel[room] ?: levels.first(),
                                 onSelectLevel = { guideLevel = guideLevel + (room to it) },
                                 players = strategyPlayers,
@@ -593,7 +593,7 @@ class MainActivity : ComponentActivity() {
         val wasScanning = guideRoom == null
         guideRoom = room
         if (wasScanning) pauseScanning()
-        solveStrategyLevels()
+        loadStrategyGuides()
     }
 
     private fun leaveGuide() {
@@ -603,33 +603,24 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Works out every level of every room once, off the main thread, and publishes each
-     * as it lands.
+     * Reads every room's stages and team splits once, off the main thread, the room on
+     * screen first.
      *
-     * The whole set takes well under a second on a laptop and the data is fixed, so this
-     * could be a table shipped with the app. Solving it instead keeps the transcription
-     * the only thing to maintain: correct the stage file and the plan corrects itself.
-     * The room on screen goes first, so it is ready before the other is started.
+     * The splits are worked out ahead of time and bundled next to the stage files (see
+     * `StrategySplits`): finding them takes minutes of search, reading them a moment. A
+     * stage file corrected without regenerating its splits fails the tests, so what is
+     * read here always matches the stages.
      */
-    private fun solveStrategyLevels() {
-        if (strategySolving) return
-        strategySolving = true
+    private fun loadStrategyGuides() {
+        if (strategyLoading) return
+        strategyLoading = true
         val rooms = listOfNotNull(guideRoom) + StrategyRoom.entries.filter { it != guideRoom }
         Thread({
             for (room in rooms) {
-                for ((level, stages) in StrategyStages.levels(room)) {
-                    val plans = stages.mapNotNull { stage ->
-                        StrategySolver(stage).solve().also {
-                            if (it == null) Log.w(TAG, "${room.id}: no plan for $stage")
-                        }
-                    }
-                    runOnUiThread {
-                        val solved = strategyPlans[room] ?: emptyMap()
-                        strategyPlans = strategyPlans + (room to solved + (level to plans))
-                    }
-                }
+                val levels = StrategySplits.levels(room)
+                runOnUiThread { strategyGuides = strategyGuides + (room to levels) }
             }
-        }, "strategy-solver").start()
+        }, "strategy-guides").start()
     }
 
     override fun onDestroy() {

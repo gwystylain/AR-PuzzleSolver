@@ -7,7 +7,9 @@ has to be cleared with exactly the guns it gives you — so the whole puzzle is 
 to press them in, and on the later stages, *when*.
 
 **This mode has no camera.** The stages are fixed, so there is nothing to detect: the
-app carries a transcription of every level and works out the pressing order itself. Pick
+app carries a transcription of every level and, beside it, the pressing order and team
+split for every stage and team size, worked out ahead of time (see *Bundled splits*
+below). Pick
 *Strategy* from the game-mode menu and the scan stops, the camera is released, and the
 HUD — logging, exposure, recording, all of it — is replaced by the guide. Pick any
 scanning mode to get it all back.
@@ -112,30 +114,51 @@ straight across the floor, as the split measures it.
 **The plan is chosen for the team too.** The partial order comes from the plan, and the
 plan is one way to clear the stage of several: often a different gun could take a
 different tile, and then different presses wait on each other. `StrategySolver.plans`
-finds up to two dozen others with the same search, trying the guns in shuffled orders
-and sharing what the first search learned, so most tries cost a fraction of it; a try
-that runs long is cut off, counted in positions searched rather than time, so every
-phone finds the same plans. `TeamSolver` gives each a quick split for the team size (a
-tenth of the annealing, no polish), splits the three most promising in full alongside
-the solver's own, and keeps the best, so it is never worse than the solver's plan
-alone. Across every stage and team size that takes another 2.7% off the time and 4.7%
-off the walking, and it is concentrated where the choice is: on Gridlock 7-4 for three
-players the first plan has players crossing between the two boards and waiting on each
-other across the wall, and the one chosen keeps each mostly to one board, 92 down to 69
-in time and 125 down to 84 tiles walked. About half the stages have only one way to be
-cleared, and there nothing changes -- Gridlock 4-4 included: each of its four rings of
-tiles has one tile that is second in line for both guns that reach it, so one of those
-guns has to wait for the other whichever plan is played.
+finds others with the same search -- up to 64 tries, the guns in shuffled orders --
+sharing what the first search learned, so most tries cost a fraction of it; a try that
+runs long is cut off, counted in positions searched rather than time, so every run finds
+the same plans. `TeamSolver` splits every one of them for the team size and keeps the
+best, so it is never worse than the solver's plan alone. Across every stage and team
+size that takes another 3.4% off the time and 6.1% off the walking, concentrated where
+the choice is: on Gridlock 7-4 for three players the first plan has players crossing
+between the two boards and waiting on each other across the wall, and the one chosen
+keeps each mostly to one board, 92 down to 69 in time and 125 down to 84 tiles walked.
+About half the stages have only one way to be cleared, and there nothing changes --
+Gridlock 4-4 included: each of its four rings of tiles has one tile that is second in
+line for both guns that reach it, so one of those guns has to wait for the other
+whichever plan is played.
 
-The splits run side by side on all the phone's cores. The largest stage takes about a
-quarter of a second on a laptop; on the phone it runs in the background, a level at a
-time, while the first stage is on screen. The screen draws whichever plan the split is
-of, so the board, the chips and the tap-to-see pictures all match the lanes.
+The screen draws whichever plan the split is of, so the board, the chips and the
+tap-to-see pictures all match the lanes.
 
 Each player's numbers come last: a press is numbered one past the later of that
 player's previous press and every press it waits on. Independent lanes count 1, 2, 3
 in step; a lane that waits skips, and the skipped number is the other player's step it
 waits for.
+
+### Bundled splits
+
+None of the search above runs on the phone. The stages are fixed, so every stage's split
+for one to five players is worked out on a computer and shipped next to the stage files,
+in `strategy-splits.txt` and `gridlock-splits.txt`; the guide reads them, and works out
+only the step numbers and waits from the stored lanes, a millisecond's work. That makes
+the guide instant, and it means the search can afford to split every plan in full. The
+files are line-based like the stage files and name every press by its clockwise number,
+so a change to the planner shows up in the diff as which players' presses moved, with
+each split's time and walk beside it.
+
+After changing a stage file or anything in the solver or planner, regenerate them:
+
+    ./gradlew :core:generateStrategySplits
+
+It takes about half a minute on a laptop, splitting side by side on every core, and
+the same code always writes the same files. `./gradlew :core:checkStrategySplits` only
+says whether they are out of date. Neither is part of the build, but the tests catch
+both ways of forgetting: every stage's entry carries a fingerprint of the stage, so a
+stage corrected without regenerating fails `StrategySplitsTest`, and so does a planner
+change that leaves any shipped split scoring worse than the solver's own plan split with
+the new rules. The same test replays every shipped split in random orders its
+dependencies allow.
 
 ## The two transcriptions
 
@@ -156,7 +179,7 @@ The app uses activate-scores.ca for levels 1–6 — its level 4 was played thro
 page to *WAVE CLEARED*. activate-scores.ca also has a level 10 (four waves, other
 layouts); it is still in `tools/strategy/sources`, and `ROOMS` in
 `tools/strategy/convert.py` picks which one ships. Re-running the script rebuilds both
-rooms' bundled files.
+rooms' bundled stage files; regenerate the splits after it (see *Bundled splits*).
 
 Gridlock's transcription (activate.ryflix.ca/gridlock.html, levels 3, 4 and 6–10) follows
 the ryflix rules, with two boards of 10 rows by 10 or 11 columns. On levels 3, 4, 6, 9 and 10 the

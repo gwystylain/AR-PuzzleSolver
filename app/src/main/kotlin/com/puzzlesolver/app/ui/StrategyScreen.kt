@@ -37,7 +37,6 @@ import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -63,15 +62,13 @@ import com.puzzlesolver.core.puzzle.strategy.Direction
 import com.puzzlesolver.core.puzzle.strategy.Hit
 import com.puzzlesolver.core.puzzle.strategy.Lane
 import com.puzzlesolver.core.puzzle.strategy.ShotGroup
+import com.puzzlesolver.core.puzzle.strategy.StageSplits
 import com.puzzlesolver.core.puzzle.strategy.StrategyPlan
 import com.puzzlesolver.core.puzzle.strategy.StrategyStage
 import com.puzzlesolver.core.puzzle.strategy.TeamPlan
-import com.puzzlesolver.core.puzzle.strategy.TeamSolver
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -104,7 +101,8 @@ fun StrategyScreen(
     /** Whether to draw a stage's wall columns, or butt the boards either side together. */
     showWalls: Boolean = true,
     levels: List<Int>,
-    plans: Map<Int, List<StrategyPlan>>,
+    /** Each level's stages with their splits; a level not read in yet is missing. */
+    stages: Map<Int, List<StageSplits>>,
     level: Int,
     onSelectLevel: (Int) -> Unit,
     players: Int?,
@@ -139,43 +137,26 @@ fun StrategyScreen(
             LevelPicker(levels, level, onSelectLevel)
             Spacer(Modifier.height(8.dp))
 
-            val stages = plans[level]
-            // One solver per stage for as long as the screen is up, so a stage split once
-            // is not split again on the way back to it -- the split is a search, and on a
-            // big stage it takes a noticeable moment on a phone.
-            val solvers = remember { HashMap<StrategyPlan, TeamSolver>() }
-            fun solverFor(plan: StrategyPlan) = solvers.getOrPut(plan) { TeamSolver(plan) }
-            // Split every stage of the level in the background as soon as it is on screen,
-            // in page order, so swiping on finds the next stage ready.
-            LaunchedEffect(stages, players) {
-                if (stages != null && players != null) {
-                    val queue = stages.map { solverFor(it) }
-                    withContext(Dispatchers.Default) { for (p in queue) p.schedule(players) }
-                }
-            }
+            val splits = stages[level]
             // Where the lanes are scrolled to, carried from stage to stage and level to
             // level: a player who has scrolled down to their own lane finds it there
             // again on the next stage instead of scrolling down through everyone else's.
             val lanesAt = remember { mutableStateOf(LanesAt()) }
-            if (stages == null) {
+            if (splits == null) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator(color = Color(0xFFFF8C00))
-                        Spacer(Modifier.height(10.dp))
-                        Text("working out level $level", color = Color(0xFFB9C4CF), fontSize = 13.sp)
-                    }
+                    CircularProgressIndicator(color = Color(0xFFFF8C00))
                 }
             } else {
                 // One pager per level, so switching level starts at its first stage rather
                 // than at whatever page number the last level happened to be on.
-                val pager = rememberPagerState(pageCount = { stages.size })
+                val pager = rememberPagerState(pageCount = { splits.size })
                 LaunchedEffect(level) { pager.scrollToPage(0) }
                 VerticalPager(
                     state = pager,
                     modifier = Modifier.fillMaxSize(),
                     key = { "$level-$it" },
                 ) { page ->
-                    StagePage(solverFor(stages[page]), players ?: 1, showWalls, lanesAt, pager, page)
+                    StagePage(splits[page], players ?: 1, showWalls, lanesAt, pager, page)
                 }
             }
         }
@@ -262,35 +243,17 @@ private fun LevelPicker(levels: List<Int>, selected: Int, onSelect: (Int) -> Uni
  */
 @Composable
 private fun StagePage(
-    solver: TeamSolver,
+    splits: StageSplits,
     players: Int,
     showWalls: Boolean,
     lanesAt: MutableState<LanesAt>,
     pager: PagerState,
     page: Int,
 ) {
-    val stage = solver.plan.stage
-    // Recomputed whenever the player count changes, including while the page is on
-    // screen -- and a split for another count is never shown, even for the frame
-    // before the new one arrives.
-    val split by produceState(solver.scheduled(players), solver, players) {
-        value = solver.scheduled(players) ?: withContext(Dispatchers.Default) { solver.schedule(players) }
-    }
-    val team = split?.takeIf { it.players == players }
-    if (team == null) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(color = Color(0xFFFF8C00))
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "splitting level ${stage.level} stage ${stage.index} between $players players",
-                    color = Color(0xFFB9C4CF),
-                    fontSize = 13.sp,
-                )
-            }
-        }
-        return
-    }
+    val stage = splits.stage
+    // Worked out ahead of time and bundled; all that happens here is working out the
+    // steps and waits from the stored lanes, a millisecond's work.
+    val team = remember(splits, players) { splits.forPlayers(players) }
     // The plan this split is of, which for this many players may not be the solver's
     // first: another gun taking another tile can split better. Everything below is drawn
     // from it.
