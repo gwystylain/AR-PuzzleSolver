@@ -18,18 +18,6 @@
         <!-- Tells the Play Store this app requires ARCore, so it is installed with us. -->
         <meta-data android:name="com.google.ar.core" android:value="required" />
 
-        <!-- Hands the exported run bundle to the share sheet. Scoped to exports/ only;
-             see res/xml/file_paths.xml. -->
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.files"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>
-
         <!--
           screenOrientation is fullUser, not fullSensor. Both allow all four
           orientations, but fullSensor follows the accelerometer even when the user has

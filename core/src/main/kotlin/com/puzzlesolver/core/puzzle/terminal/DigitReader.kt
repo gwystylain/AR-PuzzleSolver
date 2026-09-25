@@ -78,13 +78,26 @@ class DigitReader(private val classifier: GlyphClassifier) {
     private val wide = LongArray(PATCH_HEIGHT)
     private val stack = IntArray(PATCH_WIDTH * PATCH_HEIGHT)
     private val labels = IntArray(PATCH_WIDTH * PATCH_HEIGHT)
+    private val darkCount = IntArray(PATCH_WIDTH)
 
-    fun read(luma: GrayImage, box: DisplayDetector.Box, tiles: Int = TILES): Reading {
+    /**
+     * Reads one display.
+     *
+     * @param upsideDown read it as though the frame were turned half a turn: the tiles
+     *        right to left, each glyph rotated. See [TerminalScanner] for why a frame can
+     *        arrive either way up and how it is decided which.
+     */
+    fun read(
+        luma: GrayImage,
+        box: DisplayDetector.Box,
+        tiles: Int = TILES,
+        upsideDown: Boolean = false,
+    ): Reading {
         val digits = IntArray(tiles) { -1 }
         var blank = 0
         var confidence = 1f
         for (k in 0 until tiles) {
-            if (isolate(luma, box, k, tiles) == null) {
+            if (isolate(luma, box, k, tiles, upsideDown) == null) {
                 blank++
                 continue
             }
@@ -107,6 +120,7 @@ class DigitReader(private val classifier: GlyphClassifier) {
         box: DisplayDetector.Box,
         tile: Int,
         tiles: Int = TILES,
+        upsideDown: Boolean = false,
     ): GrayImage? {
         // A hair off the top and bottom. The tile borders run right along those edges
         // and the opening deals with them, but the *frame* around the whole display
@@ -116,10 +130,12 @@ class DigitReader(private val classifier: GlyphClassifier) {
         val inset = (box.height * VERTICAL_INSET).toInt()
         val y0 = box.y + inset
         val y1 = box.y + box.height - inset
-        val x0 = box.x + box.width * tile / tiles
-        val x1 = box.x + box.width * (tile + 1) / tiles
+        // Upside down, the first digit is the rightmost tile in the frame.
+        val at = if (upsideDown) tiles - 1 - tile else tile
+        val x0 = box.x + box.width * at / tiles
+        val x1 = box.x + box.width * (at + 1) / tiles
         if (x1 - x0 < MIN_TILE_PIXELS || y1 - y0 < MIN_TILE_PIXELS) return null
-        return if (isolateDigit(luma, x0, y0, x1, y1)) normalised else null
+        return if (isolateDigit(luma, x0, y0, x1, y1, upsideDown)) normalised else null
     }
 
     /**
@@ -129,8 +145,17 @@ class DigitReader(private val classifier: GlyphClassifier) {
      * @return false when the tile holds no digit -- a cleared display, which is a
      *         reading in its own right and not a failure.
      */
-    private fun isolateDigit(luma: GrayImage, x0: Int, y0: Int, x1: Int, y1: Int): Boolean {
+    private fun isolateDigit(
+        luma: GrayImage,
+        x0: Int,
+        y0: Int,
+        x1: Int,
+        y1: Int,
+        upsideDown: Boolean,
+    ): Boolean {
         resample(luma, x0, y0, x1, y1, patch)
+        // Half a turn of a row-major patch is the same bytes in reverse order.
+        if (upsideDown) patch.data.reverse(0, PATCH_WIDTH * PATCH_HEIGHT)
 
         java.util.Arrays.fill(histogram, 0)
         for (i in 0 until PATCH_WIDTH * PATCH_HEIGHT) histogram[patch.data[i].toInt() and 0xFF]++
@@ -146,8 +171,60 @@ class DigitReader(private val classifier: GlyphClassifier) {
             }
             rows[y] = bits
         }
+        severBorders()
         open()
         return largestComponent() && GlyphNormaliser.byHeight(mask, normalised)
+    }
+
+    /**
+     * Cuts the tile's side borders away from the digit, before the opening.
+     *
+     * The opening relies on there being a gap between the two: the border is thin and
+     * the digit is thick, so eroding erases one and spares the other *as long as they
+     * are not touching*. Mostly they are not. But a zero, a six or an eight is widest
+     * exactly at mid-height, where the seam runs across the tile, and on a wall shot
+     * bright enough that the digits bloom, the last pixel or two of gap there fills in
+     * and the seam bridges what is left. Digit, seam and border then make one shape
+     * thick enough to survive the opening, and every wide digit comes out wearing the
+     * same pair of wings. With the silhouette gone the only thing still telling 0, 5, 6,
+     * 8 and 9 apart is a counter a few pixels across, and it lost: on the round played
+     * on 24 September at 1/53 s and ISO 6400, five read as zero 38 times, six as zero
+     * 21 times, and the green rectangle was on the wrong display in 15 frames of 20.
+     *
+     * What survives the bloom is the column of tile face just inside each border. It is
+     * bridged for the few rows around the seam and dark for the rest, so it is found
+     * from the edge inwards as the first column that is dark in at least half the rows,
+     * and cleared from top to bottom. That leaves the border a thin strip on its own,
+     * which the opening then removes as it always did. One column, not two: the zero's
+     * narrow counter is the other thing that separates it from an eight, and cutting
+     * deeper starts to eat the side of the digit around it -- two columns turned 80
+     * zeros into eights over the same round.
+     *
+     * On the reference clip, where the gap never closed, nothing it reads changes.
+     */
+    private fun severBorders() {
+        java.util.Arrays.fill(darkCount, 0)
+        for (y in 0 until PATCH_HEIGHT) {
+            val bits = rows[y]
+            for (x in 0 until PATCH_WIDTH) if ((bits ushr x) and 1L == 0L) darkCount[x]++
+        }
+        val need = PATCH_HEIGHT * FACE_DARK_FRACTION
+        var cut = 0L
+        for (x in 1 until FACE_SEARCH) {
+            if (darkCount[x] >= need) {
+                cut = cut or (1L shl x)
+                break
+            }
+        }
+        for (x in PATCH_WIDTH - 2 downTo PATCH_WIDTH - FACE_SEARCH) {
+            if (darkCount[x] >= need) {
+                cut = cut or (1L shl x)
+                break
+            }
+        }
+        if (cut == 0L) return
+        val keep = cut.inv()
+        for (y in 0 until PATCH_HEIGHT) rows[y] = rows[y] and keep
     }
 
     /**
@@ -393,6 +470,19 @@ class DigitReader(private val classifier: GlyphClassifier) {
         private const val SE_CENTRE = 3
 
         private const val ALL_BITS = (1L shl PATCH_WIDTH) - 1L
+
+        /**
+         * How a column of bare tile face is recognised: dark in at least this share of
+         * the patch's rows. The face beside a wide digit is bridged only for the rows
+         * around the seam, and the border is dark only at its rounded corners, so the
+         * two are far apart. Over the 24 September round 0.4 and 0.6 are within a few
+         * misreads of this; at 0.7 the face beside a wide digit starts to be missed and
+         * half the old failure comes back.
+         */
+        private const val FACE_DARK_FRACTION = 0.5f
+
+        /** How far in from each side to look for it: a quarter of the patch. */
+        private const val FACE_SEARCH = PATCH_WIDTH / 4
     }
 }
 

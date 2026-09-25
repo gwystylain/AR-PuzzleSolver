@@ -63,8 +63,8 @@ fun TerminalOverlay(
                     fontWeight = FontWeight.Bold,
                 ),
             )
-            // Above the box, and below it instead when the box is near the top of the
-            // screen -- the top row of a wall this size sits under the status card.
+            // Above the box, and below it instead when the box is too near the top of the
+            // screen for the label to fit -- in landscape the wall's top row is up there.
             val above = topLeft.y - label.size.height - 6f
             drawText(
                 label,

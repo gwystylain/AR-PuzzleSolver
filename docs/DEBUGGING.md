@@ -11,26 +11,25 @@ instead is a **Capture**: the frames the scanner actually read, each paired with
 reading it made of that frame. Where it matters, the sections below say which wall they
 are about.
 
-**Nothing here needs a cable.** Everything the app can be told to do in the room, it
-has a button for, and everything it writes can leave the phone through the share sheet.
-`adb` is faster where it is available and every section below gives the command, but it
-is an alternative and never a precondition -- the trip is made with a phone, and a
-debug workflow that assumes a laptop is one that produces nothing on the day it matters.
+**Nothing in the room needs a cable.** Everything the app can be told to do there, it
+has a button for, and everything it writes waits on the phone. A cable is needed
+afterwards, to bring the files off: `tools/collect-session.sh`, or `adb pull`. There used
+to be an **Export** button that zipped the run for the share sheet. It was taken off the
+HUD because every button there sits over the wall being read. The files are in the app's
+own storage, so pull them before the app is ever uninstalled; an uninstall takes them
+with it.
 
 ## Before you go
 
 - **Install the debug build and open it once.** Grant the camera permission at your
   desk, not in the room.
-- **Decide where the run will be sent from the phone.** The **Export** button raises the
-  share sheet; whichever app receives it -- mail, Drive, Files -- wants to be signed in
-  already. That is the one thing that is genuinely awkward to sort out standing at a wall.
 - **Free up storage.** An ARCore recording is roughly 100 MB a minute. A gem capture is
   a few megabytes a burst and the log is kilobytes a minute, neither worth thinking about.
 
-## Log and Export, in every mode
+## Log, in every mode
 
-Two buttons sit under the HUD in every mode, and between them they are what makes the
-rest of this possible without a cable.
+One button sits under the HUD in every mode, and it is what makes the rest of this
+possible without a laptop in the room.
 
 **Log** writes this process's logcat -- the heartbeat, the camera lines, every mode
 change and every target tapped -- to a file on the phone. Two things about it are worth
@@ -48,12 +47,6 @@ Why a file at all, when this was always going to logcat: the ring buffer is shar
 every other process on the device and wraps without saying so, so "plug the phone in
 afterwards" is not a substitute. By then the part of the run still in it may be the part
 after the interesting bit.
-
-**Export** zips the run -- captures, canvas dump, logs -- and raises the share sheet.
-It stops the log first, because a log still being written goes into the zip truncated at
-whatever byte the copy thread had reached, and the tail is the part that matters. ARCore
-recordings are left out and the count of them is reported: at 100 MB a minute they are
-not something to send, and they are still there for `adb pull`.
 
 ## In the room, on the mines wall
 
@@ -96,9 +89,8 @@ both live state. Killing the app first throws away the two most useful artifacts
 5. **Capture again for each *different* way it looked wrong** -- another round, another
    exposure, another distance. Bursts continue the numbering rather than overwriting, so
    more is only ever better, and the sidecar makes it obvious afterwards which to keep.
-6. **Press Export before leaving**, and send the zip to yourself. This is the step that
-   replaces the cable, and it is the only one that cannot be done later -- everything
-   else is already on disk by then, but only if this happened.
+6. **Nothing needs sending from the room.** The captures and the log stay on the phone
+   until it is next plugged in; see [straight afterwards](#straight-afterwards).
 7. **Leave the app open** if the phone is going anywhere near a computer, since the
    canvas dump is live state. If it is not, it does not matter.
 
@@ -107,18 +99,14 @@ scratch, so a bad read is fixed by pointing the camera differently and not by wa
 
 ## Straight afterwards
 
-**From the phone, with no cable.** Press **Export** and send the zip. It carries
-everything in the table below except the ARCore recordings, and it says how many of
-those it left behind.
-
-**From a laptop, if the phone is going to be plugged in anyway:**
+Plug the phone in and run:
 
 ```bash
 tools/collect-session.sh my-attempt --with-sessions
 ```
 
 Phone still connected, app still open. Drop `--with-sessions` if you only ran Gems --
-there will not be any. Either route gathers:
+there will not be any. It gathers:
 
 | file | mode | what it answers |
 | --- | --- | --- |
@@ -126,11 +114,12 @@ there will not be any. Either route gathers:
 | `sessions/` | Mines | The ARCore recording, for replaying the whole pipeline offline. |
 | `gems/` | Gems | Every captured frame, as the scanner received it. Unpacked from `.ppm.gz` on the way in, which is the format `core`'s `GemFixture` loads -- so one of these dropped into `core/src/test/resources` turns the failure into a unit test. |
 | `gems-log.txt` | Gems | The reading made of each of those frames: pitch, exposure asked and actual, the targets in play, and every gem's three rings with its confidence and matched slot. |
-| `logs/run-NNNN.txt` | both | The heartbeat, and every camera line, mode change and target tapped. Written on the phone by the **Log** button, so it survives the ring buffer wrapping and needs no cable. Its first lines carry the device and build. |
-| `logcat-app.txt` | both | The same thing pulled over adb, for a run where Log was never pressed. Whatever is still in the ring buffer, which may not be much. |
-| `device.txt` | both | Model, Android and ARCore versions. Only the adb route produces this; the on-phone log carries it in its header instead. |
+| `terminal/`, `terminal-log.txt` | Terminal | The frames the reader read, gzipped as `TerminalReplay` and the tests load them, and a row per display per frame with the exposure metered on the wall. |
+| `logs/run-NNNN.txt` | all | The heartbeat, and every camera line, mode change and target tapped. Written on the phone by the **Log** button, so it survives the ring buffer wrapping. Its first lines carry the device and build. |
+| `logcat-app.txt` | all | The same thing pulled over adb, for a run where Log was never pressed. Whatever is still in the ring buffer, which may not be much. |
+| `device.txt` | all | Model, Android and ARCore versions. Only the adb route produces this; the on-phone log carries it in its header instead. |
 
-Then send the folder, or the zip.
+Then send the folder.
 
 The two gem artifacts are meant to be read together, and separately they are each half
 an answer. The log says what the classifier decided; the frame says what it decided it
@@ -220,16 +209,16 @@ On **Mines**, the ARCore recording. Everything else can be regenerated from it b
 replaying, and it is the only artifact that survives leaving the room.
 `canvas-dump.png` is second.
 
-On **Gems**, a Capture taken while the wall was misbehaving, exported. There is no
+On **Gems**, a Capture taken while the wall was misbehaving. There is no
 replay to fall back on: an MP4 shot by the phone's camera app carries that app's exposure
 rather than this one's, and feeding one back through **Open video** does not run the gem
 scanner anyway -- `VideoFrameSource` has no pose, so the live path never engages. A
 capture is the only thing that puts the frames the scanner saw on a desk, and it is
 cheap. Take several.
 
-And press **Export** before leaving. A capture that never left the phone and a capture
-that was never taken are the same artifact from a desk, and only one of them is still
-recoverable.
+And pull it before the app is reinstalled from scratch. A capture lives in the app's own
+storage, so an uninstall deletes it, and a capture that was deleted and a capture that was
+never taken are the same artifact from a desk.
 
 ## Scripted debug states
 
@@ -268,6 +257,8 @@ Its heartbeat line is the cheap record of a run, and worth reading before pullin
 ```
 term[displays=32 numbers=31 unread=0 settled=true next=008 then=012 luma=52 dropped=0
      scan=6.4ms prof='detect 2ms (dec 1 blur 0 cc 0 filt 0) read 5ms' status='next 008 ...']
+     exp[bright=255 face=171 stops=+1.80 (from face) n=28
+     loop='wall metering: applying (1 changes)' last=+1.84]
 ```
 
 `displays` against `numbers` separates "cannot see the wall" from "can see it and cannot
@@ -275,6 +266,14 @@ read it", and `unread` separates both from "read most of it and gave up on a few
 `settled=false` for more than a moment means consecutive scans disagree, which is the
 symptom of a wall being read at the edge of legibility -- step closer or steady the
 phone. See [TERMINAL_PUZZLE.md](TERMINAL_PUZZLE.md).
+
+`exp[...]` is the exposure measured on the displays themselves. `stops` is how far the
+wall is from the reference clip's exposure, which is the target. Anything within half a
+stop is on target, and every display reads from two under to two over. `(from face)`
+means the digits had clipped and the estimate came from the tile face instead. `loop` is
+what the exposure loop is doing about it, and `last` is the error it last acted on. If
+`stops` stays more than half a stop off for longer than a few seconds and the loop never
+says `applying`, `at the limit` or `ignoring the request`, that is the thing to report. See [metering the wall](TERMINAL_PUZZLE.md#metering-the-wall).
 
 ## Testing against a screen first
 

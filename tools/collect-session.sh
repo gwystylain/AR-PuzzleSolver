@@ -54,7 +54,7 @@ MSYS_NO_PATHCONV=1 "$ADB" pull "$REMOTE/canvas-dump.png" "$OUT/canvas-dump.png" 
 # 2. The log. Carries the heartbeat: grid, pitch, coverage, tile counts, why
 #    detection declined, and the read tally.
 "$ADB" logcat -d -v time > "$OUT/logcat-full.txt" 2>/dev/null
-grep -E "ScanPipeline|MainActivity|AndroidRuntime|FATAL" "$OUT/logcat-full.txt" \
+grep -E "ScanPipeline|MainActivity|TerminalExposure|AutoExposure|Camera2Source|AndroidRuntime|FATAL" "$OUT/logcat-full.txt" \
   > "$OUT/logcat-app.txt" 2>/dev/null
 echo "  logcat-app.txt ($(wc -l < "$OUT/logcat-app.txt" 2>/dev/null || echo 0) lines)"
 
@@ -109,7 +109,32 @@ else
   echo "  no gem captures -- press Capture in Gems mode while pointing at the wall"
 fi
 
-# 5. Device and build identity, so a report is not ambiguous about what ran.
+# 5. Terminal captures. The terminal wall's counterpart to the gem frames: greyscale
+#    frames the reader actually read, and one sidecar with a row per display. Left
+#    gzipped, because TerminalReplay and the tests read .pgm.gz as they stand.
+if MSYS_NO_PATHCONV=1 "$ADB" shell ls "$REMOTE/terminal" >/dev/null 2>&1; then
+  MSYS_NO_PATHCONV=1 "$ADB" pull "$REMOTE/terminal" "$OUT/terminal" >/dev/null 2>&1
+  FRAMES=$(ls "$OUT"/terminal/*.pgm.gz 2>/dev/null | wc -l | tr -d ' ')
+  echo "  terminal/ ($FRAMES frames)"
+  if [ -f "$OUT/terminal/terminal-log.txt" ]; then
+    mv "$OUT/terminal/terminal-log.txt" "$OUT/terminal-log.txt"
+    echo "  terminal-log.txt (a row per display per frame, and the exposure metered)"
+  fi
+else
+  echo "  no terminal captures -- press Capture in Terminal mode while pointing at the wall"
+fi
+
+# 6. The Log button's files. The same heartbeat as logcat-app.txt, but written on the
+#    phone as it happened, so it is complete however long ago the run was -- the ring
+#    buffer behind logcat-app.txt wraps in minutes. Since the Export button went, this
+#    is the only way these leave the phone.
+if MSYS_NO_PATHCONV=1 "$ADB" pull "$REMOTE/logs" "$OUT/logs" >/dev/null 2>&1; then
+  echo "  logs/ ($(ls "$OUT"/logs/*.txt 2>/dev/null | wc -l | tr -d ' ') runs)"
+else
+  echo "  no logs/ -- Log was never pressed"
+fi
+
+# 7. Device and build identity, so a report is not ambiguous about what ran.
 {
   echo "model:    $("$ADB" shell getprop ro.product.model | tr -d '\r')"
   echo "android:  $("$ADB" shell getprop ro.build.version.release | tr -d '\r')"
@@ -124,3 +149,4 @@ echo
 echo "done. Send the whole $OUT folder."
 echo "For Mines: the heartbeat lines in logcat-app.txt and canvas-dump.png."
 echo "For Gems:  gems-log.txt and the frames beside it -- that is the whole of it."
+echo "For Terminal: terminal-log.txt with terminal/, and the newest logs/run-NNNN.txt."

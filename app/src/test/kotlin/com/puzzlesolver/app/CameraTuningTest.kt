@@ -136,76 +136,6 @@ class CameraTuningTest {
         assertTrue(ev.settings.lockAwb)
     }
 
-    /**
-     * The freeze preset, which is the opposite trade to the LED-wall one and exists for
-     * the opposite failure.
-     *
-     * The LED preset darkens a wall whose LEDs were clipping. This one keeps the light
-     * exactly where the camera's own metering put it and buys a shorter exposure with
-     * gain, because a room run measured a quarter of the terminal wall unreadable and the
-     * cause was motion blur -- to which this reader is fatally sensitive and to which
-     * noise, measured, is very nearly irrelevant.
-     */
-    @Test
-    fun `the freeze preset trades gain for shutter at constant brightness`() {
-        val tuning = CameraTuning().apply {
-            // The CPH2655's ceiling, because the numbers below are that phone's.
-            capabilities = manualCapable().copy(maxIso = 6400)
-            // What the room's camera actually settled on: 1/100 s at ISO 1894.
-            reported = CameraTuning.Reported(exposureNanos = 10_000_000L, iso = 1894)
-        }
-        assertTrue(tuning.applyMotionFreezePreset())
-        assertEquals(CameraTuning.Mode.MANUAL, tuning.settings.mode)
-        assertEquals(CameraTuning.MOTION_FREEZE_EXPOSURE_NANOS, tuning.settings.exposureNanos)
-        // 2.5x shorter, so 2.5x the gain: the same light, paid for differently. Well
-        // inside the ceiling, which is what makes the room the easy case.
-        assertEquals(4735, tuning.settings.iso)
-    }
-
-    @Test
-    fun `the freeze preset gives up shutter rather than light`() {
-        val tuning = CameraTuning().apply {
-            capabilities = manualCapable()          // ceiling is ISO 3200
-            // A much darker scene: holding the brightness at 1/250 s would need ISO 8000.
-            reported = CameraTuning.Reported(exposureNanos = 10_000_000L, iso = 3200)
-        }
-        assertFalse(
-            "no gain headroom left, so there is nothing to trade and it must decline",
-            tuning.applyMotionFreezePreset(),
-        )
-        assertEquals("and it must not have touched the dial", CameraTuning.Mode.AUTO, tuning.settings.mode)
-
-        // With a little headroom it takes what it can get rather than all it wanted.
-        val partial = CameraTuning().apply {
-            capabilities = manualCapable()
-            reported = CameraTuning.Reported(exposureNanos = 10_000_000L, iso = 1600)
-        }
-        assertTrue(partial.applyMotionFreezePreset())
-        assertEquals("half the gain headroom buys half the shutter", 5_000_000L, partial.settings.exposureNanos)
-        assertEquals(3200, partial.settings.iso)
-    }
-
-    @Test
-    fun `the freeze preset declines until it has something to work from`() {
-        val noMetadata = CameraTuning().apply { capabilities = manualCapable() }
-        assertFalse(
-            "nothing to scale the gain against yet -- the caller must ask again, not latch",
-            noMetadata.applyMotionFreezePreset(),
-        )
-
-        val noManual = CameraTuning().apply {
-            capabilities = evOnly()
-            reported = CameraTuning.Reported(exposureNanos = 10_000_000L, iso = 1894)
-        }
-        assertFalse("exposure compensation cannot pin a shutter", noManual.applyMotionFreezePreset())
-
-        val alreadyFast = CameraTuning().apply {
-            capabilities = manualCapable()
-            reported = CameraTuning.Reported(exposureNanos = 2_000_000L, iso = 800)
-        }
-        assertFalse("already faster than the target", alreadyFast.applyMotionFreezePreset())
-    }
-
     @Test
     fun `nothing is applied when the device offers no control at all`() {
         val tuning = CameraTuning()
@@ -342,7 +272,8 @@ class CameraTuningTest {
      */
     @Test
     fun `a camera that ignores the request stops the loop`() {
-        val tuning = CameraTuning().apply { capabilities = manualCapable() }
+        val clock = FakeClock()
+        val tuning = CameraTuning(clock::now).apply { capabilities = manualCapable() }
         tuning.update { it.copy(mode = CameraTuning.Mode.MANUAL, exposureNanos = 4_000_000L) }
         // What the sensor actually did, nowhere near what was asked.
         tuning.reported = CameraTuning.Reported(exposureNanos = 10_000_000L, iso = 2008)
@@ -351,13 +282,43 @@ class CameraTuningTest {
         // frames in between legitimately still carry the old settings, and accusing the
         // camera on one sample would fire on every adjustment.
         assertEquals(null, tuning.honoured())
-        repeat(6) { tuning.honoured() }
+        clock.tick(CameraTuning.MISMATCH_MILLIS)
         assertEquals(false, tuning.honoured())
 
         val exposure = AutoExposure()
         repeat(50) { assertFalse(exposure.consider(tuning, hint = 0.9f)) }
         assertEquals(AutoExposure.Phase.NOT_HONOURED, exposure.phase)
         assertEquals("must not have touched the dial", 4_000_000L, tuning.settings.exposureNanos)
+    }
+
+    /**
+     * A change on its way to the sensor, asked about many times a frame.
+     *
+     * Counting the questions was how this used to work, and several parts of the frame
+     * loop ask every frame, so the camera stood accused a frame or two into every change
+     * -- half a second of a red camera button each time the terminal loop moved.
+     */
+    @Test
+    fun `a change still arriving is not called ignored however often it is asked`() {
+        val clock = FakeClock()
+        val tuning = CameraTuning(clock::now).apply { capabilities = manualCapable() }
+        tuning.reported = CameraTuning.Reported(exposureNanos = 10_000_000L, iso = 800)
+        tuning.update { it.copy(mode = CameraTuning.Mode.MANUAL, exposureNanos = 4_000_000L) }
+        // Half a second of frames, four questions each, all still at the old settings.
+        repeat(30) {
+            repeat(4) { assertEquals(null, tuning.honoured()) }
+            clock.tick(16)
+        }
+        tuning.reported = CameraTuning.Reported(exposureNanos = 4_000_000L, iso = 800)
+        assertEquals(true, tuning.honoured())
+
+        // A second change straight after gets a grace period of its own, rather than
+        // inheriting what was left of the first one's.
+        tuning.update { it.copy(exposureNanos = 2_000_000L) }
+        clock.tick(CameraTuning.MISMATCH_MILLIS - 100)
+        assertEquals(null, tuning.honoured())
+        clock.tick(CameraTuning.MISMATCH_MILLIS)
+        assertEquals(false, tuning.honoured())
     }
 
     @Test

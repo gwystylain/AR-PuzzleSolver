@@ -124,11 +124,12 @@ fun CameraCard(
                 Tiny(if (state.cameraManual) "auto" else "manual") {
                     onSetManual(!state.cameraManual)
                 }
-                // Named for what it does to this wall, because the two presets do
-                // opposite things: one darkens a wall whose LEDs were clipping, the
-                // other shortens the exposure of a wall that is being smeared.
+                // Named for what it does to this wall, because the two do different
+                // things: one darkens a gem wall whose LEDs were clipping, the other hands
+                // the terminal wall's exposure back to the loop that meters its displays,
+                // after "darker" or "brighter" took it away.
                 Tiny(
-                    if (state.isTerminalMode) "freeze pan" else "LED wall",
+                    if (state.isTerminalMode) "meter wall" else "LED wall",
                     highlighted = true,
                     onClick = onLedPreset,
                 )

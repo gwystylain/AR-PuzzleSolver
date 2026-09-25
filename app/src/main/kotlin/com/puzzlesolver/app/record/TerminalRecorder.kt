@@ -56,6 +56,8 @@ class TerminalRecorder(val directory: File) {
         @JvmField val profile: String,
         /** The detector's own account of what it kept and what it threw away. */
         @JvmField val detectorReport: String,
+        /** What the wall metered at, and what the exposure loop made of it. */
+        @JvmField val exposure: String = "",
     )
 
     /** Frames still to be written in the armed burst. Read by the HUD each frame. */
@@ -195,6 +197,7 @@ class TerminalRecorder(val directory: File) {
             .append(" unread=").append(r.unread)
             .append(" cleared=").append(cleared)
             .append(" settled=").append(r.settled)
+            .append(" upside_down=").append(r.upsideDown)
             .append(" luma=").append(sample.meanLuma)
             .append(" dropped=").append(sample.droppedFrames)
             .append('\n')
@@ -202,6 +205,7 @@ class TerminalRecorder(val directory: File) {
         sb.append("cam asked='").append(sample.cameraAsked)
             .append("' actual='").append(sample.cameraActual)
             .append("' honoured=").append(sample.cameraHonoured ?: "unknown").append('\n')
+        if (sample.exposure.isNotEmpty()) sb.append(sample.exposure).append('\n')
 
         sb.append("scan=").append("%.1f".format(sample.scanMillis)).append("ms  ")
             .append(sample.profile).append('\n')

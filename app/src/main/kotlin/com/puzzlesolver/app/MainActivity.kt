@@ -25,7 +25,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
-import androidx.core.content.FileProvider
 import com.google.ar.core.ArCoreApk
 import com.google.ar.core.exceptions.UnavailableException
 import com.puzzlesolver.app.frame.ArCoreFrameSource
@@ -41,7 +40,6 @@ import com.puzzlesolver.core.puzzle.gems.GemColour
 import com.puzzlesolver.core.puzzle.gems.GemPattern
 import com.puzzlesolver.core.puzzle.terminal.TerminalAdapter
 import com.puzzlesolver.app.record.LogCapture
-import com.puzzlesolver.app.record.SessionBundle
 import com.puzzlesolver.app.record.SessionStore
 import com.puzzlesolver.app.ui.LandingScreen
 import com.puzzlesolver.app.ui.PuzzleSolverTheme
@@ -418,7 +416,6 @@ class MainActivity : ComponentActivity() {
                         isLogging = isLogging,
                         logSummary = logSummary,
                         onToggleLogging = { toggleLogging() },
-                        onExport = { exportRun() },
                         // One button, routed by which live wall is in play. The two
                         // recorders write different things -- a colour frame plus rings,
                         // and a luma frame plus a row per display -- but from the room
@@ -934,59 +931,6 @@ class MainActivity : ComponentActivity() {
         packageManager.getPackageInfo(pkg, 0).versionName ?: "unknown"
     } catch (e: Exception) {
         "not installed"
-    }
-
-    /**
-     * Zips the run and offers it to the share sheet.
-     *
-     * The counterpart to `tools/collect-session.sh`, for the case that script cannot
-     * cover: the phone is not plugged into anything and will not be for a while. What
-     * leaves this way is the same set of artifacts minus the ARCore recordings, which
-     * are too large to send and stay behind for adb -- [SessionBundle] reports how many
-     * it left, so their absence is visible rather than silently assumed.
-     */
-    private fun exportRun() {
-        val root = getExternalFilesDir(null)
-        if (root == null) {
-            toast("No external storage to export from")
-            return
-        }
-        // Stopped first, and only if it is running: a log still being written would go
-        // into the zip truncated at whatever byte the copy thread had reached, which is
-        // the one artifact where the tail is the part that matters.
-        val wasLogging = logCapture.isRunning
-        if (wasLogging) logCapture.stop()
-        val bundle = try {
-            SessionBundle.write(root, SessionBundle.nextDestination(java.io.File(root, "exports")))
-        } catch (e: Exception) {
-            Log.e(TAG, "export failed", e)
-            toast("Export failed: ${e.message}")
-            return
-        }
-        if (bundle.entries == 0) {
-            toast("Nothing to export yet -- press Capture at the wall first")
-            return
-        }
-        share(bundle)
-    }
-
-    private fun share(bundle: SessionBundle.Result) {
-        val uri = try {
-            FileProvider.getUriForFile(this, "$packageName.files", bundle.file)
-        } catch (e: Exception) {
-            Log.e(TAG, "could not share ${bundle.file}", e)
-            toast("Saved to ${bundle.file.name} but could not share it")
-            return
-        }
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "application/zip"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_SUBJECT, bundle.file.name)
-            putExtra(Intent.EXTRA_TEXT, bundle.describe())
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        toast("Exported ${bundle.describe()}")
-        startActivity(Intent.createChooser(intent, "Send the run"))
     }
 
     /**

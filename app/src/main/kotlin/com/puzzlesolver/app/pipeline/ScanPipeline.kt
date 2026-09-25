@@ -110,6 +110,12 @@ class ScanPipeline(
      */
     val autoExposure = AutoExposure()
 
+    /**
+     * Keeps the terminal wall exposed where its digits read best, metered on the
+     * displays themselves. Fed from the solver thread, one reading per scan.
+     */
+    val terminalExposure = TerminalExposure()
+
     /** Set once a mode's camera preset has been applied, so it happens once. */
     private var cameraPresetApplied = false
 
@@ -732,7 +738,10 @@ class ScanPipeline(
             liveSource = source as? Camera2FrameSource
             liveResult = GemScanner.Result.EMPTY
             liveTerminalResult = TerminalScanner.Result.EMPTY
-            solverThread.post { terminalScanner.reset() }
+            solverThread.post {
+                terminalScanner.reset()
+                terminalExposure.reset()
+            }
             // Swapping *away* from the pose-free camera is the one moment that can end a
             // live mode, and it has to be done here rather than in a publisher. The AR
             // path has several publishers and most frames leave through the early one --
@@ -918,18 +927,19 @@ class ScanPipeline(
     }
 
     /**
-     * Sets the camera up for whichever wall is in play, once.
+     * Sets the camera up for the gem wall, once.
      *
-     * The two self-lit walls that need it want opposite things, which is why this is a
-     * switch rather than one preset:
+     * Gems wants *less light*: its rings clip to white at the exposure the camera picks
+     * for itself and no amount of care downstream recovers them. So the preset darkens
+     * several stops at once, and [autoExposure] walks it from there.
      *
-     * - **Gems** wants *less light*. Its rings clip to white at the exposure the camera
-     *   picks for itself and no amount of care downstream recovers them.
-     * - **Terminal** wants a *shorter exposure at the same brightness*. Its panels are
-     *   exposed perfectly well; what a hand-held pan does to them is smear, and a room
-     *   run measured a quarter of the wall unreadable because of it.
+     * Terminal used to have a preset here too, which held the brightness the camera's
+     * metering had chosen and traded it for a fast shutter. The trade was right and the
+     * brightness was not -- metering a dark room leaves the wall over-exposed, by nearly
+     * two stops on the round that misread `058` as `008`. It is metered on its own
+     * displays now, continuously, by [terminalExposure] from the solver thread.
      *
-     * Mines gets neither. Its classifier reads the glow around a button that has clipped
+     * Mines gets nothing. Its classifier reads the glow around a button that has clipped
      * its own face to white, and it was verified on device at the camera's own exposure,
      * so touching that would take away the very thing it reads. The dials are on screen
      * for all three walls; this is only about what happens without being asked.
@@ -958,29 +968,6 @@ class ScanPipeline(
                 Log.i(TAG, "gems active; applying the LED-wall camera preset")
             }
             return
-        }
-
-        if (pinned == TerminalAdapter.ID) {
-            // Only once the wall is what the camera is metering. The preset scales its
-            // gain from whatever exposure the camera has settled on, and on the first
-            // captured round it settled on the floor of a dark room -- 1/16 s at the
-            // sensor's ISO ceiling -- a second before the wall came into frame. It locked
-            // that in, and the wall then ran two stops over-exposed at 1/97 s for the
-            // whole round: no freeze, and every digit clipped to solid white. The reader
-            // is the one thing here that knows whether the wall is in view.
-            if (liveTerminalResult.displays.size < MIN_DISPLAYS_FOR_PRESET) return
-            // Deliberately *not* latched on a failure. Until a frame's metadata has come
-            // back there is nothing to scale against and it declines; asking again next
-            // frame costs nothing, and latching would leave the shutter where it was for
-            // the whole visit.
-            if (tuning.applyMotionFreezePreset()) {
-                cameraPresetApplied = true
-                Log.i(
-                    TAG,
-                    "terminal active; pinning the shutter to freeze the pan -- " +
-                        tuning.describeRequest(),
-                )
-            }
         }
     }
 
@@ -1028,9 +1015,12 @@ class ScanPipeline(
             val r = liveTerminalResult
             " term[displays=${r.displays.size} numbers=${r.remaining} unread=${r.unread} " +
                 "settled=${r.settled} next=${r.lowest?.text ?: "-"} then=${r.second?.text ?: "-"} " +
+                "upside=${r.upsideDown} " +
                 "luma=$liveMeanLuma dropped=${liveSource?.droppedFrames ?: 0} " +
                 "scan=${"%.1f".format(liveScanMillis)}ms cap=${terminalRecorder?.remaining ?: 0} " +
-                "prof='${terminalScanner.describeProfile()}' status='${r.status}']"
+                "prof='${terminalScanner.describeProfile()}' status='${r.status}'] " +
+                "exp[${r.exposure?.describe() ?: "no wall metered"} " +
+                "loop='${terminalExposure.describe()}' last=${"%+.2f".format(terminalExposure.lastError)}]"
         } else {
             ""
         }
@@ -1315,11 +1305,11 @@ class ScanPipeline(
     /**
      * Reads the terminal wall from the newest camera frame.
      *
-     * Deliberately does not feed [autoExposure]. That loop closes on how much *colour*
-     * survived, which is the gem wall's problem and not this one: these panels are read
-     * from luma alone, the phone's own metering handles them, and the reference clip was
-     * shot at exactly that exposure. The dials are still on screen -- this is a self-lit
-     * wall and a user who needs them should have them -- but nothing moves them unasked.
+     * Feeds [terminalExposure], not [autoExposure]. That loop closes on how much *colour*
+     * survived, which is the gem wall's problem and not this one; these panels are read
+     * from luma alone, and what matters is that their digits have not bloomed. The scan
+     * meters that on the displays it has just found, which is the one measurement the
+     * camera's own metering -- averaging a dark room -- cannot make.
      */
     private fun runTerminalScan(source: Camera2FrameSource) {
         val view = source.acquireView() ?: return
@@ -1346,8 +1336,14 @@ class ScanPipeline(
                     scanMillis = liveScanMillis,
                     profile = terminalScanner.describeProfile(),
                     detectorReport = terminalScanner.detectorReport,
+                    exposure = "meter ${result.exposure?.describe() ?: "-"}  " +
+                        "loop '${terminalExposure.describe()}'",
                 )
             )
+            // After the recorder, so a captured frame's sidecar shows the settings the
+            // frame was actually taken at rather than the ones this reading asks for.
+            // Moving the dial is all this does; the camera picks the change up itself.
+            terminalExposure.consider(source.tuning, result.exposure)
         } finally {
             source.releaseView()
         }
@@ -1414,7 +1410,7 @@ class ScanPipeline(
                 cameraControllable = source.tuning.capabilities.available,
                 cameraCapabilities = source.tuning.capabilities.describe(),
                 cameraHonoured = source.tuning.honoured(),
-                autoExposure = autoExposure.describe(),
+                autoExposure = terminalExposure.describe(),
                 cameraManual = source.tuning.settings.mode == CameraTuning.Mode.MANUAL,
                 aeLocked = source.tuning.settings.lockAe,
                 awbLocked = source.tuning.settings.lockAwb,
@@ -1731,6 +1727,7 @@ class ScanPipeline(
         // shows up once a week and never in a test.
         solverThread.post {
             terminalScanner.reset()
+            terminalExposure.reset()
             if (id == null) engine.autoDetectPuzzle() else engine.pinAdapter(id)
         }
     }
@@ -1747,12 +1744,14 @@ class ScanPipeline(
     fun nudgeExposure(darker: Boolean): Boolean {
         val t = tuning() ?: return false
         autoExposure.enabled = false
+        terminalExposure.enabled = false
         return if (darker) t.darker() else t.brighter()
     }
 
     fun setCameraMode(mode: CameraTuning.Mode) {
         tuning()?.update { it.copy(mode = mode) }
         autoExposure.enabled = false
+        terminalExposure.enabled = false
     }
 
     fun setCameraLocks(lockAe: Boolean, lockAwb: Boolean) {
@@ -1760,27 +1759,38 @@ class ScanPipeline(
     }
 
     /**
-     * Re-applies the current mode's camera preset, from the button on the camera card.
+     * Puts the camera back in the current mode's own hands, from the button on the
+     * camera card.
      *
-     * Worth having as well as the automatic one: the automatic pass runs once when the
-     * mode becomes active, and by the time a user has been round a round and nudged the
-     * exposure by hand, getting back to a known state is otherwise several taps of
-     * guesswork.
+     * For gems that is the LED-wall preset, applied again: the automatic pass runs once
+     * when the mode becomes active, and by the time a user has been round a round and
+     * nudged the exposure by hand, getting back to a known state is otherwise several
+     * taps of guesswork. For the terminal wall it is the wall metering, switched back on
+     * after a nudge switched it off -- it meters from wherever the dials are now.
      */
     fun applyCameraPreset() {
         val t = tuning() ?: return
-        if (liveMode == LiveMode.TERMINAL) t.applyMotionFreezePreset() else t.applyLedWallPreset()
+        if (liveMode == LiveMode.TERMINAL) {
+            terminalExposure.enabled = true
+            solverThread.post { terminalExposure.reset() }
+        } else {
+            t.applyLedWallPreset()
+        }
     }
 
     fun resetCamera() {
         tuning()?.reset()
         autoExposure.reset()
         autoExposure.enabled = true
+        terminalExposure.enabled = true
+        solverThread.post { terminalExposure.reset() }
     }
 
     fun setAutoExposureEnabled(enabled: Boolean) {
         autoExposure.enabled = enabled
         if (enabled) autoExposure.reset()
+        terminalExposure.enabled = enabled
+        if (enabled) solverThread.post { terminalExposure.reset() }
     }
 
     /**
@@ -1950,13 +1960,6 @@ class ScanPipeline(
 
         /** Live gem scans at ~10 Hz on a 30 fps stream. Walls do not move that fast. */
         const val LIVE_SCAN_EVERY_N_FRAMES = 3L
-
-        /**
-         * Displays the terminal reader must have in frame before the camera preset is
-         * applied. A third of the wall: enough to be sure it is the wall the camera is
-         * metering and not the floor on the way to it.
-         */
-        const val MIN_DISPLAYS_FOR_PRESET = 10
 
         /**
          * Radius of the drawn highlight as a fraction of the button pitch. Half a pitch

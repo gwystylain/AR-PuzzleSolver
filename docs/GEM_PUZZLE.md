@@ -381,8 +381,10 @@ for the mode least likely to have one -- Gems is used by walking to a wall with 
 `LogCapture` runs `logcat` on the app's own pid and copies it to a file, which needs no
 permission, reaches back through what is already buffered, and catches the crash if there
 is one. Picking Gems starts it, on the same reasoning that picking Gems drops the
-exposure. **Export** then zips the captures, the log and the canvas dump and raises the
-share sheet, so the run leaves the phone without ever meeting a laptop.
+exposure. Captures and the log then wait on the phone until `tools/collect-session.sh`
+pulls them. An **Export** button used to zip them for the share sheet, so the run could
+leave without a laptop. It came off the HUD because every button there sits over the wall
+being read.
 
 `GemRecorderTest` pins the parts that fail silently: that the burst stops where it was
 told to, that rows come out top-down rather than flipped like the canvas dump, that a

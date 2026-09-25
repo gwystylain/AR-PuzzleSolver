@@ -26,12 +26,12 @@ import org.junit.Test
  * answered by a synthetic board, and all of them can be answered in a few milliseconds
  * here rather than by installing on a device and standing in a room.
  *
- * **What this does and does not establish.** The shipped templates
- * ([com.puzzlesolver.core.puzzle.terminal.TerminalDigits]) are averaged from this same
+ * **What this does and does not establish.** One of the shipped template sets
+ * ([com.puzzlesolver.core.puzzle.terminal.TerminalDigits]) is averaged from this same
  * clip, so this is not independent evidence that the classifier generalises to another
  * installation -- and it is not claimed to be. Frame 0 is at least genuinely held out:
- * the templates were built from frames 20 onward, at a different distance and with
- * different motion blur. What the test does establish, and what it is here for, is that
+ * that set was built from frame 24 onward, at a different distance and with different
+ * motion blur. What the test does establish, and what it is here for, is that
  * the whole chain -- detect, isolate, normalise, match, rank -- reproduces a wall of
  * numbers labelled by hand, and it will say so the moment any stage of that changes.
  */
@@ -185,10 +185,11 @@ class TerminalWallTest {
     }
 
     @Test
-    fun `the shipped templates are ten well-formed digits`() {
+    fun `the shipped templates are sets of ten well-formed digits`() {
         val templates = TerminalDigits.templates
-        assertEquals(10, templates.size)
-        assertEquals((0..9).toList(), templates.map { it.label })
+        assertTrue("no templates", templates.isNotEmpty())
+        assertEquals("not whole sets of ten", 0, templates.size % 10)
+        assertEquals(List(templates.size / 10) { (0..9).toList() }.flatten(), templates.map { it.label })
         for (t in templates) {
             assertEquals(GlyphNormaliser.SIZE, t.width)
             assertEquals(GlyphNormaliser.SIZE, t.height)
@@ -226,7 +227,11 @@ class TerminalWallTest {
             if (label.startsWith("-")) continue
             for (k in 0 until DigitReader.TILES) {
                 val glyph = reader.isolate(frame, box, k) ?: error("tile $k of $label read as blank")
-                val scores = templates.map { it.label to correlate(glyph, it) }.sortedByDescending { it.second }
+                // Best score per digit, so the runner-up is another digit and never the
+                // same one from a different set.
+                val scores = templates.groupBy { it.label }
+                    .map { (digit, set) -> digit to set.maxOf { correlate(glyph, it) } }
+                    .sortedByDescending { it.second }
                 assertEquals("misread $label tile $k", label[k] - '0', scores[0].first)
                 val margin = scores[0].second - scores[1].second
                 if (scores[0].second < worstScore) worstScore = scores[0].second

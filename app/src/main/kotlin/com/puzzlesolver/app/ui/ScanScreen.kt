@@ -79,7 +79,6 @@ fun ScanScreen(
     isLogging: Boolean,
     logSummary: String?,
     onToggleLogging: () -> Unit,
-    onExport: () -> Unit,
     onPickVideo: () -> Unit,
     onOpenLastRecording: () -> Unit,
     onReturnToLive: () -> Unit,
@@ -157,7 +156,12 @@ fun ScanScreen(
             if (state.isGemsMode) {
                 GemTargetBar(targets = gemTargets, onSetTarget = onSetGemTarget)
             }
-            StatusCard(state, replayName)
+            // Not on the terminal wall. The answer there is the two rectangles and the
+            // number written on each; the card only restated it with a count of what was
+            // in view, and it did so full width across the top of a landscape screen,
+            // which is where the wall's top row is -- so it sat over the very displays it
+            // was pointing at. The heartbeat still logs the same line.
+            if (!state.isTerminalMode) StatusCard(state, replayName)
             if (showDebug) {
                 DebugCard(state, onForceFlatWall, onExpectCells)
             }
@@ -209,10 +213,12 @@ fun ScanScreen(
                 }
             }
 
-            // Present in every mode, unlike the row below it. The log and the export
-            // are the two things that do not care which pipeline is running, and they
-            // are the two that make the difference between coming back from the room
-            // with a diagnosis and coming back with a description.
+            // Present in every mode, unlike the row below it. The log does not care
+            // which pipeline is running, and it is what makes the difference between
+            // coming back from the room with a diagnosis and coming back with a
+            // description. It leaves the phone over adb; there used to be an Export
+            // button here that zipped the run for the share sheet, and it went because
+            // every button on this bar is one more thing over the wall being read.
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -229,7 +235,6 @@ fun ScanScreen(
                 ) {
                     Text(if (isLogging) "Stop log" else "Log")
                 }
-                Button(onClick = onExport) { Text("Export") }
                 // The elapsed time and the byte count together, because either alone has
                 // a failure that reads as success -- a timer climbing against a byte
                 // count that is not means the log is not actually being written.

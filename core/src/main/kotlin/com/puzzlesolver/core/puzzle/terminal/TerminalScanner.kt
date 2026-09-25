@@ -23,12 +23,31 @@ import com.puzzlesolver.core.puzzle.GlyphClassifier
  * frame at ten scans a second, a once-in-a-thousand misread is a green rectangle jumping
  * to the wrong display every few seconds. Requiring the answer twice costs a tenth of a
  * second after the wall changes and removes it.
+ *
+ * **Which way up the frame is, it works out from the wall.** The camera's buffer is fixed
+ * to the phone, and a phone held in landscape can be held either way round -- so half the
+ * time the wall arrives upside down. The preview turns with the phone and looks fine; the
+ * reader used to assume one way up and, the other way, read every display confidently and
+ * wrongly: `090` as `060`, the whole wall ranked, nothing flagged. The phone's own
+ * rotation is not a trustworthy answer either, because with auto-rotate locked it says
+ * portrait whichever way the phone is held.
+ *
+ * So the wall decides. A single digit's orientation cannot be trusted -- a six upside
+ * down is a nine -- but a wall of ninety of them leaves no doubt. Over every frame there
+ * is, the reference clip, both captures from the room and a monitor test shot upside
+ * down, 204 in all, the right way up read the lit displays at a mean confidence of 0.87 to
+ * 0.99 bar one frame caught mid-flip, and the wrong way up at about 0.6; the right way up
+ * never lost, and won by 0.21 at the least, 0.11 on the mid-flip frame. It reads both
+ * ways until it has seen a wall, then keeps what won, looking at the other way again on
+ * every tenth scan and on any scan that reads poorly -- which is what turning the phone
+ * over does -- and switching when the other way wins clearly twice running.
  */
 class TerminalScanner(
     classifier: GlyphClassifier = TerminalDigits.classifier(),
     private val detector: DisplayDetector = DisplayDetector(),
 ) {
     private val reader = DigitReader(classifier)
+    private val meter = DisplayMeter()
 
     /** One display as read, in full-resolution image pixels. */
     class Display(
@@ -58,6 +77,14 @@ class TerminalScanner(
          */
         @JvmField val settled: Boolean,
         @JvmField val status: String,
+        /**
+         * The exposure metered on the lit displays in this frame, or null when there
+         * were too few of them to trust. What the camera's own metering cannot give:
+         * see [DisplayMeter].
+         */
+        @JvmField val exposure: DisplayMeter.Reading? = null,
+        /** Whether the frame was read as upside down. For the heartbeat. */
+        @JvmField val upsideDown: Boolean = false,
     ) {
         val lowest: Display? get() = displays.firstOrNull { it.rank == 0 }
         val second: Display? get() = displays.firstOrNull { it.rank == 1 }
@@ -79,6 +106,14 @@ class TerminalScanner(
     private var publishedLowest: Int? = null
     private var publishedSecond: Int? = null
 
+    /** Which way up the wall is being read, or null until a wall has decided it. */
+    private var upsideDown: Boolean? = null
+
+    /** Consecutive checks the other way up has won by [SWITCH_MARGIN]. */
+    private var switchVotes = 0
+
+    private var scans = 0
+
     /**
      * The detector's own account of the last pass, for the capture sidecar.
      *
@@ -97,6 +132,13 @@ class TerminalScanner(
 
     /** Forgets the confirmed ranking. For a mode switch or a new round. */
     fun reset() {
+        forgetRanking()
+        upsideDown = null
+        switchVotes = 0
+        scans = 0
+    }
+
+    private fun forgetRanking() {
         pendingLowest = null
         pendingSecond = null
         publishedLowest = null
@@ -116,19 +158,33 @@ class TerminalScanner(
         }
 
         mark = System.nanoTime()
-        val readings = ArrayList<Reading>(boxes.size)
-        var remaining = 0
-        var unread = 0
-        for (box in boxes) {
-            val r = reader.read(luma, box)
-            val value = r.value
-            if (r.isBlank) {
-                readings.add(Reading(box, null, r.describe(), r.confidence, cleared = true))
-                continue
+        scans++
+        val current = upsideDown ?: false
+        var pass = readAll(luma, boxes, current)
+        val judged = pass.lit >= MIN_LIT_TO_JUDGE
+        if (judged && (upsideDown == null || pass.quality < CHECK_BELOW || scans % CHECK_EVERY == 0)) {
+            val other = readAll(luma, boxes, !current)
+            if (upsideDown == null) {
+                // The first wall seen decides, on whichever way reads better.
+                upsideDown = if (other.quality > pass.quality) !current else current
+                if (other.quality > pass.quality) pass = other
+            } else if (other.quality >= pass.quality + SWITCH_MARGIN) {
+                // Whether or not this vote turns it over, the ranking on screen came from
+                // a reading that may be upside down. No rectangles until that is settled:
+                // a missing one for a tenth of a second is better than a wrong one.
+                forgetRanking()
+                if (++switchVotes >= SWITCH_VOTES) {
+                    upsideDown = !current
+                    switchVotes = 0
+                    pass = other
+                }
+            } else {
+                switchVotes = 0
             }
-            if (value == null) unread++ else remaining++
-            readings.add(Reading(box, value, r.describe(), r.confidence, cleared = false))
         }
+        val readings = pass.readings
+        val remaining = pass.remaining
+        val unread = pass.unread
         stageMicros[1] = (System.nanoTime() - mark) / 1000
 
         val sorted = readings.filter { it.value != null }.sortedBy { it.value }
@@ -164,7 +220,40 @@ class TerminalScanner(
         return Result(
             displays, remaining, unread, settled,
             describe(boxes.size, remaining, unread, greenTaken, yellowTaken),
+            meter.measure(luma, readings.filter { !it.cleared }.map { it.box }),
+            upsideDown == true,
         )
+    }
+
+    /** Every display read one way up, and how well that went. */
+    private class Pass(
+        val readings: List<Reading>,
+        val remaining: Int,
+        val unread: Int,
+        /** Lit displays, which is what [quality] is averaged over. */
+        val lit: Int,
+        /** Mean over lit displays of the least confident digit. */
+        val quality: Float,
+    )
+
+    private fun readAll(luma: GrayImage, boxes: List<DisplayDetector.Box>, upsideDown: Boolean): Pass {
+        val readings = ArrayList<Reading>(boxes.size)
+        var remaining = 0
+        var unread = 0
+        var confidence = 0f
+        for (box in boxes) {
+            val r = reader.read(luma, box, upsideDown = upsideDown)
+            val value = r.value
+            if (r.isBlank) {
+                readings.add(Reading(box, null, r.describe(), r.confidence, cleared = true))
+                continue
+            }
+            if (value == null) unread++ else remaining++
+            confidence += r.confidence
+            readings.add(Reading(box, value, r.describe(), r.confidence, cleared = false))
+        }
+        val lit = remaining + unread
+        return Pass(readings, remaining, unread, lit, if (lit == 0) 0f else confidence / lit)
     }
 
     private class Reading(
@@ -198,4 +287,30 @@ class TerminalScanner(
 
     private fun format(value: Int?): String =
         if (value == null) "?" else value.toString().padStart(DigitReader.TILES, '0')
+
+    companion object {
+        /** Lit displays a frame needs before it is allowed an opinion on which way up. */
+        const val MIN_LIT_TO_JUDGE = 6
+
+        /**
+         * Below this mean confidence the other way up is read too, every scan. The right
+         * way up reads at 0.87 or more on every settled wall measured; the wrong way at
+         * about 0.6. So a scan under this is either a poor view or a phone just turned
+         * over, and the second read is how the two are told apart.
+         */
+        const val CHECK_BELOW = 0.85f
+
+        /** Otherwise the other way up is looked at once in this many scans. */
+        const val CHECK_EVERY = 10
+
+        /**
+         * How much better the other way must read to count as a vote for turning over.
+         * The right way up has never read worse than the wrong way, and on a settled wall
+         * never within 0.2 of it.
+         */
+        const val SWITCH_MARGIN = 0.1f
+
+        /** Consecutive votes needed to turn over. */
+        const val SWITCH_VOTES = 2
+    }
 }

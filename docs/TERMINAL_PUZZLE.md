@@ -101,6 +101,11 @@ clip:
 Whatever survives the opening still detached — a nub that came away cleanly, a thick
 corner of the border — is dropped by keeping only the largest component.
 
+All of that assumes the digit and the border are not touching. On a wall shot bright
+enough that the digits bloom, at mid-height they are, and the border has to be cut free
+before the opening. That was found on the third visit and is described under
+[the bloomed wall](#the-bloomed-wall).
+
 ### The opening is bitwise, or it would not fit in the budget
 
 Eroding by a 7×7 disc the obvious way is 49 comparisons per pixel, which over 96 tiles a
@@ -164,34 +169,46 @@ supply is not something to leave to chance in a room with one attempt at a round
 adding more families does not fix it — the wrong ones bring their own confusions.
 
 So `terminal-digits.pgm` ships in `:core` and holds the wall's own digits: every legible
-glyph in the reference clip, normalised exactly as the reader normalises one, averaged
-per digit. It is 7.9 KB. `TerminalTemplateBuilder` regenerates it by running the real
-reader, so the templates cannot drift from the normalisation:
+glyph in a set of labelled frames, normalised exactly as the reader normalises one,
+averaged per digit. It holds three sets of ten, one from the reference clip and one from
+each capture from the room, for the reason given under
+[the bloomed wall](#the-bloomed-wall), and is 23 KB. `TerminalTemplateBuilder`
+regenerates it by running the real reader, so the templates cannot drift from the
+normalisation. It takes one directory per set, each holding frames and a `wall.txt` with
+the wall as read by eye, and writes relative to the test's working directory, which is
+`core/`:
 
 ```bash
 ./gradlew :core:test --tests '*TerminalTemplateBuilder*' \
-    -Dterminal.frames=/path/to/frames -Dterminal.out=core/src/main/resources
+    "-Dterminal.frames=clip;room-0917;room-0924" -Dterminal.out=src/main/resources
 ```
 
-If your room's wall turns out to use a different display, that tool and a clip of it are
-the whole of the fix.
+The separator is the platform's path separator, `;` on Windows and `:` elsewhere. Which
+frames made each shipped set, and which are held out for the tests, is written in the
+builder.
+
+If your room's wall turns out to use a different display, that tool and a capture of it
+are the whole of the fix.
 
 Two other things follow from the templates being the wall's own:
 
-- **The correlation floor is 0.70, not 0.55.** A real digit scores 0.93–0.98 against
-  these; 0.55 would not be a threshold, it would be an invitation for a smear of glare to
-  be read as a seven.
+- **The correlation floor is 0.70, not 0.55.** A real digit on the fixture scores 0.96 or
+  more against these; 0.55 would not be a threshold, it would be an invitation for a
+  smear of glare to be read as a seven.
 - **The ambiguity margin is 0.03, not 0.06.** Ten digits at one size in one frame
   correlate highly with each other whatever they are — five against eight is 0.92 between
-  these templates — so genuine margins are narrow even when the answer is not in doubt.
-  The narrowest correct margin over the fixture is 0.058, a zero over an eight. At 0.06
-  every one of those would be flagged ambiguous, which is not a safety net, it is a
-  broken confidence number.
+  the clip's templates and 0.95 between the room's — so genuine margins are narrow even
+  when the answer is not in doubt. The narrowest correct margin over the fixture is
+  0.053, an eight over a three. At 0.06 every one of those would be flagged ambiguous,
+  which is not a safety net, it is a broken confidence number. A flagged digit is still
+  read as its winner: refusing them was tried on the bloomed wall below and cost more
+  than it saved.
 
-Only one orientation is tried, unlike the canvas modes. The canvas is rectified only up
-to a quarter turn; a camera frame's up is known exactly, and trying the other three
-orientations there cannot make a reading better — a six upside down is a nine — only
-worse.
+Each glyph is matched one way up only, unlike the canvas modes, which try all four
+quarter turns glyph by glyph. Here that could only make a reading worse — a six upside
+down is a nine. Which way up the frame is still has to be decided, because the phone can
+be held either way round, but that is decided once for the whole wall; see
+[which way up](#which-way-up).
 
 ## The ranking is confirmed before it is drawn
 
@@ -264,19 +281,50 @@ the phone stays in portrait however it is held — and the preview, and the rect
 it, are drawn a quarter turn round. Nothing is wrong when that happens and the boxes are
 still on the right displays, but a wall of numbers on its side is hard to read.
 
+### Which way up
+
+Landscape can be held either way round, and the camera's buffer is fixed to the phone, so
+half the ways of holding it deliver the wall upside down. The preview turns with the phone
+and looks right either way, which is what hid this. A monitor test held the other way
+round read every display confidently and wrongly: `090` came out as `060` and took the
+green rectangle, the whole wall ranked, nothing unread, nothing flagged. Turned over, the
+same captured frames read perfectly.
+
+The phone's own rotation is the obvious fix and the wrong one. With auto-rotate locked
+it says portrait whichever way the phone is held, and that is a setting this doc already
+tells people they can get away with. So `TerminalScanner` asks the wall. One digit's
+orientation cannot be trusted, but a wall of them leaves no doubt. Over 204 frames — the
+reference clip, both room captures, and the monitor test as shot and turned over —
+reading the right way up gave a mean confidence of 0.87 to 0.99 across the lit displays,
+bar one countdown frame caught mid-flip at 0.55. The wrong way up gave about 0.6. The
+right way never lost. It won by 0.21 at the least, and by 0.11 on the mid-flip frame.
+
+It reads both ways until it has seen a wall of at least six lit displays, and keeps
+whichever read better. After that it reads the other way too on every tenth scan, and on
+any scan whose mean falls below 0.85, which is what turning the phone over does. It turns
+over when the other way wins by 0.1 twice running. While a turn is in doubt it draws no
+rectangles, because a missing one for a tenth of a second is better than a wrong one.
+Turning the phone over mid-round costs three scans, about a third of a second. `TerminalUpsideDownTest` turns
+the fixtures over in code and checks all of this, and the heartbeat says which way it is
+reading in `upside=`.
+
 ## What is on screen
 
 - A **green** rectangle around the lowest number and a **yellow** one around the second
   lowest, drawn just outside the panel with a dark stroke underneath so they survive
   being drawn over a wall made of light. Each is labelled with the number itself, so a
   misread is visible rather than silent.
-- A status line: `next 008 · then 012 · 31 left`, or `19 numbers in view -- reading them`
-  before the first ranking settles.
+- **No status card.** Every other mode has one across the top of the screen, and this
+  one used to: `next 008 · then 012 · 31 left`, or `19 numbers in view -- reading them`
+  before the ranking settled. It went for the same reason as the camera card below. In
+  landscape the top of the screen is the wall's top row, so the card sat over the
+  displays it was pointing at, and all it said was already on the rectangles or was a
+  count nobody acts on. The same line is still in the heartbeat, as `status='...'`.
 - The camera dials, behind one button in the bottom-right corner, as on the other two
-  self-lit walls. The auto-exposure loop does not run here — it closes on how much
-  *colour* survived, which is the gem wall's problem and not this one — but the shutter is
-  pinned once when the mode becomes active, for the reason below, and a user who wants it
-  back is a tap away.
+  self-lit walls. The gem wall's auto-exposure loop does not run here; this wall has its
+  own, which meters the displays and keeps them exposed where the digits read best — see
+  [metering the wall](#metering-the-wall). Tapping *darker* or *brighter* takes the
+  exposure away from it, and *meter wall* gives it back.
 
   The card used to be on screen unprompted, which was the right call for the gem wall and
   the wrong one here: it is tall, and in landscape it covered the top two rows of displays,
@@ -384,10 +432,14 @@ it is either not a display or not one that can be read in full. And the trim's r
 was first set at 15%, which let a lit reflection on one housing's corner hold a box open
 by a single pixel per column; tile columns carry 85-95%, so it sits at 30% now.
 
-### The shutter is still pinned, for a narrower reason
+### The shutter was still pinned, for a narrower reason
 
-`CameraTuning.applyMotionFreezePreset` holds the light where the camera's own metering put
-it and buys a shorter exposure with gain: the opposite trade to the LED-wall preset, which
+*This preset has since been replaced by [metering the wall](#metering-the-wall), which
+keeps its shutter-first trade and drops the brightness it held. What it taught is kept
+here.*
+
+`CameraTuning.applyMotionFreezePreset` held the light where the camera's own metering put
+it and bought a shorter exposure with gain: the opposite trade to the LED-wall preset, which
 takes light away from a wall that was clipping. It was built to freeze the blur that
 turned out not to be the problem, and it stays because the trade is still free -- this
 reader is indifferent to noise and would be fatal to blur if it ever came -- but it is not
@@ -402,6 +454,183 @@ white. It now waits until the reader has ten displays in frame, so the exposure 
 from is the wall's, and when the gain ceiling cannot pay for the full 1/250 s it gives up
 shutter rather than light. On the phone, applied with the wall in view, it asks for
 `manual 1/250s iso2087` and the sensor honours it exactly.
+
+## The bloomed wall
+
+The third visit, on 24 September, came back with the complaint in the player's words: the
+app was mixing up eights and zeros. The heartbeat agreed that something was badly wrong.
+Over one round the published `next` went `003`, `000`, `009`, `003`, `009`, `000`, `008`,
+`003`, `000`, `003`, `009`, and none of those was showing on the wall at the time. This
+time there were 24 captured frames to say why: the 3-2-1 countdown that opens a round,
+then twenty frames of the round itself.
+
+The preset pinned `1/53s iso6400`, where the second visit's capture ran at `1/97s`, and
+the frames averaged a luma of about 90 against 55. Every digit was clipped to white and
+had bloomed, so the zero's counter was a slit and the eight's were two dots.
+
+Labelled by eye, the round's twenty frames held 60 misread displays, and the green
+rectangle was on the wrong display in 15 of them. The misreads were not scattered:
+
+| read as | digits |
+| --- | --- |
+| five as zero | 38 |
+| six as zero | 21 |
+| nine as zero | 5 |
+| eight as zero | 2 |
+| three as eight | 2 |
+
+In the countdown frame, 11 of the 32 threes read as an eight or a zero. In the round,
+`058` came out as `008` in nearly every frame, `059` as `009`, `057` as `007` and `066`
+as `006`. That is the dangerous direction. Every one of those is a real number read as a
+lower one, and the lowest number is what gets the green rectangle. The same misread in
+every frame also passes the two-scan confirmation, which only guards against a misread
+that comes and goes. The confidence column in the sidecar gave it away: nearly every
+misread came in at about 0.4, which is the classifier flagging a near-tie and the reader
+using the winner anyway.
+
+The masks showed the mechanism. A zero, five, six, eight or nine is widest at mid-height,
+where the seam crosses the tile. At this exposure the last pixel or two of gap between the
+digit and the tile's border fills in there, and the seam bridges the rest, so the
+digit, the seam and the border make one shape too thick for the opening to take apart.
+Every wide digit came out with the same pair of wings reaching both edges of the patch.
+With the silhouette the same for all of them, the only thing left to tell them apart was
+a counter a few pixels across.
+
+**The fix is to cut the border free before the opening.** The column of bare tile face
+just inside each border is bridged only for the rows around the seam, so it is still dark
+on most rows. `DigitReader.severBorders` finds it from each edge inwards, as the first
+column dark in at least half the rows, and clears it top to bottom. The border is then a
+thin strip on its own, and the opening removes it as it always did. That alone took the
+round from 60 misreads to 15, and the wrong green rectangle from 15 frames to 2. The
+reference clip read exactly as before.
+
+What was left was the templates. They had been averaged from the clip, where the counters
+are open, so a bloomed zero now looked more like the clip's eight than its zero. The
+shipped file now holds a set of ten from each of the three captures, and a glyph is
+matched against all of them. Each set was tested on the capture it was not built from:
+with the clip and the second visit as templates, the third visit's round misread 2
+displays, where the clip's set alone misread 10 and one averaged set misread 6.
+
+| | before | after |
+| --- | --- | --- |
+| the round's frames 25-36, held out of every template set: misread | 44 of 325 lit | **0** |
+| the same frames: green rectangle on the wrong display | 12 of 12 | **0 of 12** |
+| the same frames: left unread | 30 | 18 |
+| the whole round, 20 frames: misread | 60 | 2 |
+| the 3-2-1 countdown: misread | 9 of 32 | 1 |
+| the second visit's capture: misread | 3 | 2 |
+| reference clip, 96 frames | 0 | 0 |
+
+The two misreads left in the round are a display caught mid-flip as the ball took it, and
+a nine with glare across its foot. The second visit's two are both displays mid-flip.
+`TerminalBloomTest` reads frame 25, the one that had put the green rectangle on `007`
+where the lowest numbers on the wall were `028` and `029`.
+
+Three things were tried and not kept:
+
+- **Clipping the widest rows to the digit's width**, measured from the rows above and
+  below. It removed the wings, but a four's crossbar reaches the edge of the tile too, and
+  some fours came out as ones.
+- **Cutting two columns instead of one.** The zero's narrow counter is what separates it
+  from an eight, and the second column starts to eat the side of the digit around it: 80
+  zeros read as eights over the round.
+- **Refusing a digit the classifier flags as a near-tie.** One misread fewer, four times
+  as many displays unread, and the green rectangle wrong *more* often, because the
+  display left unread was as likely as any other to be the lowest.
+
+What this did not fix is the exposure itself. The preset held the light where the
+camera's metering put it, and metering a dark room with a bright wall in it will always
+over-expose the wall. That is the next section.
+
+## Metering the wall
+
+The reader now reads through the bloom, but the better fix is not to bloom. The camera
+meters the whole frame, which in this room is mostly dark, so it opens up until the room
+is grey and the wall is well over. The reader is the one part of the app that knows where
+the displays are, so it meters them itself.
+
+**First, where to aim.** The reference clip reads perfectly and has none of its display
+area at white; both captures from the room have half of it at white. Re-exposing the clip
+in linear light and reading it again found how wide the readable range is:
+
+| exposure against the clip | display area at white | misread | unread |
+| --- | --- | --- | --- |
+| 3 stops under | 0% | detection starts to fail | |
+| 2 under to 2 over | 0–53% | 0 | 2 of 360, at 2 over |
+| 2½ over | 58% | 11 | 84 of 360 |
+| 3 over | 75% | 10 | 296 of 360 |
+
+The clip sits in the middle, so its exposure is the target. The two captures from the room
+meter at 1.1 and 1.8 stops over it. The re-exposed clip has no glare or halo in it, so the
+real bright edge is nearer than two stops, which is where the 24 September misreads were.
+
+**`DisplayMeter` measures it**, as part of every scan. For each lit display it takes the
+brightest tenth, meaning the digits and borders, and the tile face at the 25th percentile.
+It then takes the median of each across the wall. While the digits are under white, the
+first says exactly how many stops off the wall is. Once they clip, it no longer says how far,
+and the tile face, which stays on the scale for about three stops more, takes over.
+Cleared displays are left out: a blank tile has less bright area, and counting it would
+make a half-cleared wall look dark and pull the exposure back into the bloom by the end of
+every round. Checked against re-exposed copies of the clip, it recovers a known shift to
+within a quarter of a stop from two under to two and a half over. On the room frames it
+reads the same value from one frame to the next to within a few hundredths.
+
+**`TerminalExposure` acts on it**, from the solver thread, one reading per scan. On this
+phone every change rebuilds the capture session and costs a few hundred milliseconds of
+preview, so it corrects the whole error in one move and then checks, rather than stepping
+a stop at a time. It moves only when all of these hold:
+
+- the meter has seen at least ten lit displays, so walking up to the wall or pointing at
+  the floor never moves it;
+- three consecutive readings agree, taking their median;
+- the wall is more than half a stop off, leaving a stop and a half to either edge;
+- the sensor's metadata shows the last change has arrived, plus one straddling frame;
+- two seconds have passed since the last change.
+
+It does not settle and stop as the gem loop does. There is no mosaic to throw away here,
+so a change costs only its gap in the preview. Its own caution keeps it still once it is
+on target.
+
+The light is paid for as the old preset paid for it: the shutter at 1/250 s to freeze a
+hand-held pan, and gain for the rest. In this room the two agree. The 24 September wall
+at 1/53 s and ISO 6400 would have gone to about 1/190 s at the same gain, darker and
+sharper at once. Only a dim wall that has used up the gain lengthens the shutter, and not
+past 1/60 s.
+
+What can go wrong, and what it does:
+
+| problem | response |
+| --- | --- |
+| a change loses the wall — no reading for three seconds after it arrives | put the old settings back, and go no further than half a stop short of the failed setting in that direction again |
+| the phone's tone curve is steeper than the meter's 2.2 gamma, so a correction overshoots | halve the share of the error applied next time; a curve half again as steep still lands inside half a stop in a few moves |
+| the sensor never shows what was asked for | stand down after three seconds and resume if it catches up, as the gem loop does |
+| the user taps *darker* or *brighter* | the loop switches off; *meter wall* on the camera card switches it back on |
+
+The heartbeat carries all of it in an `exp[...]` clause: the reading, the loop's state
+and the last error it acted on. Every captured frame's sidecar records the reading taken
+from that frame.
+
+**On the phone, against the reference clip on a monitor:**
+
+- **Brightness sweep with the camera left alone.** The phone's own metering is not
+  fooled when a monitor fills the frame. It followed a full sweep of the monitor's
+  brightness, ISO 1408 down to 276 and back, and the wall never metered more than 0.13
+  stops off. The loop left it alone, which is right: it is there for a wall that is a
+  patch of light in a dark room.
+- **Recovery from four stops under.** *Darker* was tapped four times, to 1/4000 s, and
+  detection fell to 13 to 17 displays of 32. *Meter wall* was then tapped. The loop moved
+  three stops, its cap, landed 0.86 under, and two seconds later moved the rest, to
+  1/250 s at ISO 3275 and 0.31 under. That is on target in four seconds with two changes.
+- **Sweep with the loop in charge.** Brightening the monitor to 1.6 stops over, then
+  dimming it to 1.2 under, took two changes each way, and each move was the measured
+  error to within a hundredth of a stop. Every change was at least two seconds after the
+  last, and the loop settled within 0.4 stops of target. The reader held 30 or 31 numbers
+  throughout, with at most one unread, including at 1.6 stops over.
+
+What it has not had is the room. The tests cover the meter on all three
+real walls and the loop as a state machine. What only the room can show is whether the
+phone's tone curve is close enough to the meter's for the loop to settle in one move
+rather than two, and where the real bright edge sits.
 
 ## Getting evidence out of the room
 
@@ -441,8 +670,8 @@ identically: `0?4 conf=0.00` is a threshold question, `0-4` is a segmentation on
   now `TerminalReplay`, which runs the real scanner over a directory of frames and prints
   what the heartbeat would have printed; that covers the diagnostic half of what an in-app
   replay would be for.
-- **A second installation.** The shipped templates are averaged from one clip of one
-  wall. Everything else in the chain — detection, isolation, normalisation, ranking — is
+- **A second installation.** The shipped templates come from one clip and two captures,
+  all of one wall. Everything else in the chain — detection, isolation, normalisation, ranking — is
   measured against real pixels, but the classifier has only ever seen this typeface.
 - **Ties.** Two displays showing the same lowest number would get one green rectangle and
   one yellow. Nothing on the reference wall repeats a number and there is no evidence

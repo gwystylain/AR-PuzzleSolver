@@ -19,7 +19,13 @@ import java.util.concurrent.atomic.AtomicReference
  * rings are simply not in the image. No amount of care downstream recovers them, and
  * the only fix is upstream of the sensor. See docs/GEM_PUZZLE.md.
  */
-class CameraTuning {
+class CameraTuning(
+    /**
+     * Wall-clock, injectable for the tests. Only [honoured] reads it, to tell a change
+     * still reaching the sensor from one that never will.
+     */
+    private val clock: () -> Long = System::currentTimeMillis,
+) {
 
     enum class Mode {
         /** The camera meters for itself; [Settings.evSteps] biases the result. */
@@ -193,66 +199,6 @@ class CameraTuning {
     }
 
     /**
-     * Pins the shutter fast enough to freeze a pan, and pays for it in gain.
-     *
-     * The opposite trade to [applyLedWallPreset], for the opposite problem. That one
-     * darkens a wall whose LEDs were clipping to white. This one is for a wall that is
-     * already exposed correctly and is being *smeared*: the terminal panels are read
-     * from the shape of a digit, and a digit smeared across a dozen pixels by a hand-held
-     * pan is not a shape any classifier recovers.
-     *
-     * Measured on the reference clip: sensor noise at sigma 16 costs the reader 0.4%, a
-     * quarter less light costs nothing, and 15 pixels of motion blur costs 28%. So gain
-     * is very nearly free and blur would be ruinous -- which is the case for this trade.
-     * It is not, as it was first written up, the fix for a room run that missed a
-     * quarter of the wall: that turned out to be the display housings being swallowed
-     * into the detector's boxes, found when the first capture came back with sharp
-     * digits in boxes a third too wide. See docs/TERMINAL_PUZZLE.md. The preset stays
-     * because it costs nothing and blur is real; it is just not what was wrong.
-     *
-     * The gain is chosen to hold the brightness the camera's own metering had already
-     * settled on -- the same exposure paid for in a different currency -- rather than
-     * being a fixed number. A fixed ISO would be right for one room and wrong for the
-     * next, and this mode has no colour to protect and no reason to prefer a particular
-     * one.
-     *
-     * @return false when the device has no manual sensor, or when no frame metadata has
-     *         arrived yet to scale the gain against. Both are "ask again shortly" rather
-     *         than "never", so the caller must not latch on a false.
-     */
-    fun applyMotionFreezePreset(targetExposureNanos: Long = MOTION_FREEZE_EXPOSURE_NANOS): Boolean {
-        val c = capabilities
-        if (!c.available || !c.manualSensor) return false
-        val currentExposure = reported.exposureNanos ?: return false
-        val currentIso = reported.iso ?: return false
-        // As fast as the target, or as fast as the gain ceiling can actually pay for --
-        // whichever is slower. Clamping the gain instead and keeping the target would
-        // hold the shutter and quietly lose the light, which on a wall found by
-        // thresholding against a local background is a worse failure than a little blur:
-        // pointed at something genuinely dark this asked for ISO 48000, got the sensor's
-        // 6400, and would have under-exposed by three stops.
-        val floorForGain = currentExposure * currentIso / c.maxIso.coerceAtLeast(1)
-        val exposure = maxOf(targetExposureNanos, floorForGain)
-            .coerceIn(c.minExposureNanos, c.maxExposureNanos)
-        if (currentExposure <= exposure) return false      // already this fast or faster
-        val gain = (currentIso.toLong() * currentExposure / exposure)
-            .coerceIn(c.minIso.toLong(), c.maxIso.toLong())
-            .toInt()
-        return update {
-            it.copy(
-                mode = Mode.MANUAL,
-                exposureNanos = exposure,
-                iso = gain,
-                // Not AE-locked, because there is nothing left for AE to do once both
-                // dials are fixed, and not AWB-locked either: this reader never looks at
-                // colour, so freezing white balance would only be a thing to explain.
-                lockAe = false,
-                lockAwb = false,
-            )
-        }
-    }
-
-    /**
      * Halves the light, whichever dial this device gives us.
      *
      * @return false when already at the bottom, which is what tells the auto-tuner to
@@ -300,12 +246,26 @@ class CameraTuning {
      */
     fun honoured(): Boolean? {
         val agrees = compare() ?: return null
+        if (agrees) {
+            mismatchSinceMillis = NO_MISMATCH
+            return true
+        }
         // Debounced, because a change takes a moment to reach the sensor and the frames
         // in between legitimately still carry the old settings. Without this, every
         // adjustment briefly accuses the camera of ignoring it.
-        mismatchStreak = if (agrees) 0 else mismatchStreak + 1
-        if (agrees) return true
-        return if (mismatchStreak >= MISMATCH_SAMPLES) false else null
+        //
+        // On time, and started afresh by every new request. It used to count calls, on
+        // the assumption of one per metadata arrival, but several parts of the frame
+        // loop ask every frame -- so four calls went by in a frame or two, while on this
+        // phone a change takes four or five hundred milliseconds to arrive. Every
+        // exposure change flashed the camera button red for half a second, which was
+        // easy to miss until the terminal wall's loop started making them on its own.
+        val now = clock()
+        if (mismatchSinceMillis == NO_MISMATCH || mismatchGeneration != generation) {
+            mismatchSinceMillis = now
+            mismatchGeneration = generation
+        }
+        return if (now - mismatchSinceMillis >= MISMATCH_MILLIS) false else null
     }
 
     private fun compare(): Boolean? {
@@ -323,7 +283,11 @@ class CameraTuning {
     }
 
     @Volatile
-    private var mismatchStreak = 0
+    private var mismatchSinceMillis = NO_MISMATCH
+
+    /** The request [mismatchSinceMillis] is timing. A new one gets its own grace period. */
+    @Volatile
+    private var mismatchGeneration = -1
 
     /** One line for the HUD: what was asked for. */
     fun describeRequest(): String {
@@ -345,18 +309,13 @@ class CameraTuning {
         const val LED_WALL_EXPOSURE_NANOS = 4_000_000L
 
         /**
-         * 1/250 s: fast enough to freeze the pan that was losing a quarter of the wall.
-         *
-         * Blur scales with exposure time, so the 13 pixels of smear measured at the
-         * 1/100 s the camera was choosing for itself become five here -- and five is
-         * below where the reader starts to care. Faster would cost gain for nothing.
+         * How long the sensor may go on disagreeing with a request before the camera is
+         * accused of ignoring it. A change takes four or five hundred milliseconds to
+         * arrive on this phone, since the capture session is rebuilt around it; three
+         * times that is still quick to call out a camera that really is ignoring us.
          */
-        const val MOTION_FREEZE_EXPOSURE_NANOS = 4_000_000L
+        const val MISMATCH_MILLIS = 1_500L
 
-        /**
-         * Disagreeing read-backs needed before the camera is accused of ignoring us.
-         * Metadata arrives a few times a second, so this is about a second of it.
-         */
-        const val MISMATCH_SAMPLES = 4
+        private const val NO_MISMATCH = Long.MIN_VALUE
     }
 }

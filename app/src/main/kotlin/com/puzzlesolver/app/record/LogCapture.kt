@@ -60,7 +60,7 @@ class LogCapture(private val directory: File) {
      * Destroying the process closes the stream a blocked `read` is sitting in, which
      * throws. That is the normal way this ends, and logging it as a warning with a stack
      * trace -- which it did -- puts `InterruptedIOException` in the artifact every time
-     * anyone presses Stop or Export. A log whose own shutdown looks like a failure costs
+     * anyone presses Stop. A log whose own shutdown looks like a failure costs
      * a reader real time on the one file they came to trust.
      */
     @Volatile
@@ -221,9 +221,10 @@ class LogCapture(private val directory: File) {
             "MainActivity",
             "LogCapture",
             "GemRecorder",
-            "SessionBundle",
             "SharedCamera",
             "AutoExposure",
+            "TerminalExposure",
+            "TerminalRecorder",
             "Camera2Source",
             "CameraProbe",
             "ArCoreFrameSource",

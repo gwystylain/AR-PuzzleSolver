@@ -103,8 +103,9 @@ different reason: the answer is where to look next, and it changes every few sec
 Mines and Gems needed something the rest of the app never did: **control of the
 camera**. A dark room full of bright LEDs is exactly the scene auto-exposure gets wrong,
 and at the exposure the camera picks for itself half of every gem carries no colour at
-all. (Terminal is the exception among the three: its panels are read from luma, and the
-phone's own metering handles them.) The app
+all. (Terminal went the same way for a different reason: the phone's metering over-exposes
+its panels until the digits bloom, so its reader meters the displays itself and sets the
+exposure from that. See [docs/TERMINAL_PUZZLE.md](docs/TERMINAL_PUZZLE.md#metering-the-wall).) The app
 takes the camera over through ARCore's shared-camera mode, exposes the dials in the HUD,
 and closes a loop from the solver's own measurement of how much colour survived back to
 the shutter.
