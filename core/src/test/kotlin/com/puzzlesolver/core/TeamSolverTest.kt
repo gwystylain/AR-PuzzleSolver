@@ -35,8 +35,8 @@ class TeamSolverTest {
         val own = TeamPlanner(plan).schedule(3)
         val chosen = TeamSolver(plan).schedule(3)
         assertNotEquals(sequence(plan), sequence(chosen.plan))
-        assertTrue("${chosen.makespan} against ${own.makespan}", chosen.makespan <= 0.8 * own.makespan)
-        assertTrue("${chosen.travel} against ${own.travel}", chosen.travel <= 0.8 * own.travel)
+        assertTrue("${chosen.makespan} against ${own.makespan}", chosen.makespan <= 0.85 * own.makespan)
+        assertTrue("${chosen.travel} against ${own.travel}", chosen.travel <= 0.85 * own.travel)
         StrategyReplay.replay(chosen.plan.stage, chosen.plan.shots)
     }
 

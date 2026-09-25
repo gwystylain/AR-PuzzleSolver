@@ -70,7 +70,6 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.abs
-import kotlin.math.roundToInt
 
 /**
  * A guide room -- Strategy, or Gridlock -- as a reference card rather than a scan.
@@ -404,11 +403,17 @@ private fun LaneSection(
         if (lane.shots.isEmpty()) {
             Text("nothing this stage", color = Color(0xFF6F7B87), fontSize = 12.sp)
         } else {
-            // Straight across the floor, the same measure the split is made on, to the
-            // nearest tile.
-            val walked = lane.walked.roundToInt()
+            // How often the player has to move somewhere else and find their next tile:
+            // in the room that, not the walking, is what takes the time.
+            val presses = if (lane.shots.size == 1) "1 press" else "${lane.shots.size} presses"
+            val moves = when {
+                lane.shots.size == 1 -> ""
+                lane.moves == 0 -> "  ·  all in a row"
+                lane.moves == 1 -> "  ·  1 move"
+                else -> "  ·  ${lane.moves} moves"
+            }
             Text(
-                "${lane.shots.size} presses  ·  " + when (walked) { 0 -> "no walking"; 1 -> "walks 1 tile"; else -> "walks $walked tiles" },
+                presses + moves,
                 color = Color(0xFF6F7B87),
                 fontSize = 12.sp,
             )

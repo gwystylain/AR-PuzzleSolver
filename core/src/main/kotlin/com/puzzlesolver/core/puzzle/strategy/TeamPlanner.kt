@@ -1,5 +1,6 @@
 package com.puzzlesolver.core.puzzle.strategy
 
+import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.random.Random
 
@@ -22,6 +23,10 @@ class Lane(
     val waitsFor: Map<Int, List<Int>>,
     /** Cells walked from the first press to the last, straight across the floor. */
     val walked: Double,
+    /** Times the player has to move to another part of the room and find their next tile. */
+    val moves: Int,
+    /** Of those, and of the first press, how many are in the middle of a row of guns. */
+    val middles: Int,
 )
 
 class TeamPlan(
@@ -97,16 +102,22 @@ class TeamPlan(
  * the plan does. Splitting the stage between players is choosing, within that partial
  * order, who presses what and in what order.
  *
- * Both rooms are floors: a press is a step onto a tile, and getting to the next one is
- * a walk straight across the room, so the rows count as much as the columns. That makes
- * walking, not pressing, where a stage's time goes -- crossing the room for one tile
- * costs more than two presses -- and the rules for a good split, the team's, are:
+ * Both rooms are floors: a press is a step onto a tile. Timed in the room, what takes a
+ * stage's time is neither the pressing nor the walking but finding the next tile after
+ * a move. A player clearing a row of guns tile by tile -- the next one along, or the one
+ * after -- barely stops; one who moves to another part of the room has to look up and
+ * find their tile. At the end of a row, or on its own, it is found quickly, about five
+ * presses in a row's worth; in the middle of a row, where the player has to count along,
+ * it takes as long as ten. A pressed tile goes dark, so a row cleared from one end has a
+ * new end. The rules for a good split, the team's, are:
  *
- * 1. **Finish early, walk little.** The stage is done when the last press lands, so a
- *    split is scored on when that is -- walking, pressing and standing waiting for other
- *    players, on the same clock as [evaluate] -- and, on top, on how far everyone walks
- *    in total. A tile one player would cross the room for goes to whoever is standing
- *    next to it, even if that leaves them with more presses than the rest.
+ * 1. **Finish early, move little.** The stage is done when the last press lands, so a
+ *    split is scored on when that is -- walking, finding, pressing and standing waiting
+ *    for other players, on the same clock as [evaluate] -- and, on top, on everyone's
+ *    walking and finding in total. The best lane is one long row of tiles; a lane that
+ *    has to move starts each stretch at an end of a row rather than in its middle; and a
+ *    tile one player would move for goes to whoever is already standing next to it,
+ *    even if that leaves them with more presses than the rest.
  * 2. **Hand-offs early, waits late.** Where a press waits on another player's, the
  *    press it waits on belongs at the front of that player's stack and the waiting
  *    press at the back of its own. A hand-off that happens on step 1 cannot be
@@ -118,8 +129,8 @@ class TeamPlan(
  *    wait with no margin at all, where equal pace would have the player arrive before
  *    the press it needs and stand there, costs as much as a press. It is worth paying:
  *    on a chain, a player standing at the next tile and waiting their turn beats one
- *    player walking the whole chain, and pricing the wait above the walk it saves only
- *    sends someone round the room.
+ *    player moving along the whole chain, and pricing the wait above the moves it saves
+ *    only sends someone round the room.
  * 3. **The level's quirks.** Which presses and on which look of the board is already
  *    settled by the plan -- reds, moving and swapping targets, walls, mirrors. What the
  *    split adds is how often a player has to stop and wait for the board to come round:
@@ -130,7 +141,7 @@ class TeamPlan(
  *    can have nothing to press.
  *
  * Every term is counted in tiles walked, so each weight below says what it is worth in
- * walking. Where all else is equal, fewer presses that wait on another player at all is
+ * walking; a press in a row is five. Where all else is equal, fewer presses that wait on another player at all is
  * preferred, since a dependency inside one player's stack carries no risk.
  *
  * The search is in two levels. Simulated annealing decides who presses what, trading
@@ -255,6 +266,61 @@ class TeamPlanner(private val plan: StrategyPlan) {
         Array(n) { a -> DoubleArray(n) { b -> walk(gunCell(a), gunCell(b)) } }
     }
 
+    /**
+     * Presses whose tiles are at most two apart: the next tile along, or the one after
+     * it. Going from one to the other needs no finding -- the player is standing there.
+     */
+    private val near: Array<BooleanArray> by lazy {
+        Array(n) { a ->
+            BooleanArray(n) { b ->
+                val c = gunCell(a)
+                val d = gunCell(b)
+                maxOf(abs(c.x - d.x), abs(c.y - d.y)) <= 2
+            }
+        }
+    }
+
+    /**
+     * For each press, the guns touching its tile -- the rest of its row -- each as the
+     * presses that take it away: the one pressing it, and any shot that destroys it or
+     * lights a target over it. A gun nobody takes away stays lit, which is 0 here.
+     */
+    private val neighbours: Array<LongArray> by lazy {
+        val removers = LongArray(stage.guns.size)
+        for ((i, shot) in plan.shots.withIndex()) {
+            removers[shot.gun] = removers[shot.gun] or (1L shl i)
+            if (shot.hit == Hit.GUN) removers[shot.hitIndex] = removers[shot.hitIndex] or (1L shl i)
+            if (shot.hit == Hit.MIRROR) {
+                val spawned = Cell(stage.width - 1 - shot.cell!!.x, shot.cell.y)
+                for ((g, gun) in stage.guns.withIndex()) if (gun.cell == spawned) removers[g] = removers[g] or (1L shl i)
+            }
+        }
+        Array(n) { s ->
+            val here = gunCell(s)
+            stage.guns.indices
+                .filter { g -> g != plan.shots[s].gun && stage.guns[g].let { maxOf(abs(it.x - here.x), abs(it.y - here.y)) } == 1 }
+                .map { removers[it] }
+                .toLongArray()
+        }
+    }
+
+    /**
+     * What it costs to find press [s]'s tile, coming from [previous] (-1 for a player's
+     * first press) with the presses in [done] certainly behind it: nothing if the player
+     * is standing next to it, [FIND_END] if it is at the end of its row of lit guns or on
+     * its own, [FIND_MIDDLE] if it is somewhere in the middle. A pressed tile goes dark,
+     * so only a gun still lit counts as a neighbour -- and only presses that have
+     * certainly landed count as dark: this player's own, in [done], and the ones [s]
+     * waits for.
+     */
+    private fun find(s: Int, previous: Int, done: Long): Double {
+        if (previous >= 0 && near[previous][s]) return 0.0
+        val known = done or ancestorMask[s]
+        var lit = 0
+        for (r in neighbours[s]) if (r and known == 0L) lit++
+        return if (lit <= 1) FIND_END else FIND_MIDDLE
+    }
+
     private val schedules = HashMap<Int, TeamPlan>()
 
     /** The split for [players] if it has already been worked out, without working it out. */
@@ -360,6 +426,7 @@ class TeamPlanner(private val plan: StrategyPlan) {
         private val lastStep = IntArray(players)
         private val lastShot = IntArray(players)
         private val walked = DoubleArray(players)
+        private val laneDone = LongArray(players)
         private val free = DoubleArray(players)
         private val finish = DoubleArray(n)
         private val common = LongArray(players)
@@ -371,6 +438,7 @@ class TeamPlanner(private val plan: StrategyPlan) {
             lastStep.fill(0)
             lastShot.fill(-1)
             walked.fill(0.0)
+            laneDone.fill(0L)
             free.fill(0.0)
             common.fill(-1L)
             var skipped = 0
@@ -384,19 +452,24 @@ class TeamPlanner(private val plan: StrategyPlan) {
                 step[s] = ready + 1
                 skipped += step[s] - pos[s] - 1
                 lastStep[p] = step[s]
-                // The same clock as [evaluate]: walk over, wait for what this press
-                // needs, press. The order already has every prerequisite finished.
+                // The same clock as [evaluate]: walk over and find the tile, wait for
+                // what this press needs, press. The order already has every
+                // prerequisite finished.
                 var start = free[p]
                 if (lastShot[p] >= 0) {
                     val w = walkTable[lastShot[p]][s]
                     walked[p] += w
                     start += w
                 }
+                val f = find(s, lastShot[p], laneDone[p])
+                walked[p] += f
+                start += f
                 for (d in prerequisites[s]) if (finish[d] > start) start = finish[d]
                 finish[s] = start + PRESS
                 free[p] = finish[s]
                 if (finish[s] > makespan) makespan = finish[s]
                 lastShot[p] = s
+                laneDone[p] = laneDone[p] or (1L shl s)
                 if (stage.isTimed) {
                     val next = common[p] and frameMask[s]
                     if (next == 0L) {
@@ -509,7 +582,7 @@ class TeamPlanner(private val plan: StrategyPlan) {
      * A press that waits on another player is held back until the press it waits for is
      * [SAFE_MARGIN] rounds behind it, unless there is nothing else to do. Ties go to a
      * press that shares the look of the board the player is already waiting for, then to
-     * the shortest walk, then to the clockwise number.
+     * the shortest walk and find, then to the clockwise number.
      */
     private fun arrange(player: IntArray, players: Int): State {
         val handsOff = BooleanArray(n)
@@ -528,6 +601,7 @@ class TeamPlanner(private val plan: StrategyPlan) {
         }
         val round = IntArray(n) { -1 }
         val lastShot = IntArray(players) { -1 }
+        val done = LongArray(players)
         val run = LongArray(players) { -1L }
         val order = IntArray(n)
         var placed = 0
@@ -558,7 +632,7 @@ class TeamPlanner(private val plan: StrategyPlan) {
                     val frame = if (run[p] and frameMask[s] != 0L) 0 else 1
                     // Close to its prerequisite first, then class, then the board's look.
                     val key = close * 100 + cls * 10 + frame
-                    val walk = if (lastShot[p] < 0) 0.0 else walkTable[lastShot[p]][s]
+                    val walk = (if (lastShot[p] < 0) 0.0 else walkTable[lastShot[p]][s]) + find(s, lastShot[p], done[p])
                     val better = best < 0 || key < bestKey || key == bestKey && (
                         walk < bestWalk - 1e-9 || walk < bestWalk + 1e-9 && rankOf[s] < rankOf[best]
                         )
@@ -572,6 +646,7 @@ class TeamPlanner(private val plan: StrategyPlan) {
                 round[best] = r
                 order[placed++] = best
                 lastShot[p] = best
+                done[p] = done[p] or (1L shl best)
                 val next = run[p] and frameMask[best]
                 run[p] = if (next == 0L) frameMask[best] else next
             }
@@ -708,15 +783,18 @@ class TeamPlanner(private val plan: StrategyPlan) {
     private class Eval(val makespan: Double, val travel: Double, val finish: DoubleArray)
 
     /**
-     * Runs the lanes in time -- a press takes [PRESS], walking takes a unit a cell, and a
-     * press cannot start before the presses it waits on have landed -- and reports when
-     * the last one lands and how far everyone walked. Null on a deadlock.
+     * Runs the lanes in time -- a press takes [PRESS], walking takes a unit a cell,
+     * finding a tile after a move [FIND_END] or [FIND_MIDDLE], and a press cannot start
+     * before the presses it waits on have landed -- and reports when the last one lands
+     * and how far everyone walked. Null on a deadlock.
      */
     private fun evaluate(lanes: List<List<Int>>): Eval? {
         val finish = DoubleArray(n) { -1.0 }
         val next = IntArray(lanes.size)
         val free = DoubleArray(lanes.size)
         val at = arrayOfNulls<Cell>(lanes.size)
+        val last = IntArray(lanes.size) { -1 }
+        val mine = LongArray(lanes.size)
         var travel = 0.0
         var done = 0
         while (done < n) {
@@ -729,9 +807,12 @@ class TeamPlanner(private val plan: StrategyPlan) {
                     val ready = dependencies[s].maxOfOrNull { finish[it] } ?: 0.0
                     val here = at[p]
                     val distance = if (here == null) 0.0 else walk(here, gunCell(s))
-                    finish[s] = maxOf(free[p] + distance, ready) + PRESS
+                    val found = find(s, last[p], mine[p])
+                    finish[s] = maxOf(free[p] + distance + found, ready) + PRESS
                     free[p] = finish[s]
                     at[p] = gunCell(s)
+                    last[p] = s
+                    mine[p] = mine[p] or (1L shl s)
                     travel += distance
                     next[p]++
                     done++
@@ -751,12 +832,32 @@ class TeamPlanner(private val plan: StrategyPlan) {
             if (others.isNotEmpty()) waits[s] = others.sorted()
         }
         val walked = shots.zipWithNext { a, b -> walk(gunCell(a), gunCell(b)) }.sum()
-        return Lane(player, shots, groupRuns(shots.map { plan.shots[it].frames }, stage.frameCount), waits, walked)
+        var done = 0L
+        var moves = 0
+        var middles = 0
+        for ((i, s) in shots.withIndex()) {
+            val found = find(s, if (i == 0) -1 else shots[i - 1], done)
+            if (i > 0 && found > 0) moves++
+            if (found == FIND_MIDDLE) middles++
+            done = done or (1L shl s)
+        }
+        return Lane(player, shots, groupRuns(shots.map { plan.shots[it].frames }, stage.frameCount), waits, walked, moves, middles)
     }
 
     companion object {
         /** A press, in cells walked. Pressing and watching the shot is a few strides' worth. */
         const val PRESS = 4.0
+
+        /**
+         * Finding a tile after a move to another part of the room, on top of the walk
+         * and the press, as timed in the room. A press in a row -- the next tile along,
+         * or the one after -- is the press and a step, five cells' worth. A move to a
+         * tile at the end of a row of guns, or on its own, takes about as long as five of
+         * those; to one in the middle of a row, where the player has to count along to
+         * find theirs, about ten.
+         */
+        const val FIND_END = 15.0
+        const val FIND_MIDDLE = 40.0
 
         /** Annealing moves per press. Each move orders and scores a whole split. */
         private const val SEARCH_STEPS_PER_PRESS = 200
@@ -777,7 +878,7 @@ class TeamPlanner(private val plan: StrategyPlan) {
         // these came out an eighth faster and a quarter less walking than an even split.
         /** When the last press lands: a moment of the team's time is worth three cells of anyone's walk. */
         private const val W_TIME = 3.0
-        /** Every cell walked, by anyone. */
+        /** Every cell walked, and every tile found after a move, by anyone. */
         private const val W_WALK = 1.0
         /** A step a player would stand waiting even at equal pace: a press's worth. */
         private const val W_SKIPPED = PRESS

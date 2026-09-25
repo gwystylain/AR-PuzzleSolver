@@ -19,7 +19,8 @@ import kotlin.random.Random
  * own order, and each shot has to land exactly where the plan says.
  *
  * The split itself is a search, and is held to the team's rules where they can be
- * checked outright: nobody crosses the room for a tile someone else is standing by;
+ * checked outright: nobody crosses the room for a tile someone else is standing by, or
+ * hunts for one in the middle of a row;
  * a chain is pressed by players standing at it; another player never makes a stage
  * slower; a player whose last press waited on another's fifth now waits on a first; two
  * boards and two players come out a board each; and every cross-lane wait is named.
@@ -99,9 +100,11 @@ class TeamPlannerTest {
         assertTrue(team.lanes.all { it.waitsFor.isEmpty() })
         // Nothing between the lanes, so both players count 1, 2, 3.
         assertEquals(listOf(listOf(1, 2, 3), listOf(1, 2, 3)), team.lanes.map { l -> l.shots.map { team.steps[it] } })
-        // Three presses each, nobody waiting: the chain is the whole stage, and its walk
-        // is (0,2) -> (2,0) -> (0,4), straight across the floor each time.
-        assertEquals(3 * TeamPlanner.PRESS + hypot(2.0, 2.0) + hypot(2.0, 4.0), team.makespan, 1e-9)
+        // Three presses each, nobody waiting: the chain is the whole stage. Its walk is
+        // (0,2) -> (2,0) -> (0,4), straight across the floor each time, and its tiles are
+        // found twice: the first, and (0,4) after the move down from (2,0). (2,0) is two
+        // along from (0,2), which is the next tile but one.
+        assertEquals(3 * TeamPlanner.PRESS + hypot(2.0, 2.0) + hypot(2.0, 4.0) + 2 * TeamPlanner.FIND_END, team.makespan, 1e-9)
         // With one player the chain still has to be walked in order.
         val solo = TeamPlanner(plan).schedule(1)
         val order = solo.lanes.single().shots.map { plan.shots[it].label }
@@ -158,31 +161,32 @@ class TeamPlannerTest {
         StrategySolver(StrategyStages.bundled(room).first { it.level == level && it.index == index }).solve()!!
 
     @Test
-    fun `a tile goes to whoever is next to it, not whoever is short of presses`() {
+    fun `nobody crosses the board or hunts for a tile mid-row`() {
         // Gridlock 4-4 for five players is the split that prompted this: with every
         // player held to three or four presses, one pressed two tiles on the bottom row
-        // and then crossed the room for (10,0), right beside another player's three on
-        // the top row. That player takes it now, and nobody crosses the board.
+        // and then crossed the room for (10,0), beside another player's three on the top
+        // row -- and that player started in the middle of the row. Even on the solver's
+        // own plan, with its hand-offs, nobody crosses and nobody starts mid-row now;
+        // the shipped split, of a plan chosen for the team, is StrategySplitsTest's.
         val plan = plan(StrategyRoom.GRIDLOCK, 4, 4)
         val team = TeamPlanner(plan).schedule(5)
         fun gun(s: Int) = plan.stage.guns[plan.shots[s].gun]
-        val top = team.lanes.first { lane -> lane.shots.any { gun(it).x == 10 && gun(it).y == 0 } }
-        assertEquals(listOf(7, 8, 9, 10), top.shots.map { gun(it) }.filter { it.y == 0 }.map { it.x }.sorted())
         for (lane in team.lanes) {
             val rows = lane.shots.map { gun(it).y }
             assertTrue("P${lane.player} crosses the board: $rows", !(0 in rows && plan.stage.height - 1 in rows))
+            assertEquals("P${lane.player} hunts mid-row", 0, lane.middles)
         }
     }
 
     @Test
     fun `a chain is pressed by players standing at it, not walked by one`() {
         // Gridlock 3-3 is six presses, each waiting on the one before, spread round the
-        // board. With five players each stands by their own and waits their turn, so the
-        // stage takes six presses back to back and barely a step -- a third of the time
-        // it takes one player to walk the chain, which is what the split falls back to if
-        // a wait is priced above the walking it saves.
+        // board. With five players each finds their own tile while the chain starts and
+        // waits their turn, so the stage takes one find and six presses back to back and
+        // barely a step -- a fraction of one player moving along the chain, which is what
+        // the split falls back to if a wait is priced above the moves it saves.
         val team = TeamPlanner(plan(StrategyRoom.GRIDLOCK, 3, 3)).schedule(5)
-        assertTrue("makespan ${team.makespan}", team.makespan <= 6 * TeamPlanner.PRESS + 1.0)
+        assertTrue("makespan ${team.makespan}", team.makespan <= TeamPlanner.FIND_END + 6 * TeamPlanner.PRESS + 1.0)
         assertTrue("travel ${team.travel}", team.travel <= 2.0)
     }
 
@@ -271,11 +275,13 @@ class TeamPlannerTest {
         // Level 1 stage 1: twelve guns, twelve targets, nothing depends on anything. Two
         // players should take a side each and never cross the room: five presses each
         // on the sides, one each on the top and bottom. A side is six rows end to end,
-        // and the top and bottom tiles are five or six cells from the nearest end of one.
+        // and the top and bottom tiles are five or six cells from the nearest end of one:
+        // a player finds their first tile and one more, after the move between the two.
         val plan = plans.first { it.stage.level == 1 && it.stage.index == 1 }
         val team = TeamPlanner(plan).schedule(2)
         assertTrue("travel ${team.travel}", team.travel <= 24.0)
-        assertTrue("makespan ${team.makespan}", team.makespan <= 6 * TeamPlanner.PRESS + 12.0)
+        assertTrue("makespan ${team.makespan}", team.makespan <= 6 * TeamPlanner.PRESS + 12.0 + 2 * TeamPlanner.FIND_END)
+        assertTrue(team.lanes.all { it.moves == 1 && it.middles == 0 })
         for (lane in team.lanes) {
             val xs = lane.shots.map { plan.stage.guns[plan.shots[it].gun].x }
             // Each lane lives on one side: all its side tiles share an x.
