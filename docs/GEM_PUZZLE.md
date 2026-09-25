@@ -451,8 +451,8 @@ There was a complete canvas-based implementation of Gems — a `GemAdapter` that
 lattice, read cells at grid coordinates, and a `GemMatcher` that solved against them. It
 is deleted, not disabled. It could never run: the exposure it needs is one ARCore will
 not deliver, and a lattice detector firing every detection pass for a mode that will
-never use its answer cost 21 ms a pass for nothing. `GemAdapter` survives as a name in
-the mode menu and declines everything else.
+never use its answer cost 21 ms a pass for nothing. `GemAdapter` survives as the Gems
+card on the landing page and declines everything else.
 
 `PuzzleAdapter.exposureHint` went with it. It existed so the canvas path could report
 how blown out the wall looked; the live path measures the same thing and hands it to the

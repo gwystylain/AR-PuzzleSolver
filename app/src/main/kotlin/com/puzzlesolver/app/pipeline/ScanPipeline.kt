@@ -30,11 +30,8 @@ import com.puzzlesolver.core.puzzle.gems.GemAdapter
 import com.puzzlesolver.core.puzzle.gems.GemPattern
 import com.puzzlesolver.core.puzzle.gems.GemScanner
 import com.puzzlesolver.core.puzzle.gems.GemTargets
-import com.puzzlesolver.core.puzzle.TemplateGlyphClassifier
-import com.puzzlesolver.core.puzzle.nonogram.NonogramAdapter
 import com.puzzlesolver.core.puzzle.terminal.TerminalAdapter
 import com.puzzlesolver.core.puzzle.terminal.TerminalScanner
-import com.puzzlesolver.core.puzzle.sudoku.SudokuAdapter
 import com.puzzlesolver.core.solve.SolveOutcome
 import com.puzzlesolver.core.surface.WallSurface
 import java.io.File
@@ -91,7 +88,6 @@ class ScanPipeline(
      * independently of surface creation, so a `lateinit` here is a crash waiting for a
      * cold start to happen.
      */
-    private val classifier by lazy { TemplateGlyphClassifier(atlas.templates) }
 
     /**
      * The four gems the user is hunting for, in Gems mode.
@@ -150,7 +146,7 @@ class ScanPipeline(
     /**
      * Which pose-free mode the live camera is being driven for.
      *
-     * Set from the mode menu rather than inferred from the source, because the source
+     * Set from the mode picked rather than inferred from the source, because the source
      * is the same `Camera2FrameSource` either way and only the user's choice separates
      * them.
      */
@@ -191,8 +187,6 @@ class ScanPipeline(
     private val registry: PuzzleRegistry by lazy {
         PuzzleRegistry(
             listOf(
-                SudokuAdapter(classifier),
-                NonogramAdapter(classifier),
                 BombAdapter(),
                 GemAdapter(),
                 TerminalAdapter(),
@@ -335,10 +329,10 @@ class ScanPipeline(
     val state = AtomicReference(UiState())
 
     /**
-     * One entry in the game-mode menu.
+     * One scanning mode, as the landing page offers it.
      *
-     * Built from the registry rather than listed in the UI, so a new solver appears in
-     * the menu by being registered and nothing else. That is the whole point of the
+     * Built from the registry rather than listed in the UI, so a new solver appears on
+     * the landing page by being registered and nothing else. That is the whole point of the
      * indirection -- the alternative is a hardcoded list that silently goes stale.
      */
     /** Which pose-free live mode the camera is being driven for, if any. */
@@ -376,7 +370,7 @@ class ScanPipeline(
         /**
          * Whether choosing this mode takes ARCore out of the picture.
          *
-         * Worth saying in the menu rather than leaving to be discovered: picking one of
+         * Worth saying on the landing page rather than leaving to be discovered: picking one of
          * these swaps the frame source, so recording, replay and the wall readout all
          * disappear from the HUD at the same moment. That is a surprising amount of the
          * app to lose without being told why.
@@ -832,7 +826,7 @@ class ScanPipeline(
                 // The window between the user picking a canvas mode and the frame source
                 // actually being swapped back to ARCore for it. Claiming a mode here is
                 // not harmless: falling through to the Gems publisher is what left the
-                // HUD showing the Gems capture button after a tap on Sudoku, which was
+                // HUD showing the Gems capture button after a tap on a canvas mode, which was
                 // visible on device before it was visible in any test.
                 LiveMode.NONE -> Unit
             }
@@ -1708,8 +1702,8 @@ class ScanPipeline(
      * Chooses the game mode, or hands the choice back to the evidence when [id] is null.
      *
      * Published immediately rather than waiting for the solver thread to acknowledge it:
-     * the menu closes on the tap, and a checkmark that lags a frame behind the tap reads
-     * as the button not having worked.
+     * the landing page clears on the tap, and a HUD that shows the old mode for a frame
+     * reads as the tap not having worked.
      */
     fun selectPuzzleMode(id: String?) {
         publish { it.copy(pinnedPuzzleId = id) }

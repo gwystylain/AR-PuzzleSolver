@@ -107,7 +107,7 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Whether the landing page is up. True at launch, cleared by any mode choice --
-     * from the page, the drawer or the debug broadcast alike -- and raised again by
+     * from the page or the debug broadcast alike -- and raised again by
      * Back from the HUD or a guide.
      *
      * It is an overlay, not a state of its own: whatever was running keeps running
@@ -127,6 +127,9 @@ class MainActivity : ComponentActivity() {
 
     /** The level each room was last on, so switching rooms and back keeps the place. */
     private var guideLevel by mutableStateOf<Map<StrategyRoom, Int>>(emptyMap())
+
+    /** Whether the HUD shows the debug panel; switched on the landing page, kept for the session. */
+    private var showDebugPanel by mutableStateOf(false)
 
     /** How many are playing; asked the first time a guide opens and kept for the session. */
     private var strategyPlayers by mutableStateOf<Int?>(null)
@@ -176,7 +179,7 @@ class MainActivity : ComponentActivity() {
      * Lets the debug controls be driven from adb instead of by tapping.
      *
      *   adb shell am broadcast -a com.puzzlesolver.app.DEBUG \
-     *       --ef flat 0.5 --ei expect 9 --es pin sudoku --ez rescan true
+     *       --ef flat 0.5 --ei expect 9 --es pin bombs --ez rescan true
      *
      * Worth having beyond convenience: tapping requires knowing where the buttons are,
      * and Compose does not publish its nodes to uiautomator, so the alternative is
@@ -401,8 +404,8 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             PuzzleSolverTheme {
-                // Before the HUD, so the drawer's own Back -- which closes it -- wins
-                // while it is open. Handlers composed later take precedence.
+                // Back from the HUD or a guide goes to the landing page, which is the
+                // one place a room is picked: there is no menu to swipe in any more.
                 BackHandler(enabled = !showLanding) { showLanding = true }
                 Box(Modifier.fillMaxSize()) {
                     AndroidView(factory = { glView }, modifier = Modifier.fillMaxSize())
@@ -430,8 +433,6 @@ class MainActivity : ComponentActivity() {
                         onPickVideo = { pickVideo.launch(arrayOf("video/*")) },
                         onOpenLastRecording = { openLastRecording() },
                         onReturnToLive = { startLiveSource() },
-                        onSelectPuzzleMode = { selectPuzzleMode(it) },
-                        puzzleModes = pipeline.puzzleModes,
                         gemTargets = gemTargets,
                         onSetGemTarget = { slot, pattern ->
                             pipeline.setGemTarget(slot, pattern)
@@ -457,8 +458,8 @@ class MainActivity : ComponentActivity() {
                         onResetCamera = { pipeline.resetCamera() },
                         onForceFlatWall = { pipeline.setForcedFlatWall(it) },
                         onExpectCells = { pipeline.setExpectedCells(it) },
+                        showDebug = showDebugPanel,
                         guideRoom = guideRoom,
-                        onSelectGuide = { enterGuide(it) },
                         guideContent = { room ->
                             val levels = guideLevels.getValue(room)
                             StrategyScreen(
@@ -484,6 +485,8 @@ class MainActivity : ComponentActivity() {
                         visible = showLanding,
                         onSelectMode = { selectPuzzleMode(it) },
                         onSelectGuide = { enterGuide(it) },
+                        debug = showDebugPanel,
+                        onToggleDebug = { showDebugPanel = !showDebugPanel },
                     )
                 }
             }

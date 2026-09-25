@@ -82,10 +82,11 @@ behave:
 ./gradlew :core:test
 ```
 
-All 31 pass. If you break one, treat an assertion failure as information about the
-implementation rather than about the test — the maths in `WallSurfaceTest` and
-`SudokuSolverTest` is derived from first principles and stated in the comments, so a
-failure there is a real defect worth chasing.
+They all pass. If you break one, treat an assertion failure as information about the
+implementation rather than about the test — the maths in `WallSurfaceTest` is derived
+from first principles and stated in the comments, and `StrategySolverTest` replays every
+plan through a simulator written from the room's rules, so a failure there is a real
+defect worth chasing.
 
 On Windows the wrapper needs a JDK it can find. Set it once:
 
@@ -149,6 +150,6 @@ to see whether the geometry or the detection is at fault.
 `GlUtil.checkError` is called after each GL phase. It logs rather than throws, so a
 shader problem shows up as a stream of errors instead of a crash; grep for `GL error`.
 
-Turn on the **Debug panel** from the Mode menu (swipe in from the left edge) for
+Turn on the **Debug panel** at the foot of the landing page (Back from the HUD returns there) for
 per-frame and per-solve timings, coverage percentage, and buttons to force a puzzle type — useful when identification is picking
 the wrong adapter and you want to isolate whether the reader or the identifier is wrong.

@@ -15,26 +15,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalDrawerSheet
-import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.NavigationDrawerItem
-import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,7 +37,6 @@ import com.puzzlesolver.app.frame.FrameSource
 import com.puzzlesolver.app.pipeline.ScanPipeline
 import com.puzzlesolver.core.puzzle.gems.GemPattern
 import com.puzzlesolver.core.puzzle.strategy.StrategyRoom
-import kotlinx.coroutines.launch
 
 /**
  * The scanning HUD.
@@ -62,8 +51,6 @@ fun ScanScreen(
     state: ScanPipeline.UiState,
     isRecording: Boolean,
     replayName: String?,
-    puzzleModes: List<ScanPipeline.PuzzleMode>,
-    onSelectPuzzleMode: (String?) -> Unit,
     gemTargets: List<GemPattern>,
     onSetGemTarget: (Int, GemPattern) -> Unit,
     onNudgeExposure: (Boolean) -> Unit,
@@ -84,52 +71,24 @@ fun ScanScreen(
     onReturnToLive: () -> Unit,
     onForceFlatWall: (Float) -> Unit,
     onExpectCells: (Int?) -> Unit,
+    /** Whether the debug panel is on: switched on the landing page, kept for the session. */
+    showDebug: Boolean,
     // The guide rooms -- Strategy, Gridlock -- are game modes with no camera behind
-    // them. They are chosen from the same menu as the scanning modes, because to the
+    // them. They are picked on the landing page with the scanning modes, because to the
     // user it is the same decision -- which room am I standing in -- and a guide
     // replaces the HUD outright rather than hiding pieces of it, since none of the HUD
     // is about anything it does.
     guideRoom: StrategyRoom? = null,
-    onSelectGuide: (StrategyRoom) -> Unit = {},
     guideContent: @Composable (StrategyRoom) -> Unit = {},
 ) {
-    var showDebug by remember { mutableStateOf(false) }
     // Closed to begin with, and remembered for the session. The card is tall enough that
     // leaving it open is a decision the user should make once, not one the app makes for
     // them every time the mode changes.
     var showCamera by remember { mutableStateOf(false) }
-    val drawerState = rememberDrawerState(DrawerValue.Closed)
-    val scope = rememberCoroutineScope()
 
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        drawerContent = {
-            GameModeDrawer(
-                modes = puzzleModes,
-                state = state,
-                showDebug = showDebug,
-                guideRoom = guideRoom,
-                onSelect = {
-                    onSelectPuzzleMode(it)
-                    scope.launch { drawerState.close() }
-                },
-                onSelectGuide = {
-                    onSelectGuide(it)
-                    scope.launch { drawerState.close() }
-                },
-                onToggleDebug = {
-                    showDebug = !showDebug
-                    // Closes on the flip, like a mode pick does. The panel it turns on
-                    // is behind the sheet, so leaving the sheet open would hide the only
-                    // confirmation that the toggle did anything.
-                    scope.launch { drawerState.close() }
-                },
-            )
-        },
-    ) {
     if (guideRoom != null) {
         guideContent(guideRoom)
-        return@ModalNavigationDrawer
+        return
     }
     Box(Modifier.fillMaxSize()) {
         // Under the HUD panels and over the camera: the rings have to be on top of the
@@ -293,7 +252,6 @@ fun ScanScreen(
             }
         }
     }
-    }
 }
 
 /**
@@ -341,121 +299,6 @@ private fun CameraToggle(
             },
             fontSize = 13.sp,
         )
-    }
-}
-
-/**
- * The game-mode flyout, opened by swiping in from the left edge.
- *
- * The list comes from the registry rather than from here, so a new solver appears in
- * the menu by being registered and nothing else. A hardcoded list would be one more
- * place to forget.
- *
- * It is also where the session's settings live -- currently the debug panel. Anything
- * chosen once and then left alone belongs here rather than on the HUD, which is read
- * over the top of the wall being scanned and has no room for buttons that are not
- * about this frame.
- *
- * Every entry pins a mode. Identification is still what the pipeline does until one is
- * picked, but it is not offered here: a menu item that hands the choice back to the
- * evidence reads as a mode in its own right, and one that is never the one wanted.
- */
-@Composable
-private fun GameModeDrawer(
-    modes: List<ScanPipeline.PuzzleMode>,
-    state: ScanPipeline.UiState,
-    showDebug: Boolean,
-    guideRoom: StrategyRoom?,
-    onSelect: (String?) -> Unit,
-    onSelectGuide: (StrategyRoom) -> Unit,
-    onToggleDebug: () -> Unit,
-) {
-    ModalDrawerSheet {
-        Column(
-            Modifier
-                .verticalScroll(rememberScrollState())
-                .padding(vertical = 12.dp)
-        ) {
-            Text(
-                "Game mode",
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 18.sp,
-                modifier = Modifier.padding(start = 28.dp, top = 8.dp, bottom = 12.dp),
-            )
-
-            for (mode in modes) {
-                NavigationDrawerItem(
-                    label = {
-                        Column {
-                            Text(mode.displayName)
-                            val note = when {
-                                mode.needsColour -> "needs colour capture"
-                                mode.needsLiveCamera -> "live camera -- no AR, no replay"
-                                else -> null
-                            }
-                            if (note != null) {
-                                Text(note, fontSize = 12.sp, color = Color(0xFF9AA6B2))
-                            }
-                        }
-                    },
-                    selected = guideRoom == null && state.pinnedPuzzleId == mode.id,
-                    onClick = { onSelect(mode.id) },
-                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
-                )
-            }
-
-            // Not from the registry, because they are not solvers: these rooms' stages
-            // are fixed, so the answers are worked out from a transcription and the
-            // camera stays off. They sit with the scanning modes all the same, since
-            // picking a room is one decision however the app then goes about it.
-            for (room in StrategyRoom.entries) {
-                NavigationDrawerItem(
-                    label = {
-                        Column {
-                            Text(room.displayName)
-                            Text(
-                                when (room) {
-                                    StrategyRoom.STRATEGY -> "no camera -- the room's solutions, split between players"
-                                    StrategyRoom.GRIDLOCK -> "no camera -- two boards, split between players"
-                                },
-                                fontSize = 12.sp,
-                                color = Color(0xFF9AA6B2),
-                            )
-                        }
-                    },
-                    selected = guideRoom == room,
-                    onClick = { onSelectGuide(room) },
-                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
-                )
-            }
-
-            HorizontalDivider(Modifier.padding(vertical = 8.dp, horizontal = 16.dp))
-
-            // In the menu rather than on the HUD, where it used to be a button. It is a
-            // setting -- flipped once and then lived with -- and the HUD is for things
-            // read every frame with a phone held at arm's length. A permanent button for
-            // an occasional decision costs a strip of wall on every scan.
-            NavigationDrawerItem(
-                label = {
-                    Column {
-                        Text("Debug panel")
-                        Text(
-                            if (showDebug) {
-                                "on -- timings, coverage, wall and grid overrides"
-                            } else {
-                                "off"
-                            },
-                            fontSize = 12.sp,
-                            color = Color(0xFF9AA6B2),
-                        )
-                    }
-                },
-                selected = showDebug,
-                onClick = onToggleDebug,
-                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
-            )
-        }
     }
 }
 
@@ -516,8 +359,9 @@ private fun StatusCard(state: ScanPipeline.UiState, replayName: String?) {
 private fun SolvedBanner(state: ScanPipeline.UiState) {
     // Gems has no "solved" moment -- it is a live filter, and its answer is a count
     // that keeps moving as the user pans. Giving it the same green "Solved early"
-    // banner as a sudoku would claim something that is not true and bury the one
-    // number it actually has to report. So a solution that names itself gets to.
+    // banner as a puzzle answered from a partial scan would claim something that is
+    // not true and bury the one number it actually has to report. So a solution that
+    // names itself gets to.
     if (state.solutionLabel.isNotEmpty()) {
         Panel(background = Color(0xCC0B2E3D)) {
             Text(

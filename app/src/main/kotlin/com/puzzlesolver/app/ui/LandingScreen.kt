@@ -75,10 +75,10 @@ import kotlin.math.sin
  * One screen, one question -- which room are you standing in -- answered with a tap on
  * a card. It is drawn over the HUD rather than instead of it: the camera and the
  * pipeline boot underneath exactly as they always did, so the mode picked here is live
- * the moment the cards clear. The drawer remains the way to change rooms afterwards;
- * this is for the first choice, when nothing on the HUD means anything yet.
+ * the moment the cards clear. It is also the only way to change rooms afterwards: Back
+ * from the HUD or a guide comes back here.
  *
- * The entries come from the same registry as the drawer, plus the guide rooms, so a new
+ * The entries come from the pipeline's registry, plus the guide rooms, so a new
  * solver shows up here by being registered. Its colour, line and glyph are looked up by
  * id; a mode without an entry in that table gets a plain tile rather than being left off.
  *
@@ -93,6 +93,9 @@ fun LandingScreen(
     visible: Boolean,
     onSelectMode: (String) -> Unit,
     onSelectGuide: (StrategyRoom) -> Unit,
+    /** Whether the HUD shows the debug panel, switched at the foot of the page. */
+    debug: Boolean,
+    onToggleDebug: () -> Unit,
 ) {
     AnimatedVisibility(
         visible = visible,
@@ -103,9 +106,14 @@ fun LandingScreen(
     ) {
         val entries = remember(modes) {
             modes.map { m ->
-                Entry(m.id, m.displayName, camera = true, LOOKS[m.id] ?: PLAIN) { onSelectMode(m.id) }
+                val note = when {
+                    m.needsLiveCamera -> "live camera -- no AR, no replay"
+                    m.needsColour -> "needs colour capture"
+                    else -> null
+                }
+                Entry(m.id, m.displayName, camera = true, LOOKS[m.id] ?: PLAIN, note) { onSelectMode(m.id) }
             } + StrategyRoom.entries.map { r ->
-                Entry(r.id, r.displayName, camera = false, LOOKS[r.id] ?: PLAIN) { onSelectGuide(r) }
+                Entry(r.id, r.displayName, camera = false, LOOKS[r.id] ?: PLAIN, null) { onSelectGuide(r) }
             }
         }
 
@@ -122,8 +130,8 @@ fun LandingScreen(
             Modifier
                 .fillMaxSize()
                 .background(Color(0xFF0B0E11))
-                // Swallows every touch. Without it the drawer's edge swipe and the HUD's
-                // buttons underneath would still answer to fingers meant for the cards.
+                // Swallows every touch. Without it the HUD's buttons underneath would
+                // still answer to fingers meant for the cards.
                 .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } },
         ) {
             Aurora(Modifier.fillMaxSize())
@@ -152,9 +160,38 @@ fun LandingScreen(
                     RoomCard(entry, index++, chosen) { chosen = entry.id }
                     Spacer(Modifier.height(10.dp))
                 }
+                Spacer(Modifier.height(14.dp))
+                DebugSwitch(debug, onToggleDebug)
                 Spacer(Modifier.height(24.dp))
             }
         }
+    }
+}
+
+/**
+ * The debug panel's switch, small and at the foot of the page: a setting flipped once
+ * and lived with, which used to sit in the swipe-in menu with the modes. It is here
+ * because this is now the one screen every room is reached from.
+ */
+@Composable
+private fun DebugSwitch(on: Boolean, onToggle: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(Color(0x221B222A), RoundedCornerShape(12.dp))
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Debug panel", color = Color(0xFFB9C4CF), fontSize = 14.sp)
+            Text(
+                if (on) "on -- timings, coverage, wall and grid overrides" else "off",
+                color = Color(0xFF6F7B87),
+                fontSize = 12.sp,
+            )
+        }
+        Text(if (on) "On" else "Off", color = if (on) Color(0xFF4C8DFF) else Color(0xFF6F7B87), fontSize = 13.sp)
     }
 }
 
@@ -169,6 +206,8 @@ private class Entry(
     val name: String,
     val camera: Boolean,
     val look: Look,
+    /** What picking it changes about the app, when that would otherwise be a surprise. */
+    val note: String?,
     val pick: () -> Unit,
 )
 
@@ -182,8 +221,6 @@ private class Look(
 )
 
 private val LOOKS: Map<String, Look> = mapOf(
-    "sudoku" to Look(Color(0xFF4C8DFF), "Answered as soon as the clues allow", 2700) { p, c -> sudokuGlyph(p, c) },
-    "nonogram" to Look(Color(0xFF33D1C9), "Rows and columns, filled in for you", 4200) { p, c -> nonogramGlyph(p, c) },
     BombAdapter.ID to Look(Color(0xFFFF6B4A), "Every mine on the wall, before you step on one", 2400) { p, c -> minesGlyph(p, c) },
     GemAdapter.ID to Look(Color(0xFFE066FF), "Rings every gem that matches your targets", 3000) { p, c -> gemsGlyph(p, c) },
     TerminalAdapter.ID to Look(Color(0xFFFFC53D), "The two lowest numbers, live", 2100) { p, c -> terminalGlyph(p, c) },
@@ -350,6 +387,7 @@ private fun RoomCard(entry: Entry, index: Int, chosen: String?, onChoose: () -> 
                 if (entry.look.tagline.isNotEmpty()) {
                     Text(entry.look.tagline, color = Color(0xFF9AA6B2), fontSize = 12.sp)
                 }
+                entry.note?.let { Text(it, color = Color(0xFF6F7B87), fontSize = 11.sp) }
             }
             Spacer(Modifier.width(8.dp))
             Text("›", color = accent, fontSize = 26.sp)
@@ -364,57 +402,6 @@ private fun RoomCard(entry: Entry, index: Int, chosen: String?, onChoose: () -> 
 // shared with the real overlays.
 
 private fun DrawScope.cellInset(): Float = 1.5.dp.toPx()
-
-/** A 3x3 grid with the cells lighting one by one, the way the solver fills them. */
-private fun DrawScope.sudokuGlyph(phase: Float, accent: Color) {
-    val s = size.minDimension
-    val cell = s / 3f
-    val inset = cellInset()
-    val k = (phase * 9f).toInt().coerceIn(0, 8)
-    for (c in 0..k) {
-        val alpha = if (c == k) 1f else 0.35f
-        drawRoundRect(
-            accent.copy(alpha = alpha),
-            Offset(c % 3 * cell + inset, c / 3 * cell + inset),
-            Size(cell - 2 * inset, cell - 2 * inset),
-            CornerRadius(inset),
-        )
-    }
-    val line = Color(0xFFDDE5EC)
-    for (i in 0..3) {
-        val alpha = if (i == 0 || i == 3) 0.9f else 0.4f
-        val w = if (i == 0 || i == 3) 2.dp.toPx() else 1.dp.toPx()
-        drawLine(line.copy(alpha = alpha), Offset(i * cell, 0f), Offset(i * cell, s), w)
-        drawLine(line.copy(alpha = alpha), Offset(0f, i * cell), Offset(s, i * cell), w)
-    }
-}
-
-/** A 5x5 picture revealing itself cell by cell, holding, then clearing for another go. */
-private fun DrawScope.nonogramGlyph(phase: Float, accent: Color) {
-    val heart = intArrayOf(
-        0, 1, 0, 1, 0,
-        1, 1, 1, 1, 1,
-        1, 1, 1, 1, 1,
-        0, 1, 1, 1, 0,
-        0, 0, 1, 0, 0,
-    )
-    val s = size.minDimension
-    val cell = s / 5f
-    val inset = cellInset()
-    val shown = when {
-        phase > 0.88f -> 0
-        else -> ((phase / 0.62f).coerceAtMost(1f) * 25f).toInt()
-    }
-    for (i in 0 until 25) {
-        val on = heart[i] == 1 && i < shown
-        drawRoundRect(
-            if (on) accent else Color(0x33DDE5EC),
-            Offset(i % 5 * cell + inset, i / 5 * cell + inset),
-            Size(cell - 2 * inset, cell - 2 * inset),
-            CornerRadius(inset),
-        )
-    }
-}
 
 /** A wall of buttons with one mine glowing and hopping about. */
 private fun DrawScope.minesGlyph(phase: Float, accent: Color) {

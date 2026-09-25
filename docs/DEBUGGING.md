@@ -55,7 +55,7 @@ after the interesting bit.
    recorded camera and IMU streams, so poses, feature points and depth behave exactly as
    they did in front of you. That makes it a faithful regression test of the whole
    stack, and the only artifact that lets a fix be *proven* rather than argued.
-2. **Swipe in from the left edge to open the Mode menu, and pick Mines.** Identification should manage on its own, but
+2. **Pick Mines on the landing page** (Back from the HUD returns there). Identification should manage on its own, but
    pinning removes one variable, and a half-scanned board is exactly when the evidence
    is thinnest.
 3. **Pan slowly, and pan the whole wall.** The solver is `REQUIRES_FULL_SCAN` and will
@@ -71,7 +71,7 @@ both live state. Killing the app first throws away the two most useful artifacts
 
 ## In the room, on the gem wall
 
-1. **Swipe in from the left edge to open the Mode menu, and pick Gems.** Picking it applies the LED-wall camera preset
+1. **Pick Gems on the landing page** (Back from the HUD returns there). Picking it applies the LED-wall camera preset
    immediately, which is the single thing most likely to decide whether this works; the
    auto-exposure loop then starts from there rather than from whatever the room made the
    camera do.

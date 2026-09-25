@@ -59,14 +59,16 @@ a guess.
 The distinction you asked for is explicit in the type system, as
 `SolutionPolicy`:
 
-| Policy | Meaning | Reference implementation |
+| Policy | Meaning | Used by |
 | --- | --- | --- |
-| `UNIQUE_COMPLETION_SUFFICES` | Once the clues seen so far admit exactly one completion, unseen clues cannot change it. Answer immediately. | Sudoku |
-| `REQUIRES_FULL_SCAN` | Every clue is load-bearing; an unseen one can still flip the answer. Wait. | Nonogram |
+| `UNIQUE_COMPLETION_SUFFICES` | Once the clues seen so far admit exactly one completion, unseen clues cannot change it. Answer immediately. | Nothing at present — a sudoku would be |
+| `REQUIRES_FULL_SCAN` | Every clue is load-bearing; an unseen one can still flip the answer. Wait. | Mines |
 
-Sudoku is answered the moment its read clues become uniquely completable — typically
-long before you have panned the whole wall. A nonogram refuses until the board is
-fully covered, and says so in the HUD while it waits.
+A puzzle like sudoku could be answered the moment its read clues become uniquely
+completable — typically long before the whole wall has been panned. The engine still
+supports that, though no puzzle in the app uses it since the sudoku and nonogram modes
+were removed. Mines refuses until the board is fully covered, and says so in the HUD
+while it waits.
 
 ## The three rooms
 
@@ -147,17 +149,13 @@ done the same thing live on the phone.
 
 The two things that will need real-world tuning rather than debugging:
 
-- **Glyph classification.** The template matcher in `TemplateGlyphClassifier` works
-  against digits rendered in the device's own font. If your puzzles use a distinctive
-  typeface, accuracy will want either better templates or a small TFLite model. The
-  interface (`GlyphClassifier`) is a one-method swap. Terminal has already taken the
-  first of those roads and ships templates built from the wall's own digits, which took
-  it from 46 misread digits in 1860 to 2 — see
-  [docs/TERMINAL_PUZZLE.md](docs/TERMINAL_PUZZLE.md).
-- **Your actual puzzle type.** Sudoku and nonogram are in as references for the two
-  policies. Whatever your puzzles really are, they plug in as a `PuzzleAdapter`
-  without touching capture, geometry or rendering — see
-  [docs/PUZZLE_PLUGINS.md](docs/PUZZLE_PLUGINS.md).
+- **Glyph classification.** The template matcher in `TemplateGlyphClassifier` is only as
+  good as its templates. Terminal ships templates built from the wall's own digits,
+  which took it from 46 misread digits in 1860 to 2 — see
+  [docs/TERMINAL_PUZZLE.md](docs/TERMINAL_PUZZLE.md). A new digit puzzle would want the
+  same, or a small TFLite model behind the one-method `GlyphClassifier` interface.
+- **Another puzzle type.** A new wall plugs in as a `PuzzleAdapter` without touching
+  capture, geometry or rendering — see [docs/PUZZLE_PLUGINS.md](docs/PUZZLE_PLUGINS.md).
 
 ## Testing against recordings
 
@@ -204,8 +202,6 @@ core/                      pure JVM, no Android -- unit-testable in milliseconds
   grid/                    GridModel, GridDetector
   solve/                   IncrementalSolver, SolveOutcome, SolutionPolicy
   puzzle/                  PuzzleAdapter, cell reading, glyph classification
-    sudoku/                reference: answers from a partial scan
-    nonogram/              reference: requires the full scan
     bombs/                 the mines wall -- see docs/BOMB_PUZZLE.md
     gems/                  the gem wall, read per frame with no pose at all
                            -- see docs/GEM_PUZZLE.md

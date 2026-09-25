@@ -138,7 +138,9 @@ stalls capture.
 
 ## Solving from a partial scan
 
-This is the part worth being careful about, so here is the argument in full for sudoku.
+No puzzle in the app answers early at present -- the sudoku and nonogram modes that
+showed the two policies have been removed -- but the engine still supports it, and it is
+the part worth being careful about, so here is the argument in full, for sudoku.
 
 A well-posed sudoku has exactly one completion. Suppose we have read only some of its
 givens, and that subset already admits exactly one completion **C**. Every unread given
@@ -158,22 +160,22 @@ Two consequences worth stating plainly:
   cheaper than exhausting the space, which is what makes "still ambiguous" a fast
   answer and lets the loop go back to waiting for more wall.
 
-`SudokuSolverTest` pins this down using the fact that **17 is the proven minimum clue
-count** for a uniquely solvable sudoku: with all 17 read, the solver must answer; with
-any 16 of them, there are provably at least two completions and it must refuse. That is
-a mathematically guaranteed boundary rather than a hand-tuned threshold.
+The way to test it is with a boundary the mathematics fixes rather than one chosen by
+hand: **17 is the proven minimum clue count** for a uniquely solvable sudoku, so with
+all 17 read a solver must answer, and with any 16 of them there are provably at least
+two completions and it must refuse.
 
-Nonograms get the opposite treatment. Every clue constrains a whole line, and an unseen
-clue can flip cells anywhere along it; a partially read nonogram is not an
-under-determined nonogram but a *different, under-constrained puzzle* whose answers
-generally have nothing to do with the real one. So `NonogramSolver` declares
-`REQUIRES_FULL_SCAN` and refuses until the pipeline reports the board covered, reporting
-how many clue lines are still missing while it waits.
+Everything else gets the opposite treatment, `REQUIRES_FULL_SCAN`. In a nonogram every
+clue constrains a whole line, and an unseen clue can flip cells anywhere along it; a
+partially read one is not an under-determined nonogram but a *different,
+under-constrained puzzle*. Mines is the same: a mine the scan has not reached yet
+changes the counts around it. So it refuses until the pipeline reports the board
+covered.
 
 ## Handling misreads
 
 A contradiction is treated as evidence of a bad glyph read, not a bad puzzle — because
-it almost always is. The solver returns the cells it suspects (for sudoku, the
+it almost always is. The solver returns the cells it suspects (for a sudoku, say, the
 lowest-confidence givens, or the specific conflicting peers), and `PuzzleEngine` clears
 those cells so they are re-read from whatever better pixels have arrived since. Cells
 whose canvas coverage has *improved* materially are also re-opened, since a better look

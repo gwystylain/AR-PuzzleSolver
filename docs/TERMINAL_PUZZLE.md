@@ -333,8 +333,8 @@ reading in `upside=`.
   turns red saying `Camera !` when the sensor is ignoring what it was asked for. The card
   opens upward out of it.
 - No Rescan, New wall, Record or Replay. There is no canvas to rescan and no tracked
-  geometry to record, and the mode menu says `live camera -- no AR, no replay` next to
-  the entry so that is not a surprise.
+  geometry to record, and its card on the landing page says `live camera -- no AR, no
+  replay` so that is not a surprise.
 
 Logging starts by itself when the mode becomes active, as it does for Gems, and for the
 same reason: there is one trip to the room.

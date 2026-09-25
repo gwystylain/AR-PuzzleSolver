@@ -167,7 +167,7 @@ class PuzzleEngine(
 
     fun isPinned(): Boolean = registry.pinned
 
-    /** Every puzzle type this build can solve, for the mode menu. */
+    /** Every puzzle type this build can solve, for the landing page to offer. */
     fun availableAdapters(): List<PuzzleAdapter> = registry.all()
 
     fun pinAdapter(id: String) {
@@ -187,10 +187,10 @@ class PuzzleEngine(
      * Builds a solver, tolerating adapters that reject the detected grid.
      *
      * Necessary because pinning a puzzle type bypasses `identify`, which is normally
-     * what guarantees the grid suits the adapter. Forcing sudoku onto an 11x12 grid
-     * reaches `SudokuSolver`'s perfect-square requirement and throws -- and since this
-     * runs on the solver thread, an uncaught throw there takes the thread down and the
-     * app silently stops solving for the rest of the session.
+     * what guarantees the grid suits the adapter. A solver that needs a particular
+     * grid -- square, or a size it knows -- can throw when forced onto another, and
+     * since this runs on the solver thread, an uncaught throw there takes the thread
+     * down and the app silently stops solving for the rest of the session.
      */
     private fun createSolverOrNull(a: PuzzleAdapter, g: GridModel): IncrementalSolver? =
         try {

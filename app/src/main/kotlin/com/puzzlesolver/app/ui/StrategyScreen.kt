@@ -25,7 +25,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.PagerState
-import androidx.compose.foundation.pager.VerticalPager
+import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -81,7 +81,7 @@ import kotlin.math.abs
  * the screen -- on the floor a player wants "my third", not "tile 11".) It is read
  * on a phone in one hand while the other hand presses tiles, which drives the layout:
  * the level is a row of big buttons, one stage fills the screen, the next stage is a
- * swipe up, the board stays put while the presses scroll under it, the presses stay
+ * swipe to the left, the board stays put while the presses scroll under it, the presses stay
  * scrolled to the same player from one stage to the next, and every press is a chip big
  * enough to hit with a thumb.
  *
@@ -150,7 +150,9 @@ fun StrategyScreen(
                 // than at whatever page number the last level happened to be on.
                 val pager = rememberPagerState(pageCount = { splits.size })
                 LaunchedEffect(level) { pager.scrollToPage(0) }
-                VerticalPager(
+                // Sideways, so turning the page and scrolling the lanes -- up and down --
+                // are never the same gesture.
+                HorizontalPager(
                     state = pager,
                     modifier = Modifier.fillMaxSize(),
                     key = { "$level-$it" },
@@ -251,7 +253,7 @@ private fun StagePage(
 ) {
     val stage = splits.stage
     // Worked out ahead of time and bundled; all that happens here is working out the
-    // steps and waits from the stored lanes, a millisecond's work.
+    // waits and timing from the stored lanes, a millisecond's work.
     val team = remember(splits, players) { splits.forPlayers(players) }
     // The plan this split is of, which for this many players may not be the solver's
     // first: another gun taking another tile can split better. Everything below is drawn
@@ -277,10 +279,9 @@ private fun StagePage(
                     if (at != lanes.scrolledTo(team)) at.position(team).let { (i, o) -> lanes.requestScrollToItem(i, o) }
                 }
         }
-        // On screen, pass on where the lanes are left once a scroll of them stops. A
-        // swipe that starts on the lanes runs them to their end before it reaches the
-        // pager, so first see where the pager comes to rest: if the swipe turned the
-        // page, it was not a scroll of these lanes, just a swipe that passed through them.
+        // On screen, pass on where the lanes are left once a scroll of them stops -- once
+        // the pager has come to rest, and only if it rested here: a slanting swipe can
+        // nudge the lanes on its way to the next stage.
         while (true) {
             snapshotFlow { lanes.isScrollInProgress }.first { it }
             snapshotFlow { lanes.isScrollInProgress }.first { !it }
@@ -333,6 +334,13 @@ private fun StagePage(
         }
     }
 }
+
+/**
+ * A press's number in its player's own count: their first is 1, their second 2, one after
+ * another. A press that has to wait for another player's is numbered in turn like the
+ * rest; the "after P1 2" under its chip is what says to wait.
+ */
+private fun TeamPlan.numberOf(shot: Int): Int = lanes.first { shot in it.shots }.shots.indexOf(shot) + 1
 
 private fun laneGroupOf(team: TeamPlan, shot: Int): ShotGroup {
     val lane = team.lanes.first { shot in it.shots }
@@ -475,7 +483,7 @@ private fun Chip(
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                "${team.steps[shot]}",
+                "${team.numberOf(shot)}",
                 color = Color(0xFF1A1200),
                 fontWeight = FontWeight.Bold,
                 fontSize = 17.sp,
@@ -485,7 +493,7 @@ private fun Chip(
         // Only the latest per player: each presses in order, so waiting for someone's 2
         // is already waiting for their 1.
         val latest = waitsFor.groupBy { team.playerOf(it) }
-            .mapValues { (_, ws) -> ws.maxOf { team.steps[it] } }
+            .mapValues { (_, ws) -> ws.maxOf { team.numberOf(it) } }
             .toSortedMap()
         for ((player, step) in latest) {
             Text(
@@ -564,8 +572,8 @@ private fun Panel(
     val stage = plan.stage
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
-    // Gun index -> the player pressing it and their step number. A gun no lane presses
-    // is a spare: drawn plain orange with no number, so nobody goes looking for it.
+    // Gun index -> the player pressing it and its number in their count. A gun no lane
+    // presses is a spare: drawn plain orange with no number, so nobody goes looking for it.
     val owner = remember(team) {
         IntArray(stage.guns.size) { -1 }.also { o ->
             for (lane in team.lanes) for (s in lane.shots) o[plan.shots[s].gun] = lane.player
@@ -573,7 +581,7 @@ private fun Panel(
     }
     val stepOf = remember(team) {
         IntArray(stage.guns.size) { 0 }.also { o ->
-            for (s in plan.shots.indices) o[plan.shots[s].gun] = team.steps[s]
+            for (lane in team.lanes) lane.shots.forEachIndexed { i, s -> o[plan.shots[s].gun] = i + 1 }
         }
     }
     // Stage column -> column on screen, or -1 where it is not drawn.

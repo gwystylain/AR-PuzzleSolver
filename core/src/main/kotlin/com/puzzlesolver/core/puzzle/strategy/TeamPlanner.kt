@@ -65,8 +65,9 @@ class TeamPlan(
      * A press is numbered one past the later of the player's previous press and every
      * press it waits on, so two players with nothing between them both read 1, 2, 3,
      * while a player whose second press needs the other's second reads 1, 3, 4: the
-     * gap is the wait, and the number says when. This is what the board and the chips
-     * show, since a player out on the floor wants "my third" and not "tile 11".
+     * gap is the wait, and the number says when. The planner scores waits by these; the
+     * guide numbers each player's presses 1, 2, 3 in turn instead, and says under a
+     * chip whose press it waits for.
      */
     val steps: IntArray by lazy {
         val out = IntArray(plan.shots.size) { 0 }

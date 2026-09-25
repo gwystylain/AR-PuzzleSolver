@@ -1,7 +1,9 @@
 # Adding a puzzle type
 
-Sudoku and nonogram are in the tree as references for the two solution policies. Your
-actual puzzles plug in the same way, without touching capture, geometry, or rendering.
+Mines, Gems and Terminal are the puzzle types in the tree; a new one plugs in the same
+way, without touching capture, geometry, or rendering. Sudoku and nonogram used to be
+here as references for the two solution policies and have been removed; they still make
+the clearest examples of the policies, so they appear below as examples, not as code.
 
 You write two things: a `PuzzleAdapter` (how to recognise and read it) and an
 `IncrementalSolver` (how to solve it, incrementally). Then you register the adapter.
@@ -59,8 +61,8 @@ Three contract points that are easy to miss:
   wasteful. Constraint-propagation state is usually cheap to keep.
 - **Name suspects on contradiction.** `PuzzleEngine` clears exactly the cells you name
   and re-reads them. Returning an empty list means nothing gets re-read and you will
-  contradict forever. For sudoku that is the lowest-confidence givens plus the specific
-  conflicting peers.
+  contradict forever. For a sudoku that would be the lowest-confidence givens plus the
+  specific conflicting peers.
 
 ## 3. Write the adapter
 
@@ -97,37 +99,41 @@ class MyPuzzleAdapter(private val classifier: GlyphClassifier) : PuzzleAdapter {
 
 - **Aspect ratio of cells** in metres via `grid.cellSizeMetres(spec)` — distinguishes a
   square-cell puzzle from a crossword or table immediately.
-- **Grid line weight structure** — sudoku draws box rules heavier every √n lines, which
-  is cheap to measure and very discriminative. See `SudokuAdapter.boxLineEvidence`.
+- **Grid line weight structure** — a sudoku draws box rules heavier every √n lines,
+  which is cheap to measure and very discriminative.
 - **Fill ratio** of readable cells — published puzzles sit in characteristic ranges.
-- **Region statistics** — nonograms have clue strips that look statistically unlike the
-  board. See `NonogramAdapter.identify`.
+- **Region statistics** — a nonogram has clue strips that look statistically unlike the
+  board.
 
 Multiply your score by `grid.confidence` so a shaky grid does not produce a confident
 puzzle identification.
 
 ## 4. Register it
 
-In `ScanPipeline.onSurfaceCreated`:
+In `ScanPipeline`'s `registry`:
 
 ```kotlin
-registry = PuzzleRegistry(
+PuzzleRegistry(
     listOf(
-        SudokuAdapter(classifier),
-        NonogramAdapter(classifier),
-        MyPuzzleAdapter(classifier),
+        BombAdapter(),
+        GemAdapter(),
+        TerminalAdapter(),
+        MyPuzzleAdapter(myClassifier),
     )
 )
 ```
+
+If it reads digits, give it a classifier built from templates of the wall's own
+digits, the way `TerminalDigits.classifier()` is.
 
 Identification is sticky: once an adapter is committed and observations are
 accumulating, a rival must score 1.4× better on three consecutive detections to take
 over. That stops a momentary flicker from discarding a scan's worth of work.
 
-While developing, skip identification entirely by picking your mode from the **Game
-mode** flyout, or with `pipeline.selectPuzzleMode("mypuzzle")`. Passing null hands the
-choice back to the evidence. Nothing needs adding to the UI -- the menu already lists
-whatever the registry holds.
+While developing, skip identification entirely by picking your mode on the landing
+page, or with `pipeline.selectPuzzleMode("mypuzzle")`. Passing null hands the choice
+back to the evidence. Nothing needs adding to the UI -- the landing page already lists
+whatever the registry holds, and gives an entry without a look of its own a plain card.
 
 ## 5. Test it without a device
 
@@ -137,11 +143,12 @@ whatever the registry holds.
 ./gradlew :core:test
 ```
 
-Follow the pattern in `SudokuSolverTest`: find a case where the *mathematics* pins down
-the expected behaviour rather than a threshold you chose. For sudoku that is the
-17-clue minimum. For your puzzle it might be a known-minimal instance, a symmetry
-argument, or a construction with a provably ambiguous variant. A test built on a tuned
-threshold will pass for the wrong reasons and fail when you tune it again.
+Find a case where the *mathematics* pins down the expected behaviour rather than a
+threshold you chose. For a sudoku that would be the 17-clue minimum; `StrategySolverTest`
+replays every plan through a simulator written from the rules rather than from the
+solver. For your puzzle it might be a known-minimal instance, a symmetry argument, or a
+construction with a provably ambiguous variant. A test built on a tuned threshold will
+pass for the wrong reasons and fail when you tune it again.
 
 For detection, synthesise a canvas the way `GridDetectionTest.drawGrid` does. For the
 end-to-end path, record a real scan once and replay it — that covers the parts a
@@ -158,8 +165,8 @@ replaces `(col, row)`.
 
 ## If clues span multiple cells
 
-`NonogramAdapter` currently assumes one clue digit per cell, which is the common
-printed layout but not the only one. Multi-digit clues need `readCells` to segment the
+Reading one clue digit per cell is the simple case, and the common printed layout, but
+not the only one. Multi-digit clues need `readCells` to segment the
 strip cell into digits before classification — crop to the ink bounding box, split on
 vertical projection minima, classify each fragment, then compose. The `CellReader`
 primitives (`inkStats`, `normalize`) already do the per-fragment work; what is missing is

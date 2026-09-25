@@ -10,13 +10,13 @@ to press them in, and on the later stages, *when*.
 app carries a transcription of every level and, beside it, the pressing order and team
 split for every stage and team size, worked out ahead of time (see *Bundled splits*
 below). Pick
-*Strategy* from the game-mode menu and the scan stops, the camera is released, and the
-HUD — logging, exposure, recording, all of it — is replaced by the guide. Pick any
-scanning mode to get it all back.
+*Strategy* on the landing page and the scan stops, the camera is released, and the
+HUD — logging, exposure, recording, all of it — is replaced by the guide. Back returns
+to the landing page; pick any scanning mode there to get it all back.
 
 **Gridlock** is a second room that plays by the same rules and gets the same guide:
 two boards side by side, guns that block, purple tiles that light a target on the other
-board, reds that fail the wave. It is its own entry in the menu with its own stage file
+board, reds that fail the wave. It has its own card on the landing page and its own stage file
 (`gridlock.txt`, levels 3, 4 and 6–10 so far, from activate.ryflix.ca/gridlock.html); everything
 below applies to it too. In core the two are `StrategyRoom.STRATEGY` and
 `StrategyRoom.GRIDLOCK`, and `StrategyStages.bundled(room)` picks the file.
@@ -29,22 +29,20 @@ anything that is not the answer is clutter over the board. What it shows:
 - **Players** is asked first, 2 to 5, and can be changed from the button next to the
   title. Every stage is then split into a lane per player (see below).
 - **Level** is the row of buttons across the top, 1 to 10.
-- **Stages** are pages: swipe up for the next stage, down for the previous. The board
-  stays put; the lanes scroll underneath it, and stay scrolled to the same player from
-  stage to stage, so a player who has scrolled down to their own lane finds it there on
-  the next stage too. A swipe that starts on the lanes and turns the page does not
-  count as scrolling them.
+- **Stages** are pages: swipe left for the next stage, right for the previous. The board
+  stays put; the lanes scroll up and down underneath it, and stay scrolled to the same
+  player from stage to stage, so a player who has scrolled down to their own lane finds
+  it there on the next stage too.
 - **The board** is drawn as the floor, always landscape: two boards side by side. In
   Gridlock the gap between separate boards (levels 7 and 8) is left out and the boards
   are drawn edge to edge; Strategy's green strip on its levels 7 and 8 is drawn, since
   it is tiles on the floor. Each gun tile is filled in the colour of the
   player who presses it and carries **that player's own count**: their first press is
   1, their second 2, and so on. A tile nobody presses stays plain orange with no number.
-- **The presses** are one lane per player, in the same colour and numbers as the board.
-  A number that skips ahead is a wait: a player who reads 1, 3, 4 has to let another
-  player get to their 2 before pressing their own 3, and the chip says so underneath
-  ("after P1 2", in that player's colour). Two players with nothing between them both
-  read 1, 2, 3. A red chip is a tile that has to be fired into a red on purpose — there
+- **The presses** are one lane per player, in the same colour and numbers as the board,
+  numbered 1, 2, 3 in turn with no gaps. A press that has to wait for another player's
+  says so underneath its chip -- "after P1 2", in that player's colour: let player 1
+  press their second tile first. A red chip is a tile that has to be fired into a red on purpose — there
   is exactly one in the game, level 4 stage 4. Each player's header gives their number
   of presses and how many times they have to move to another part of the room and find
   their next tile -- "all in a row" when they never do.
@@ -104,7 +102,7 @@ Within the partial order the split follows the team's rules:
    needs two of the same player's presses first comes third. A wait that would be only
    one step behind the press it needs is penalised on top, since a quick player could
    overtake it. A wait with no margin at all, where the player gets there first and
-   stands (their numbers skip, see below), costs as much as a press: on a chain, players
+   stands, costs as much as a press: on a chain, players
    standing at their own tiles and waiting their turn beat one player moving along it.
 3. **The level's quirks.** Walls, mirrors, reds, moving and swapping targets are all
    settled by the plan already; the split adds how often a player has to stop and wait
@@ -155,10 +153,11 @@ own row.
 The screen draws whichever plan the split is of, so the board, the chips and the
 tap-to-see pictures all match the lanes.
 
-Each player's numbers come last: a press is numbered one past the later of that
-player's previous press and every press it waits on. Independent lanes count 1, 2, 3
-in step; a lane that waits skips, and the skipped number is the other player's step it
-waits for.
+To score the waits, the planner gives each press a step: one past the later of the
+player's previous press and every press it waits on, so a lane that waits skips a step.
+The screen used to show those steps, gaps and all, as each player's numbers; it now
+numbers each player's presses 1, 2, 3 in turn and leaves the waiting to the "after"
+line under the chip, which says the same thing more plainly.
 
 ### Bundled splits
 

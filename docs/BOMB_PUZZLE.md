@@ -205,7 +205,8 @@ in `.r`, so **Cb went in `.b` and Cr in `.a`**, which reconstructs colour exactl
 
 - the coverage downsample still reads `.g` — untouched;
 - the existing tile readback still blits `.r` into its R8 staging target — untouched, so
-  sudoku and nonogram cannot regress;
+  the grayscale adapters of the time (sudoku and nonogram, since removed) could not
+  regress;
 - a second tile path blits `.b`/`.a` into an RG8 target with its own
   `AsyncReadback(GL_RG, 2)`, streamed only while a colour-hungry adapter is active.
 
@@ -243,8 +244,8 @@ detection, identification, colour reading, planning, and finally detonating the 
 against the board that was drawn. All 84 cells read back the colour they were drawn
 with, and the plan clears the board without firing on the hazard.
 
-To try it on the real thing: swipe in from the left edge to open the **Mode** menu
-and pick *Mines*. Pinning is not
+To try it on the real thing: pick *Mines* on the landing page (Back from the HUD
+returns there). Pinning is not
 usually needed -- the lattice detector identifies the wall on its own -- but it skips the
 ambiguity while the board is still half-scanned.
 
