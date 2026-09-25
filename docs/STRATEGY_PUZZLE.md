@@ -70,15 +70,24 @@ orders that respect only the graph.
 
 Both rooms are floors: a press is a step onto a tile. Timed on real runs, what takes a
 stage's time is neither the pressing nor the walking but finding the next tile after a
-move. A player clearing a row of guns tile by tile -- the next one along, or the one after
-it -- barely stops. One who has to move to another part of the room has to look up and
-find their tile: at the end of a row, or on its own, that takes about as long as five
-presses in a row; in the middle of a row, where they have to count along to find theirs,
-about ten. A pressed tile goes dark, so a row cleared from one end has a new end; the
-split counts a tile as dark only where that is certain -- the player's own earlier
-presses, and the ones this press waits for. Walking is still counted, straight across the
-room, but it is the small part. Within the partial order the split follows the team's
-rules:
+move. A player clearing a row of guns tile by tile barely stops. One who has to move to
+another part of the room has to look up and find their tile: at the end of a row, or on
+its own, that takes about as long as five presses in a row; in the middle of a row, where
+they have to count along to find theirs, about ten. A pressed tile goes dark, so a row
+cleared from one end has a new end; the split counts a tile as dark only where that is
+certain -- the player's own earlier presses, and the ones this press waits for. In detail:
+
+- The next tile along costs nothing to find, and neither does the one after it when the
+  tile stepped over is dark or not a gun at all.
+- Stepping over a tile that is still lit -- a partner's, or one of the player's own for
+  later -- costs as much as finding an end tile: two players leapfrogging along a row
+  each have to pick out which lit tile is theirs. On Strategy 8-1 for five players that
+  is what the split used to do up the right board's edge.
+- A player's first tile is free wherever it is: before a stage starts the team has a few
+  seconds to go and stand on their first tiles.
+- Walking is still counted, straight across the room, but it is the small part.
+
+Within the partial order the split follows the team's rules:
 
 1. **Finish early, move little.** The stage is done when the last press lands, so a
    split is scored on when that is (walking, finding, pressing, and standing waiting for
@@ -86,9 +95,9 @@ rules:
    long row of tiles; a lane that has to move starts each stretch at an end of a row
    rather than in its middle; and a tile one player would move for goes to whoever is
    already standing next to it, even if that gives them more presses than the rest. On
-   Gridlock 4-4 with five players, one player takes the top row from one end to the
-   other, where the split used to start them in its middle and send someone up from the
-   bottom row for its last tile.
+   Gridlock 4-4 with five players, one player takes the whole top row without moving
+   on, where the split used to have them walk back along it for its last tile and send
+   someone up from the bottom row for another.
 2. **Hand-offs first, waits last.** A press another player waits on goes at the front
    of its player's stack; a press that waits on another player goes at the back of its
    own. "Front" means as early as the press's own prerequisites allow -- a hand-off that
@@ -108,9 +117,11 @@ These become one score, every term counted in tiles walked -- a press in a row i
 It used to put an even split first, as a hard rule; dropping it made the splits an eighth
 faster and cut walking by a quarter, and a stage no longer finishes later with one more
 player -- under the even rule, fourteen did. Then it counted walking as the main cost;
-on the clock the room showed, with finding priced in, the splits are 22% faster across
-every stage for two to five players, with 30% fewer moves and a tenth as many tiles
-found in the middle of a row (33, from 375). The search runs in two
+on the clock the room showed, with finding priced in, the splits are 24% faster across
+every stage for two to five players than the ones worked out for walking, with 28% fewer
+moves, and 2 moves that end in the middle of a row where there were 234. Evenness is only
+a tie-break, weighted low enough that a player is left out rather than slow the team
+down: no stage finishes later with one more player. The search runs in two
 levels: simulated annealing over who presses what, with each candidate split put in order
 by a rule that already follows the list above (hand-offs as soon as possible, waits held
 back until they have a margin, the rest by shortest walk and find, and same board look); then an
@@ -131,15 +142,15 @@ sharing what the first search learned, so most tries cost a fraction of it; a tr
 runs long is cut off, counted in positions searched rather than time, so every run finds
 the same plans. `TeamSolver` splits every one of them for the team size and keeps the
 best, so it is never worse than the solver's plan alone. Across every stage and team
-size that takes another 4.6% off the time, and 8% off the moves, concentrated where the
-choice is: on Gridlock 7-4 for three players the first plan has players crossing between
-the two boards and waiting on each other across the wall, and the one chosen keeps each
-mostly to one board -- 178 down to 144 in time, 14 moves down to 11. About half the
-stages have only one way to be cleared, and there nothing changes. Gridlock 4-4 is not
-one of them: each of its four rings of tiles has one tile second in line for both guns
-that reach it, so one of those guns has to wait for the other whichever plan is played,
-but which one waits is a choice, and for five players a different one from the
-solver's lets each keep to their own row.
+size that takes another 5.7% off the time, and 8% off the moves, concentrated where the
+choice is: on the two-board levels, the plan decides how often players move between the
+boards and wait on each other across the wall -- Gridlock 8-1 for four players comes down
+from 100 to 72 -- and some of level 9 halves. About half the stages have only one way to
+be cleared, and there nothing changes. Gridlock 4-4 is not one of them: each of its four
+rings of tiles has one tile second in line for both guns that reach it, so one of those
+guns has to wait for the other whichever plan is played, but which one waits is a
+choice, and for five players a different one from the solver's lets each keep to their
+own row.
 
 The screen draws whichever plan the split is of, so the board, the chips and the
 tap-to-see pictures all match the lanes.

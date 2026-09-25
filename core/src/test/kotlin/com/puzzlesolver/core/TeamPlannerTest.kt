@@ -101,10 +101,11 @@ class TeamPlannerTest {
         // Nothing between the lanes, so both players count 1, 2, 3.
         assertEquals(listOf(listOf(1, 2, 3), listOf(1, 2, 3)), team.lanes.map { l -> l.shots.map { team.steps[it] } })
         // Three presses each, nobody waiting: the chain is the whole stage. Its walk is
-        // (0,2) -> (2,0) -> (0,4), straight across the floor each time, and its tiles are
-        // found twice: the first, and (0,4) after the move down from (2,0). (2,0) is two
-        // along from (0,2), which is the next tile but one.
-        assertEquals(3 * TeamPlanner.PRESS + hypot(2.0, 2.0) + hypot(2.0, 4.0) + 2 * TeamPlanner.FIND_END, team.makespan, 1e-9)
+        // (0,2) -> (2,0) -> (0,4), straight across the floor each time, and one tile has
+        // to be found: (0,4), after the move down from (2,0). The first is where the
+        // player stands when the stage starts, and (2,0) is two along from it with no
+        // gun between.
+        assertEquals(3 * TeamPlanner.PRESS + hypot(2.0, 2.0) + hypot(2.0, 4.0) + TeamPlanner.FIND_END, team.makespan, 1e-9)
         // With one player the chain still has to be walked in order.
         val solo = TeamPlanner(plan).schedule(1)
         val order = solo.lanes.single().shots.map { plan.shots[it].label }

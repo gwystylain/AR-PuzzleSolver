@@ -27,13 +27,14 @@ class TeamSolverTest {
 
     @Test
     fun `another plan splits better where the stage allows one`() {
-        // Gridlock 7-4: two boards with a wall between, and purple tiles on each that
-        // light targets on the other. The solver's first plan has players crossing
-        // between the boards for tiles and waiting on each other across the wall; with
-        // other guns taking other tiles, three players each keep mostly to one board.
-        val plan = plan(StrategyRoom.GRIDLOCK, 7, 4)
-        val own = TeamPlanner(plan).schedule(3)
-        val chosen = TeamSolver(plan).schedule(3)
+        // Gridlock 8-1: two boards with a wall between, and purple tiles on each that
+        // light targets on the other, so which gun takes which tile decides how often
+        // players move between the boards and wait on each other across the wall. For
+        // four players another plan than the solver's first clears it in under three
+        // quarters of the time.
+        val plan = plan(StrategyRoom.GRIDLOCK, 8, 1)
+        val own = TeamPlanner(plan).schedule(4)
+        val chosen = TeamSolver(plan).schedule(4)
         assertNotEquals(sequence(plan), sequence(chosen.plan))
         assertTrue("${chosen.makespan} against ${own.makespan}", chosen.makespan <= 0.85 * own.makespan)
         assertTrue("${chosen.travel} against ${own.travel}", chosen.travel <= 0.85 * own.travel)

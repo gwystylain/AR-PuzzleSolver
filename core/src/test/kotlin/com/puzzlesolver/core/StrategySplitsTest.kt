@@ -82,18 +82,20 @@ class StrategySplitsTest {
     }
 
     @Test
-    fun `Gridlock 4-4 for five clears the top row in order`() {
+    fun `Gridlock 4-4 for five clears the top row without moving`() {
         // The split that prompted the rules: one player pressed two tiles on the bottom
         // row and crossed the room for (10,0), beside another player's three on the top
-        // row, who pressed theirs out of order -- starting in the middle of the row. Now
-        // one player takes the whole top row from one end to the other, nobody crosses
-        // the board, and nobody has to find a tile in the middle of a row.
+        // row, who pressed 8, 9, 10 and then walked back for 7. Now one player takes the
+        // whole top row without ever moving on -- every step to the next tile, or over
+        // one already dark -- nobody crosses the board, and nobody has to find a tile in
+        // the middle of a row.
         val s = bundled.getValue(StrategyRoom.GRIDLOCK).first { it.stage.level == 4 && it.stage.index == 4 }
         val team = s.forPlayers(5)
         fun gun(shot: Int) = s.stage.guns[team.plan.shots[shot].gun]
         val top = team.lanes.first { lane -> lane.shots.any { gun(it).y == 0 } }
         val xs = top.shots.map { gun(it) }.filter { it.y == 0 }.map { it.x }
-        assertTrue("top row pressed as $xs", xs == listOf(7, 8, 9, 10) || xs == listOf(10, 9, 8, 7))
+        assertEquals("top row pressed as $xs", listOf(7, 8, 9, 10), xs.sorted())
+        assertEquals(0, top.moves)
         for (lane in team.lanes) {
             val rows = lane.shots.map { gun(it).y }
             assertTrue("P${lane.player} crosses the board: $rows", !(0 in rows && s.stage.height - 1 in rows))

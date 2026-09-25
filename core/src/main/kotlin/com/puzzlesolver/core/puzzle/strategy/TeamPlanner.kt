@@ -23,9 +23,9 @@ class Lane(
     val waitsFor: Map<Int, List<Int>>,
     /** Cells walked from the first press to the last, straight across the floor. */
     val walked: Double,
-    /** Times the player has to move to another part of the room and find their next tile. */
+    /** Times the player has to move to another part of the room -- more than two tiles -- and find their next tile. */
     val moves: Int,
-    /** Of those, and of the first press, how many are in the middle of a row of guns. */
+    /** Of those moves, how many end in the middle of a row of guns. */
     val middles: Int,
 )
 
@@ -109,7 +109,8 @@ class TeamPlan(
  * find their tile. At the end of a row, or on its own, it is found quickly, about five
  * presses in a row's worth; in the middle of a row, where the player has to count along,
  * it takes as long as ten. A pressed tile goes dark, so a row cleared from one end has a
- * new end. The rules for a good split, the team's, are:
+ * new end. Where a player starts is free: before a stage starts the team has a few
+ * seconds to stand on their first tiles. The rules for a good split, the team's, are:
  *
  * 1. **Finish early, move little.** The stage is done when the last press lands, so a
  *    split is scored on when that is -- walking, finding, pressing and standing waiting
@@ -266,56 +267,86 @@ class TeamPlanner(private val plan: StrategyPlan) {
         Array(n) { a -> DoubleArray(n) { b -> walk(gunCell(a), gunCell(b)) } }
     }
 
-    /**
-     * Presses whose tiles are at most two apart: the next tile along, or the one after
-     * it. Going from one to the other needs no finding -- the player is standing there.
-     */
-    private val near: Array<BooleanArray> by lazy {
-        Array(n) { a ->
-            BooleanArray(n) { b ->
-                val c = gunCell(a)
-                val d = gunCell(b)
-                maxOf(abs(c.x - d.x), abs(c.y - d.y)) <= 2
-            }
-        }
+    /** How many tiles apart two presses are, a diagonal step counting as one. */
+    private val apart: Array<IntArray> by lazy {
+        Array(n) { a -> IntArray(n) { b -> gunCell(a).let { c -> gunCell(b).let { d -> maxOf(abs(c.x - d.x), abs(c.y - d.y)) } } } }
     }
 
     /**
-     * For each press, the guns touching its tile -- the rest of its row -- each as the
-     * presses that take it away: the one pressing it, and any shot that destroys it or
-     * lights a target over it. A gun nobody takes away stays lit, which is 0 here.
+     * For every gun, the presses that take it away: the one pressing it, and any shot
+     * that destroys it or lights a target over it. A gun nobody takes away stays lit,
+     * which is 0 here.
      */
-    private val neighbours: Array<LongArray> by lazy {
-        val removers = LongArray(stage.guns.size)
+    private val removers: LongArray by lazy {
+        val out = LongArray(stage.guns.size)
         for ((i, shot) in plan.shots.withIndex()) {
-            removers[shot.gun] = removers[shot.gun] or (1L shl i)
-            if (shot.hit == Hit.GUN) removers[shot.hitIndex] = removers[shot.hitIndex] or (1L shl i)
+            out[shot.gun] = out[shot.gun] or (1L shl i)
+            if (shot.hit == Hit.GUN) out[shot.hitIndex] = out[shot.hitIndex] or (1L shl i)
             if (shot.hit == Hit.MIRROR) {
                 val spawned = Cell(stage.width - 1 - shot.cell!!.x, shot.cell.y)
-                for ((g, gun) in stage.guns.withIndex()) if (gun.cell == spawned) removers[g] = removers[g] or (1L shl i)
+                for ((g, gun) in stage.guns.withIndex()) if (gun.cell == spawned) out[g] = out[g] or (1L shl i)
             }
         }
-        Array(n) { s ->
-            val here = gunCell(s)
-            stage.guns.indices
-                .filter { g -> g != plan.shots[s].gun && stage.guns[g].let { maxOf(abs(it.x - here.x), abs(it.y - here.y)) } == 1 }
-                .map { removers[it] }
-                .toLongArray()
+        out
+    }
+
+    /** The guns touching [cell], other than any on it, as their [removers]. */
+    private fun around(cell: Cell): List<Long> = stage.guns.indices
+        .filter { g -> stage.guns[g].let { maxOf(abs(it.x - cell.x), abs(it.y - cell.y)) } == 1 }
+        .map { removers[it] }
+
+    /** For each press, the guns touching its tile -- the rest of its row. */
+    private val neighbours: Array<LongArray> by lazy { Array(n) { around(gunCell(it)).toLongArray() } }
+
+    /**
+     * For two presses two tiles apart, the guns touching both: the tile stepped over.
+     * Empty where there is no gun between them.
+     */
+    private val between: Array<Array<LongArray>> by lazy {
+        Array(n) { a ->
+            Array(n) { b ->
+                if (apart[a][b] != 2) return@Array LongArray(0)
+                val c = gunCell(a)
+                val d = gunCell(b)
+                stage.guns.indices
+                    .filter { g ->
+                        val t = stage.guns[g].cell
+                        maxOf(abs(t.x - c.x), abs(t.y - c.y)) == 1 && maxOf(abs(t.x - d.x), abs(t.y - d.y)) == 1
+                    }
+                    .map { removers[it] }
+                    .toLongArray()
+            }
         }
     }
 
     /**
      * What it costs to find press [s]'s tile, coming from [previous] (-1 for a player's
-     * first press) with the presses in [done] certainly behind it: nothing if the player
-     * is standing next to it, [FIND_END] if it is at the end of its row of lit guns or on
-     * its own, [FIND_MIDDLE] if it is somewhere in the middle. A pressed tile goes dark,
-     * so only a gun still lit counts as a neighbour -- and only presses that have
-     * certainly landed count as dark: this player's own, in [done], and the ones [s]
-     * waits for.
+     * first press) with the presses in [done] certainly behind it.
+     *
+     * A pressed tile goes dark, and only presses that have certainly landed count as
+     * dark: this player's own, in [done], and the ones [s] waits for. Then:
+     *
+     * - the next tile along costs nothing: the player is standing there;
+     * - so does the one after it, if the tile stepped over is dark or not a gun;
+     * - stepping over a tile that is still lit -- a partner's, or one of the player's own
+     *   for later -- costs [FIND_END]: two players leapfrogging along a row each have to
+     *   pick out which of the lit tiles is theirs;
+     * - after a move, a tile at the end of its row of lit guns, or on its own, costs
+     *   [FIND_END], and one somewhere in the middle [FIND_MIDDLE].
+     *
+     * A player's first tile costs nothing to find wherever it is: before a stage starts
+     * the team has a few seconds to go and stand on their first tiles, however deep in a
+     * row they are.
      */
     private fun find(s: Int, previous: Int, done: Long): Double {
-        if (previous >= 0 && near[previous][s]) return 0.0
+        if (previous < 0) return 0.0
+        val distance = apart[previous][s]
+        if (distance <= 1) return 0.0
         val known = done or ancestorMask[s]
+        if (distance == 2) {
+            for (r in between[previous][s]) if (r and known == 0L) return FIND_END
+            return 0.0
+        }
         var lit = 0
         for (r in neighbours[s]) if (r and known == 0L) lit++
         return if (lit <= 1) FIND_END else FIND_MIDDLE
@@ -836,9 +867,10 @@ class TeamPlanner(private val plan: StrategyPlan) {
         var moves = 0
         var middles = 0
         for ((i, s) in shots.withIndex()) {
-            val found = find(s, if (i == 0) -1 else shots[i - 1], done)
-            if (i > 0 && found > 0) moves++
-            if (found == FIND_MIDDLE) middles++
+            if (i > 0 && apart[shots[i - 1]][s] > 2) {
+                moves++
+                if (find(s, shots[i - 1], done) == FIND_MIDDLE) middles++
+            }
             done = done or (1L shl s)
         }
         return Lane(player, shots, groupRuns(shots.map { plan.shots[it].frames }, stage.frameCount), waits, walked, moves, middles)
@@ -891,7 +923,7 @@ class TeamPlanner(private val plan: StrategyPlan) {
         /** An extra stop in a lane to wait for the board to come round. */
         private const val W_WAIT = 12.0
         /** Squared distance of each lane's size from an even share: only a tie-break. */
-        private const val W_UNEVEN = 1.0
+        private const val W_UNEVEN = 0.25
 
         /**
          * Cuts a sequence into the fewest runs that each share a frame. Greedy is optimal
