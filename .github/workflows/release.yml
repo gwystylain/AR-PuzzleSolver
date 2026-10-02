@@ -51,6 +51,11 @@ jobs:
       # Secrets are not readable from a step's `if`, so the presence check is
       # hoisted to a job-level env var that can be.
       HAS_SIGNING_KEY: ${{ secrets.SIGNING_KEYSTORE_BASE64 != '' }}
+      # The Spellinator server the APK connects to out of the box, from the repo
+      # variable of the same name (Settings > Secrets and variables > Actions >
+      # Variables). A variable, not a secret: it ends up readable in the APK anyway.
+      # Unset, the app asks for a server the first time Spellinator is opened.
+      SPELL_SERVER_URL: ${{ vars.SPELL_SERVER_URL }}
       IS_TAG: ${{ github.ref_type == 'tag' }}
       IS_MAIN: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 

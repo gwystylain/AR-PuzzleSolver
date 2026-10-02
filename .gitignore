@@ -17,6 +17,10 @@ local.properties
 # fixtures under core/src/test/resources, so the build needs none of them.
 /testVideos
 
+# The Spellinator word list (CSW24). HarperCollins' copyright, licensed for private
+# use only: it lives on the server's volume and never in the repo, the APK or the image.
+/spell-server/data/
+
 # Signing keys. CI gets these from repo secrets; see docs/RELEASING.md. A keystore
 # must never land in the repo -- this one is public, and the release signing key
 # cannot be rotated without breaking updates for everyone already installed.

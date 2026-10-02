@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only: lets Spellinator reach a server on the local network over plain
+     ws://, for running one on a laptop next to the phone. Release builds never allow it
+     beyond the phone itself; see src/main/res/xml/network_security_config.xml. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

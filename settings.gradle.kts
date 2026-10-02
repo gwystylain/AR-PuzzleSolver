@@ -26,3 +26,9 @@ dependencyResolutionManagement {
 rootProject.name = "PuzzleSolver"
 include(":app")
 include(":core")
+
+// Spellinator: the protocol and word finder both ends share, the phone's connection to
+// the lobby server, and the server itself, which runs in Docker rather than on a phone.
+include(":spell")
+include(":spell-client")
+include(":spell-server")

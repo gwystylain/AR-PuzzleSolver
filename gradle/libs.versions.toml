@@ -10,6 +10,16 @@ composeBom = "2025.03.01"
 arcore = "1.54.0"
 coroutines = "1.10.1"
 junit = "4.13.2"
+serialization = "1.8.1"
+# 3.2.x is the last Ktor line built on Kotlin 2.1, the version this project compiles
+# with; 3.3 onwards pulls in a 2.2 standard library.
+ktor = "3.2.3"
+# The long-stable 4.x line. Its WebSocket client is all Spellinator uses of it.
+okhttp = "4.12.0"
+slf4j = "2.0.17"
+# Newer than the 4.2.2 Ktor 3.2.3 brings: the 2025 fixes to Netty's HTTP parsing landed
+# after it, and this is the part of the server that faces the internet.
+netty = "4.2.18.Final"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -27,9 +37,17 @@ arcore = { group = "com.google.ar", name = "core", version.ref = "arcore" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+ktor-server-core = { group = "io.ktor", name = "ktor-server-core", version.ref = "ktor" }
+ktor-server-netty = { group = "io.ktor", name = "ktor-server-netty", version.ref = "ktor" }
+ktor-server-websockets = { group = "io.ktor", name = "ktor-server-websockets", version.ref = "ktor" }
+slf4j-simple = { group = "org.slf4j", name = "slf4j-simple", version.ref = "slf4j" }
+netty-bom = { group = "io.netty", name = "netty-bom", version.ref = "netty" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

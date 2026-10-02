@@ -36,7 +36,6 @@ import androidx.compose.ui.unit.sp
 import com.puzzlesolver.app.frame.FrameSource
 import com.puzzlesolver.app.pipeline.ScanPipeline
 import com.puzzlesolver.core.puzzle.gems.GemPattern
-import com.puzzlesolver.core.puzzle.strategy.StrategyRoom
 
 /**
  * The scanning HUD.
@@ -73,21 +72,20 @@ fun ScanScreen(
     onExpectCells: (Int?) -> Unit,
     /** Whether the debug panel is on: switched on the landing page, kept for the session. */
     showDebug: Boolean,
-    // The guide rooms -- Strategy, Gridlock -- are game modes with no camera behind
-    // them. They are picked on the landing page with the scanning modes, because to the
-    // user it is the same decision -- which room am I standing in -- and a guide
-    // replaces the HUD outright rather than hiding pieces of it, since none of the HUD
-    // is about anything it does.
-    guideRoom: StrategyRoom? = null,
-    guideContent: @Composable (StrategyRoom) -> Unit = {},
+    // The camera-free modes -- the Strategy and Gridlock guides, Spellinator -- are game
+    // modes with no camera behind them. They are picked on the landing page with the
+    // scanning modes, because to the user it is the same decision -- which room am I
+    // standing in -- and one replaces the HUD outright rather than hiding pieces of it,
+    // since none of the HUD is about anything it does.
+    takeover: (@Composable () -> Unit)? = null,
 ) {
     // Closed to begin with, and remembered for the session. The card is tall enough that
     // leaving it open is a decision the user should make once, not one the app makes for
     // them every time the mode changes.
     var showCamera by remember { mutableStateOf(false) }
 
-    if (guideRoom != null) {
-        guideContent(guideRoom)
+    if (takeover != null) {
+        takeover()
         return
     }
     Box(Modifier.fillMaxSize()) {

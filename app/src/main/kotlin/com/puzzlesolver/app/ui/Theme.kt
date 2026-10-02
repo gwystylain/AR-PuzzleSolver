@@ -17,6 +17,18 @@ private val scheme = darkColorScheme(
     surface = Color(0xFF101418),
 )
 
+/**
+ * One per player, in the order they are numbered. Shared by every team mode -- the Strategy
+ * guide's chips and board, Spellinator's seats -- so P2 is the same green everywhere.
+ */
+internal val PLAYER_COLOURS = listOf(
+    Color(0xFFFF8C00),
+    Color(0xFF33DD77),
+    Color(0xFF4CC9F0),
+    Color(0xFFF06292),
+    Color(0xFFFFD166),
+)
+
 @Composable
 fun PuzzleSolverTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = scheme, content = content)

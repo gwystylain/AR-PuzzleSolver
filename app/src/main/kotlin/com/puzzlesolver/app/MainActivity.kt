@@ -19,6 +19,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -41,9 +42,11 @@ import com.puzzlesolver.core.puzzle.gems.GemPattern
 import com.puzzlesolver.core.puzzle.terminal.TerminalAdapter
 import com.puzzlesolver.app.record.LogCapture
 import com.puzzlesolver.app.record.SessionStore
+import com.puzzlesolver.app.spell.SpellController
 import com.puzzlesolver.app.ui.LandingScreen
 import com.puzzlesolver.app.ui.PuzzleSolverTheme
 import com.puzzlesolver.app.ui.ScanScreen
+import com.puzzlesolver.app.ui.SpellScreen
 import com.puzzlesolver.app.ui.StrategyScreen
 import com.puzzlesolver.core.puzzle.strategy.StageSplits
 import com.puzzlesolver.core.puzzle.strategy.StrategyRoom
@@ -104,6 +107,20 @@ class MainActivity : ComponentActivity() {
      * for when they switch back.
      */
     private var guideRoom by mutableStateOf<StrategyRoom?>(null)
+
+    /**
+     * Whether Spellinator is on screen. Like a guide it has no use for the camera, so the
+     * scan is paused the same way while it is up.
+     *
+     * The landing page going up over it does not close it: Back from the lobby keeps the
+     * connection and the seat, so a stray Back costs nothing. Picking another mode closes
+     * it, and even then the server holds the seat for two minutes.
+     */
+    private var spellOpen by mutableStateOf(false)
+    private lateinit var spell: SpellController
+
+    /** A guide or Spellinator is up, so the camera is off. */
+    private val cameraFree: Boolean get() = guideRoom != null || spellOpen
 
     /**
      * Whether the landing page is up. True at launch, cleared by any mode choice --
@@ -348,7 +365,7 @@ class MainActivity : ComponentActivity() {
     ) { granted ->
         if (!granted) {
             toast("Camera permission is required to scan a wall")
-        } else if (guideRoom == null) {
+        } else if (!cameraFree) {
             startLiveSource()
         }
     }
@@ -361,6 +378,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         sessionStore = SessionStore(this)
+        spell = SpellController(this)
 
         // Canvas resolution is a launch-time choice because the GL textures are sized
         // from it, so it cannot be changed on a live pipeline:
@@ -404,6 +422,8 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             PuzzleSolverTheme {
+                val spellState by spell.state.collectAsState()
+                val spellServer by spell.server.collectAsState()
                 // Back from the HUD or a guide goes to the landing page, which is the
                 // one place a room is picked: there is no menu to swipe in any more.
                 BackHandler(enabled = !showLanding) { showLanding = true }
@@ -459,8 +479,23 @@ class MainActivity : ComponentActivity() {
                         onForceFlatWall = { pipeline.setForcedFlatWall(it) },
                         onExpectCells = { pipeline.setExpectedCells(it) },
                         showDebug = showDebugPanel,
-                        guideRoom = guideRoom,
-                        guideContent = { room ->
+                        takeover = if (spellOpen) {
+                            {
+                                SpellScreen(
+                                    state = spellState,
+                                    server = spellServer,
+                                    onHost = { spell.host() },
+                                    onJoin = { spell.join(it) },
+                                    onLeave = { spell.leave() },
+                                    onType = { spell.type(it) },
+                                    onBackspace = { spell.backspace() },
+                                    onClear = { spell.clear() },
+                                    onLength = { spell.setLength(it) },
+                                    onDismissNotice = { spell.dismissNotice(it) },
+                                    onSetServer = { spell.setServer(it) },
+                                )
+                            }
+                        } else guideRoom?.let { room -> {
                             val levels = guideLevels.getValue(room)
                             StrategyScreen(
                                 title = room.displayName,
@@ -478,13 +513,14 @@ class MainActivity : ComponentActivity() {
                                     strategyPlayers = it
                                 },
                             )
-                        },
+                        } },
                     )
                     LandingScreen(
                         modes = pipeline.puzzleModes,
                         visible = showLanding,
                         onSelectMode = { selectPuzzleMode(it) },
                         onSelectGuide = { enterGuide(it) },
+                        onSelectSpell = { enterSpell() },
                         debug = showDebugPanel,
                         onToggleDebug = { showDebugPanel = !showDebugPanel },
                     )
@@ -505,7 +541,7 @@ class MainActivity : ComponentActivity() {
                 // discovered afterwards is not one to leave to memory. An explicit Stop
                 // is respected.
                 val liveMode = uiState.isGemsMode || uiState.isTerminalMode
-                if (liveMode && guideRoom == null && !loggingSuppressed && !logCapture.isRunning) {
+                if (liveMode && !cameraFree && !loggingSuppressed && !logCapture.isRunning) {
                     startLogging()
                 }
                 isLogging = logCapture.isRunning
@@ -541,8 +577,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // The guide keeps the camera off across a background trip as well as within one.
-        if (guideRoom == null) resumeScanning()
+        // A guide or Spellinator keeps the camera off across a background trip as well as
+        // within one.
+        if (!cameraFree) resumeScanning()
         ContextCompat.registerReceiver(
             this,
             debugReceiver,
@@ -553,7 +590,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
-        if (guideRoom == null) pauseScanning()
+        if (!cameraFree) pauseScanning()
         try {
             unregisterReceiver(debugReceiver)
         } catch (_: IllegalArgumentException) {
@@ -590,15 +627,34 @@ class MainActivity : ComponentActivity() {
     private fun enterGuide(room: StrategyRoom) {
         Log.i(TAG, "mode selected: ${room.id} guide")
         showLanding = false
-        val wasScanning = guideRoom == null
+        val wasScanning = !cameraFree
+        closeSpell()
         guideRoom = room
         if (wasScanning) pauseScanning()
         loadStrategyGuides()
     }
 
-    private fun leaveGuide() {
-        if (guideRoom == null) return
+    private fun enterSpell() {
+        Log.i(TAG, "mode selected: spellinator")
+        showLanding = false
+        val wasScanning = !cameraFree
         guideRoom = null
+        spellOpen = true
+        if (wasScanning) pauseScanning()
+        spell.open()
+    }
+
+    private fun closeSpell() {
+        if (!spellOpen) return
+        spellOpen = false
+        spell.close()
+    }
+
+    /** Back to a camera mode from a guide or Spellinator. */
+    private fun leaveCameraFree() {
+        if (!cameraFree) return
+        guideRoom = null
+        closeSpell()
         resumeScanning()
     }
 
@@ -625,6 +681,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        spell.release()
         probe?.close()
         pipeline.release()
         pipeline.frameSource.get()?.close()
@@ -662,7 +719,7 @@ class MainActivity : ComponentActivity() {
     private fun selectPuzzleMode(id: String?) {
         Log.i(TAG, "mode selected: ${id ?: "automatic"}")
         showLanding = false
-        leaveGuide()
+        leaveCameraFree()
         pipeline.selectPuzzleMode(id)
         val wantsLiveCamera = id == GemAdapter.ID || id == TerminalAdapter.ID
         if (wantsLiveCamera != usingLiveCamera) {

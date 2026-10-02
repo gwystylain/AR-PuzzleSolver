@@ -1,0 +1,55 @@
+# TrueNAS SCALE custom app: the Spellinator lobby server.
+#
+# How to use (the full walk-through, proxy included, is in docs/SPELLINATOR.md):
+#   1. Make the folder under volumes below (default /mnt/HDDs/Applications/Spellinator)
+#      and copy the word list into it as csw24.txt. The apps user (568) must be able to
+#      read it. It is the only file the server needs, and it only ever reads it.
+#   2. In the TrueNAS UI: Apps → Discover Apps → Custom App → Install via YAML, and paste
+#      this file in.
+#   3. Point the reverse proxy at this machine's port 8096 with WebSocket support on, and
+#      do NOT forward 8096 on the router: the proxy is the only way in, and the one place
+#      TLS is done.
+#
+# Nothing here is secret, so nothing needs replacing. The server keeps no state on disk:
+# lobbies live in memory, and an update or restart closes them (the phones say so and go
+# back to the list).
+
+services:
+  spellinator:
+    image: ghcr.io/gwystylain/puzzlesolver-spell-server:latest
+    # Re-resolve :latest on every start, or a restart keeps running the cached image.
+    pull_policy: always
+    container_name: spellinator
+    restart: unless-stopped
+
+    # Locked down as far as it goes. It reads one file and listens on one port: it needs
+    # no root, no capabilities, no writable filesystem and no privilege escalation.
+    user: "568:568"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=16m
+
+    environment:
+      # Behind the proxy every connection comes from the proxy's address, so the
+      # per-address connection limit has to read the client's from X-Forwarded-For.
+      SPELL_TRUST_FORWARDED: "true"
+      TZ: America/Vancouver
+
+    ports:
+      # 8096 on the NAS. Pixelfed has 8095 and the trading relay 8090; change the left
+      # side if 8096 is taken, and point the proxy at whatever it becomes.
+      - "8096:8080"
+
+    volumes:
+      - /mnt/HDDs/Applications/Spellinator:/data:ro
+
+    deploy:
+      resources:
+        limits:
+          # It idles at about 75 MB.
+          memory: 384M
+          cpus: "1.0"

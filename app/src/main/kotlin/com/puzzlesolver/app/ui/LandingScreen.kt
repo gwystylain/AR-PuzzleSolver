@@ -93,6 +93,7 @@ fun LandingScreen(
     visible: Boolean,
     onSelectMode: (String) -> Unit,
     onSelectGuide: (StrategyRoom) -> Unit,
+    onSelectSpell: () -> Unit,
     /** Whether the HUD shows the debug panel, switched at the foot of the page. */
     debug: Boolean,
     onToggleDebug: () -> Unit,
@@ -114,6 +115,8 @@ fun LandingScreen(
                 Entry(m.id, m.displayName, camera = true, LOOKS[m.id] ?: PLAIN, note) { onSelectMode(m.id) }
             } + StrategyRoom.entries.map { r ->
                 Entry(r.id, r.displayName, camera = false, LOOKS[r.id] ?: PLAIN, null) { onSelectGuide(r) }
+            } + Entry(SPELLINATOR_ID, "Spellinator", camera = false, LOOKS.getValue(SPELLINATOR_ID), "online -- phones join one lobby") {
+                onSelectSpell()
             }
         }
 
@@ -226,6 +229,7 @@ private val LOOKS: Map<String, Look> = mapOf(
     TerminalAdapter.ID to Look(Color(0xFFFFC53D), "The two lowest numbers, live", 2100) { p, c -> terminalGlyph(p, c) },
     StrategyRoom.STRATEGY.id to Look(Color(0xFFFF9F1C), "Every wave's pressing order, split between players", 2400) { p, c -> strategyGlyph(p, c) },
     StrategyRoom.GRIDLOCK.id to Look(Color(0xFFB388FF), "Two boards, one plan, split between players", 2000) { p, c -> gridlockGlyph(p, c) },
+    SPELLINATOR_ID to Look(SPELL_ACCENT, "Everyone's letters, every word they spell", 2400) { p, c -> spellGlyph(p, c) },
 )
 
 private val PLAIN = Look(Color(0xFF9AA6B2), "", 1000) { _, c -> plainGlyph(c) }
@@ -518,6 +522,43 @@ private fun DrawScope.gridlockGlyph(phase: Float, accent: Color) {
         }
     }
     drawRect(accent.copy(alpha = 0.35f), Offset(boardW + wall * 0.25f, 0f), Size(wall * 0.5f, s))
+}
+
+/**
+ * Tiles dropping into a row one at a time from different players, then the row lighting
+ * up as a word.
+ */
+private fun DrawScope.spellGlyph(phase: Float, accent: Color) {
+    val s = size.minDimension
+    val n = 4
+    val gap = s * 0.06f
+    val w = (s - gap * (n - 1)) / n
+    val h = w * 1.25f
+    val top = (s - h) / 2f
+    val players = listOf(Color(0xFFFF8C00), Color(0xFF33DD77), Color(0xFF4CC9F0), Color(0xFFF06292))
+    // Four beats of dropping, then one of the whole word lit.
+    val beat = phase * 5f
+    val lit = beat >= 4f
+    for (i in 0 until n) {
+        val landed = (beat - i).coerceIn(0f, 1f)
+        if (landed <= 0f) {
+            drawRoundRect(Color(0x33DDE5EC), Offset(i * (w + gap), top), Size(w, h), CornerRadius(w * 0.18f))
+            continue
+        }
+        val drop = (1f - landed) * h * 0.8f
+        drawRoundRect(
+            if (lit) accent else players[i],
+            Offset(i * (w + gap), top - drop),
+            Size(w, h),
+            CornerRadius(w * 0.18f),
+            alpha = 0.35f + 0.65f * landed,
+        )
+        // A letter's crossbar and stem, enough to read as a letter at this size.
+        val x = i * (w + gap) + w / 2f
+        val ink = Color(0xFF06121F)
+        drawLine(ink, Offset(x, top - drop + h * 0.25f), Offset(x, top - drop + h * 0.75f), w * 0.14f)
+        drawLine(ink, Offset(x - w * 0.22f, top - drop + h * 0.25f), Offset(x + w * 0.22f, top - drop + h * 0.25f), w * 0.14f)
+    }
 }
 
 private fun DrawScope.plainGlyph(accent: Color) {

@@ -18,6 +18,18 @@ android {
             // ARCore ships arm ABIs only. Dropping x86 keeps the APK small.
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
+
+        // The Spellinator server the app connects to out of the box, e.g.
+        // wss://spell.example.org. Not written here: CI passes it in from the repo
+        // variable SPELL_SERVER_URL, and a local build can set it in
+        // ~/.gradle/gradle.properties as spellServerUrl. Without either the app asks for
+        // one the first time Spellinator is opened. See docs/SPELLINATOR.md.
+        val spellServer = providers.environmentVariable("SPELL_SERVER_URL")
+            .orElse(providers.gradleProperty("spellServerUrl"))
+            .getOrElse("")
+            .trim()
+        require(spellServer.none { it == '"' || it == '\\' }) { "SPELL_SERVER_URL has a quote or backslash in it" }
+        buildConfigField("String", "SPELL_SERVER", "\"$spellServer\"")
     }
 
     // Release signing comes from the environment, never from a file in the repo.
@@ -52,6 +64,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     compileOptions {
@@ -84,6 +97,7 @@ android {
 
 dependencies {
     implementation(project(":core"))
+    implementation(project(":spell-client"))
 
     implementation(libs.arcore)
     implementation(libs.androidx.core.ktx)

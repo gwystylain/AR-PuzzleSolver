@@ -5,8 +5,9 @@ wall**, builds a flat rectified image of it as you scan, and overlays the soluti
 the instant the solution becomes determined, which for some puzzle types is well
 before you have finished scanning.
 
-Native Kotlin + ARCore. Fully local: no network calls, no cloud anchors, no model
-downloads. Optimised for throughput; power consumption is deliberately not a
+Native Kotlin + ARCore. Every solver is fully local: no network calls, no cloud anchors,
+no model downloads. The one online mode, Spellinator, talks only to a lobby server you run
+yourself. Optimised for throughput; power consumption is deliberately not a
 consideration.
 
 ## Install
@@ -28,8 +29,9 @@ AR][arcore] installed — an x86 emulator will not run it, since ARCore ships ar
 ABIs only. Because the APK does not come from the Play Store, Android will ask
 you to allow installing unknown apps for whichever app opened the file.
 
-Nothing leaves the device: no network calls, no cloud anchors, no model
-downloads. The camera permission is the only one requested.
+Nothing leaves the device except in Spellinator, which connects to your own lobby server
+and nothing else (see [docs/SPELLINATOR.md](docs/SPELLINATOR.md)). The camera permission is
+the only one that prompts; network access, for Spellinator, is granted at install.
 
 Building it yourself, or cutting a new release, is covered in
 [docs/RELEASING.md](docs/RELEASING.md).
@@ -91,6 +93,14 @@ Their stages are fixed, so the app carries a transcription of every level, works
 pressing order for each stage, and splits it between the players so that independent
 parts are pressed at the same time. See [docs/STRATEGY_PUZZLE.md](docs/STRATEGY_PUZZLE.md).
 
+**Spellinator** has no camera either, and is the one mode that is online. Each player types
+the letters they can see on their own phone, the phones meet in a lobby on a server run in
+Docker on the NAS, and every phone shows every word of the chosen length, from the Collins
+word list, that the team's letters spell together, live as they are typed. Lobbies need no
+accounts: host, and the others tap to join. The design is built around phones on cellular
+dropping their connection, and around latency: a keypress reaches the other phones in one
+round trip. See [docs/SPELLINATOR.md](docs/SPELLINATOR.md).
+
 Gems and Terminal do **not** use the AR pipeline. Both own the camera directly and read
 each frame in image space with no pose, wall fit or canvas — Gems because ARCore will not
 let it set an exposure the gem rings are visible at, Terminal because the wall changes
@@ -130,10 +140,13 @@ there end to end** — 32 displays found, the two lowest numbers outlined on the
 panels, the ranking steady on every heartbeat — against the reference clip played back on
 a monitor. Nothing has yet been pointed at any of the three rooms themselves.
 
-- `./gradlew :core:test` — 137 tests, 137 passing, including a whole terminal wall read
+- `./gradlew :core:test` — 186 tests, 186 passing, including a whole terminal wall read
   off a real frame
-- `./gradlew :app:testDebugUnitTest` — 43 tests, 43 passing (camera tuning, the
+- `./gradlew :app:testDebugUnitTest` — 55 tests, 55 passing (camera tuning, the
   auto-exposure loop and the preview geometry, all pure state machines and maths)
+- `./gradlew :spell:test :spell-client:test :spell-server:test` — 57 tests, 57 passing
+  (one more skips unless pointed at a deployed server), including the phone's connection
+  code against the real lobby server through a proxy that drops and stalls connections
 - `./gradlew :app:assembleDebug` — succeeds, zero compiler warnings, ~10 MB debug APK
 
 Verified against JDK 17.0.20 (Temurin), Gradle 8.13, AGP 8.9.1, compileSdk 35 on
@@ -211,6 +224,10 @@ core/                      pure JVM, no Android -- unit-testable in milliseconds
                            the pressing-order search and the split between players, no
                            camera -- see docs/STRATEGY_PUZZLE.md
   PuzzleEngine.kt          detect -> read -> solve, platform-free
+spell/                     Spellinator's protocol, limits and word finder, shared by both
+                           ends -- see docs/SPELLINATOR.md
+spell-client/              the phone's connection to the lobby server: reconnects, resumes
+spell-server/              the lobby server (Ktor), its Dockerfile and TrueNAS app YAML
 app/
   frame/                   FrameSource: live ARCore, AR dataset replay, plain video,
                            and a pose-free Camera2 source with a real exposure dial
@@ -220,9 +237,10 @@ app/
   pipeline/                ScanPipeline -- GL thread and solver thread, wired together
                            AutoExposure -- solver-driven exposure search
   ui/                      Compose: the landing page the rooms are picked from, the
-                           scanning HUD with the Gems target controls, and the
-                           Strategy guide screen
+                           scanning HUD with the Gems target controls, the
+                           Strategy guide screen and the Spellinator lobby
   record/                  where recordings live
+  spell/                   Spellinator's network callback and saved seat
 tools/
   strategy/                the room transcriptions and the script that turns them into
                            core's bundled stage file

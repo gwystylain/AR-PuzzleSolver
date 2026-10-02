@@ -507,15 +507,6 @@ private fun Chip(
 
 // --- Drawing ---------------------------------------------------------
 
-/** One per player, in the order they are numbered; the chips and the board share them. */
-private val PLAYER_COLOURS = listOf(
-    Color(0xFFFF8C00),
-    Color(0xFF33DD77),
-    Color(0xFF4CC9F0),
-    Color(0xFFF06292),
-    Color(0xFFFFD166),
-)
-
 private val COLOUR_EMPTY = Color(0xFF1E262E)
 private val COLOUR_LINE = Color(0xFF0B0E11)
 private val COLOUR_WALL = Color(0xFF3A3F45)

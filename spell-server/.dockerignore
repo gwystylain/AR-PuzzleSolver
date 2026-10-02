@@ -1,0 +1,4 @@
+# Only the built server goes into the build context. Above all, data/ -- the word list --
+# must never reach an image that is published publicly.
+*
+!build/install/spell-server/**
