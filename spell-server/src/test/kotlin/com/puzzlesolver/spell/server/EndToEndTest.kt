@@ -77,16 +77,19 @@ class EndToEndTest {
         runBlocking { withTimeoutOrNull(timeoutMillis) { state.first(predicate) } }
             ?: fail("timed out waiting for $what; last state: ${state.value}")
 
+    // Both wait for the lobby's state as well as the seat. The seat comes first, and until
+    // the state follows a phone sees only itself in the lobby -- which a test then asking
+    // "is the other player gone?" would take for yes.
     private fun SpellSession.hostLobby(): String {
         await("connected") { it.link is Link.Online }
         host()
-        return await("seated") { it.room?.seated == true }.room!!.lobby
+        return await("seated") { it.room?.seated == true && it.room!!.current }.room!!.lobby
     }
 
     private fun SpellSession.joinLobby(id: String): Int {
         await("lobby $id listed") { s -> s.lobbies.any { it.id == id } }
         join(id)
-        return await("seated in $id") { it.room?.seated == true }.room!!.me!!
+        return await("seated in $id") { it.room?.seated == true && it.room!!.current }.room!!.me!!
     }
 
     private fun SpellSession.typeAll(letters: String) = letters.forEach { type(it) }
@@ -247,6 +250,7 @@ class EndToEndTest {
         val id = a.hostLobby()
         b.joinLobby(id)
         a.typeAll("STOP")
+        b.await("A's letters") { st -> st.room?.players?.any { it.id == 1 && it.letters == "STOP" } == true }
 
         a.stop()
         b.await("A's seat given up") { st -> st.room?.players?.none { it.id == 1 } == true }
