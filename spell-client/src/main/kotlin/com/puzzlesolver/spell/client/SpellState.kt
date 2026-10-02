@@ -38,6 +38,11 @@ data class Room(
     /** The word length as last chosen here, or as the server has it. */
     val length: Int,
     val players: List<PlayerState>,
+    /**
+     * The word on everyone's screen, held by the server until a player clears their letters
+     * or the length changes; null when there is none.
+     */
+    val word: String?,
     val words: List<String>,
     val total: Int,
     /** Whether [words] already take in every change made on this phone. */

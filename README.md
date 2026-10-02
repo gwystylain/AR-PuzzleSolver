@@ -97,7 +97,7 @@ parts are pressed at the same time. See [docs/STRATEGY_PUZZLE.md](docs/STRATEGY_
 the letters they can see on their own phone, the phones meet in a lobby on a server run in
 Docker on the NAS, and every phone shows a word of the chosen length, from the Collins
 word list, that the team's letters spell together, each letter in the colour of the player
-who has it, live as they are typed. Lobbies need no
+who has it. The first word found is held until a player clears their letters. Lobbies need no
 accounts: host, and the others tap to join. The design is built around phones on cellular
 dropping their connection, and around latency: a keypress reaches the other phones in one
 round trip. See [docs/SPELLINATOR.md](docs/SPELLINATOR.md).
@@ -145,7 +145,7 @@ a monitor. Nothing has yet been pointed at any of the three rooms themselves.
   off a real frame
 - `./gradlew :app:testDebugUnitTest` — 55 tests, 55 passing (camera tuning, the
   auto-exposure loop and the preview geometry, all pure state machines and maths)
-- `./gradlew :spell:test :spell-client:test :spell-server:test` — 63 tests, 63 passing
+- `./gradlew :spell:test :spell-client:test :spell-server:test` — 69 tests, 69 passing
   (one more skips unless pointed at a deployed server), including the phone's connection
   code against the real lobby server through a proxy that drops and stalls connections
 - `./gradlew :app:assembleDebug` — succeeds, zero compiler warnings, ~10 MB debug APK

@@ -64,6 +64,14 @@ class LobbyManager(
         var wordsKey: List<Int> = emptyList()
         var words = Matches.NONE
 
+        /**
+         * The word on everyone's screen: the first one found, held while more letters come
+         * in, so a better word turning up does not snatch away one the team may already be
+         * spelling. Let go when a player clears their letters, when the length changes, or
+         * when nobody has any letters left; the next word found is then held in its place.
+         */
+        var held: String? = null
+
         fun freeSlot(): Int? = (1..Rules.MAX_PLAYERS).firstOrNull { it !in players }
     }
 
@@ -90,8 +98,16 @@ class LobbyManager(
                 is ClientMessage.Join -> join(peer, message.lobby)
                 is ClientMessage.Resume -> resume(peer, message)
                 ClientMessage.Leave -> leave(peer)
-                is ClientMessage.SetLetters -> change(peer, message.seq) { _, player -> player.letters = message.letters }
-                is ClientMessage.SetLength -> change(peer, message.seq) { lobby, _ -> lobby.length = message.length }
+                is ClientMessage.SetLetters -> change(peer, message.seq) { lobby, player ->
+                    // Clearing -- Clear all, or the last letter backspaced away -- lets the
+                    // held word go.
+                    if (player.letters.isNotEmpty() && message.letters.isEmpty()) lobby.held = null
+                    player.letters = message.letters
+                }
+                is ClientMessage.SetLength -> change(peer, message.seq) { lobby, _ ->
+                    if (message.length != lobby.length) lobby.held = null
+                    lobby.length = message.length
+                }
                 is ClientMessage.Ping -> Unit
             }
         }
@@ -269,19 +285,30 @@ class LobbyManager(
 
     private fun stateOf(lobby: Lobby): String {
         val each = lobby.players.values.map { LetterMask.of(it.letters) }.toIntArray()
+        val everyone = each.fold(0) { m, p -> m or p }
         val key = each.toList() + lobby.length
         if (key != lobby.wordsKey) {
-            lobby.words = lexicon.find(each.fold(0) { m, p -> m or p }, lobby.length, players = each)
+            lobby.words = lexicon.find(everyone, lobby.length, players = each)
             lobby.wordsKey = key
         }
+        if (everyone == 0) lobby.held = null
+        if (lobby.held == null) lobby.held = lobby.words.words.firstOrNull()
+        val held = lobby.held
         return Protocol.encode(
             ServerMessage.State(
                 lobby = lobby.id,
                 rev = lobby.rev,
                 length = lobby.length,
                 players = lobby.players.values.map { PlayerState(it.slot, it.letters, it.shownOnline, it.lastSeq) },
-                words = lobby.words.words,
+                // The held word first even in the list, so a phone that predates [word] and
+                // shows the list's first shows the same word as everyone else.
+                words = if (held == null) {
+                    lobby.words.words
+                } else {
+                    (listOf(held) + (lobby.words.words - held)).take(Rules.MAX_WORDS)
+                },
                 total = lobby.words.total,
+                word = held,
             ),
         )
     }

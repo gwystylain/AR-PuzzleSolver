@@ -128,7 +128,8 @@ sealed interface ServerMessage {
     /**
      * The whole lobby, sent to everyone in it on every change. [words] are the best of
      * [total] words of [length] letters spelt from everyone's letters together, best first
-     * as [Lexicon.find] ranks them: fewest different letters, then the most players.
+     * as [Lexicon.find] ranks them: fewest different letters, then the most players --
+     * except that the held [word], when there is one, is moved to the front.
      */
     @Serializable
     @SerialName("state")
@@ -139,6 +140,12 @@ sealed interface ServerMessage {
         val players: List<PlayerState>,
         val words: List<String>,
         val total: Int,
+        /**
+         * The word to show: the first one found, held until a player clears their letters
+         * or the length changes, even if better ones turn up meanwhile. Null when there is
+         * none. Absent from servers that predate it, which is why it defaults.
+         */
+        val word: String? = null,
     ) : ServerMessage
 
     /** You have left; you are browsing again. */

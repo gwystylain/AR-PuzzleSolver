@@ -546,6 +546,8 @@ class SpellSession(
                 letters = letters,
                 length = shownLength(),
                 players = players,
+                // A server from before held words sends none; its best word is the first.
+                word = server?.let { it.word ?: it.words.firstOrNull() },
                 words = server?.words.orEmpty(),
                 total = server?.total ?: 0,
                 current = server != null && mine != null && mine.ack >= newest && !adoptServerLetters,

@@ -420,14 +420,17 @@ private fun PlayerChip(player: PlayerState, isMe: Boolean) {
 /**
  * The one word to spell: of the chosen length, from the lobby's letters, the one with the
  * fewest different letters, then letters from the most players, then first alphabetically
- * -- the server ranks them (`Lexicon.find`). Each of its letters is a tile in the colour of the player who has it, so
+ * -- the server ranks them (`Lexicon.find`). The first word found is held: more letters, or
+ * a better word turning up, do not replace it, until a player clears their letters or the
+ * length changes, so a word the team has started spelling never moves under them. Each of
+ * its letters is a tile in the colour of the player who has it, so
  * every player sees at a glance which letters are theirs to put in; a letter more than one
  * player has is split between their colours, since any of them can supply it. A line per
  * player under it says the same in words, for anyone who cannot tell two colours apart.
  */
 @Composable
 private fun SuggestionPanel(room: Room, modifier: Modifier) {
-    val word = room.words.firstOrNull()
+    val word = room.word
     val shape = RoundedCornerShape(14.dp)
     Box(
         modifier
@@ -457,6 +460,12 @@ private fun SuggestionPanel(room: Room, modifier: Modifier) {
                     WordTiles(word, owners)
                     Spacer(Modifier.height(14.dp))
                     WhoHasWhat(word, owners, room.me)
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        "Held until someone clears their letters",
+                        color = TEXT_FAINT,
+                        fontSize = 12.sp,
+                    )
                 }
             }
         }

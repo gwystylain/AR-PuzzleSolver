@@ -144,17 +144,94 @@ class LobbyManagerTest {
         val (p1, id) = hosted()
         val p2 = joining(id)
         p1.say(ClientMessage.SetLength(1, 3))
-        p1.say(ClientMessage.SetLetters(2, "OP"))
+        // T alone spells nothing, so the first word is found with all the letters in.
         p2.say(ClientMessage.SetLetters(1, "T"))
+        p1.say(ClientMessage.SetLetters(2, "OP"))
         // TOO needs both players; OOP, alphabetically first, only P1.
-        assertEquals("TOO", p1.state().words.first())
-        // Same letters between them, different hands: now OOP needs both.
-        p1.say(ClientMessage.SetLetters(3, "T"))
-        p2.say(ClientMessage.SetLetters(2, "OP"))
-        assertEquals("TOO", p1.state().words.first())
-        p1.say(ClientMessage.SetLetters(4, "TO"))
+        assertEquals("TOO", p1.state().word)
+        // Both clear, and the same letters go in the other way round: now OOP needs both.
+        p1.say(ClientMessage.SetLetters(3, ""))
+        p2.say(ClientMessage.SetLetters(2, ""))
         p2.say(ClientMessage.SetLetters(3, "P"))
-        assertEquals("OOP", p1.state().words.first())
+        p1.say(ClientMessage.SetLetters(4, "TO"))
+        assertEquals("OOP", p1.state().word)
+    }
+
+    @Test
+    fun `the first word found is held while more letters come in`() {
+        val (p1, id) = hosted()
+        val p2 = joining(id)
+        p1.say(ClientMessage.SetLength(1, 3))
+        p1.say(ClientMessage.SetLetters(2, "TO"))
+        assertEquals("TOO", p1.state().word)
+        // With P in, OOP and POP outrank TOO -- they use both players -- but TOO stays.
+        p2.say(ClientMessage.SetLetters(1, "P"))
+        for (p in listOf(p1, p2)) {
+            assertEquals("TOO", p.state().word)
+            // First in the list too, so a phone that predates the held word shows the same one.
+            assertEquals("TOO", p.state().words.first())
+        }
+        p1.say(ClientMessage.SetLetters(3, "TOS"))
+        p1.say(ClientMessage.SetLetters(4, "TOSA"))
+        assertEquals("TOO", p2.state().word)
+    }
+
+    @Test
+    fun `clearing lets the held word go, and the next word found is held`() {
+        val (p1, id) = hosted()
+        val p2 = joining(id)
+        p1.say(ClientMessage.SetLength(1, 3))
+        p1.say(ClientMessage.SetLetters(2, "TO"))
+        p2.say(ClientMessage.SetLetters(1, "P"))
+        assertEquals("TOO", p2.state().word)
+
+        // Backspacing is not clearing until the last letter goes.
+        p1.say(ClientMessage.SetLetters(3, "T"))
+        assertEquals("TOO", p2.state().word)
+        p1.say(ClientMessage.SetLetters(4, ""))
+        // Only P2's P is left, which spells nothing.
+        assertNull(p2.state().word)
+
+        p1.say(ClientMessage.SetLetters(5, "O"))
+        assertEquals("OOP", p2.state().word)
+        // Clear all from the other player works the same way.
+        p2.say(ClientMessage.SetLetters(2, ""))
+        assertNull(p1.state().word, "O alone spells nothing in this word list")
+    }
+
+    @Test
+    fun `changing the length lets the held word go`() {
+        val (p1, id) = hosted()
+        val p2 = joining(id)
+        p1.say(ClientMessage.SetLength(1, 3))
+        p1.say(ClientMessage.SetLetters(2, "TO"))
+        p2.say(ClientMessage.SetLetters(1, "P"))
+        assertEquals("TOO", p1.state().word)
+        p2.say(ClientMessage.SetLength(2, 4))
+        // TOOT, the only four-letter word these letters make in this word list.
+        assertEquals("TOOT", p1.state().word)
+        // With an S, STOP is possible too, but TOOT is held; setting the length it already
+        // has changes nothing.
+        p2.say(ClientMessage.SetLetters(3, "PS"))
+        p1.say(ClientMessage.SetLength(3, 4))
+        assertEquals("TOOT", p1.state().word)
+        assertTrue("STOP" in p1.state().words)
+    }
+
+    @Test
+    fun `a held word stays when a player whose letter it needs leaves, until nobody has letters`() {
+        val (p1, id) = hosted()
+        val p2 = joining(id)
+        p1.say(ClientMessage.SetLength(1, 3))
+        p1.say(ClientMessage.SetLetters(2, "T"))
+        p2.say(ClientMessage.SetLetters(1, "OP"))
+        assertEquals("TOO", p2.state().word)
+        p1.say(ClientMessage.Leave)
+        // Nobody has a T now, but the team may be halfway through spelling it.
+        assertEquals("TOO", p2.state().word)
+        assertEquals("TOO", p2.state().words.first())
+        p2.say(ClientMessage.SetLetters(2, ""))
+        assertNull(p2.state().word)
     }
 
     @Test

@@ -37,6 +37,19 @@ player lists their letters of it ("You  T", "P2  O"), for anyone who cannot tell
 colours apart. A small spinner in the corner means the word does not yet include your
 latest keypress, which it will a round trip later.
 
+**The first word found is held.** Once a word is on the screen it stays there, on every
+phone, however many letters are typed after it and whatever better word they make: a word
+the team has started spelling never changes under them. It is let go when
+
+- any player clears their letters -- **Clear all**, or backspacing the last one away;
+- anyone changes the word length; or
+- nobody has any letters left.
+
+The next word found is then held in its place. A held word also stays if a player whose
+letter it needs leaves; that letter's tile goes grey, since nobody has it any more. The
+server does the holding, so every phone shows the same word, and one that reconnects gets
+it back.
+
 (The server ranks every word and sends the best 400 with each update; the phone shows the
 first. The rest cost a few kilobytes an update and leave room to show more again without
 touching the server. The ranking is done by counting, not sorting -- see `Lexicon.find` --
@@ -118,7 +131,7 @@ a future protocol can be served alongside this one.
 | --- | --- |
 | `lobbies` | The open lobbies, newest first |
 | `joined {lobby, player, token, ack}` | You are seated; `token` takes the seat back later |
-| `state` | The whole lobby: length, every player's letters, online and `ack`, and the words |
+| `state` | The whole lobby: length, every player's letters, online and `ack`, the held `word`, and the ranked words |
 | `error {code}`, `left`, `pong {at}` | |
 
 Two choices carry most of the weight:

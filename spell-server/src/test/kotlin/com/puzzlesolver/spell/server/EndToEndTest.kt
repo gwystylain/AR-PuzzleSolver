@@ -116,6 +116,30 @@ class EndToEndTest {
     }
 
     @Test
+    fun `the first word is held on every phone until someone clears their letters`() {
+        val s = server()
+        val a = session(s.port)
+        val b = session(s.port)
+        val id = a.hostLobby()
+        b.joinLobby(id)
+        a.setLength(3)
+        a.typeAll("TO")
+        a.await("TOO found") { it.room?.word == "TOO" && it.room!!.current }
+
+        // With B's P, OOP would rank first; TOO stays on both phones.
+        b.type('P')
+        val held = b.await("B's P in") { st -> st.room?.current == true && st.room!!.players.any { it.letters == "P" } }
+        assertEquals("TOO", held.room!!.word)
+        assertEquals("TOO", a.await("A sees B's P") { st -> st.room?.players?.any { it.letters == "P" } == true }.room!!.word)
+
+        // A clears: B's P alone spells nothing, then A's O makes OOP the new held word.
+        a.clear()
+        b.await("TOO let go") { st -> st.room?.word == null && st.room!!.players.none { it.letters.contains('T') } }
+        a.type('O')
+        for (p in listOf(a, b)) p.await("OOP found") { it.room?.word == "OOP" && it.room!!.current }
+    }
+
+    @Test
     fun `a keypress reaches the other phones in milliseconds`() {
         val s = server()
         val a = session(s.port)

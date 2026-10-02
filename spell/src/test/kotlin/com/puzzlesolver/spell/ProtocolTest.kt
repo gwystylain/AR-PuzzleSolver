@@ -33,7 +33,7 @@ class ProtocolTest {
             ServerMessage.State(
                 "KQZT", 9, 3,
                 listOf(PlayerState(1, "T", true, 3), PlayerState(2, "OP", false, 0)),
-                listOf("TOP", "POT"), 7,
+                listOf("TOP", "POT"), 7, word = "TOP",
             ),
             ServerMessage.Left,
             ServerMessage.Error(ErrorCode.LOBBY_FULL, "full"),
@@ -46,6 +46,12 @@ class ProtocolTest {
     fun `the tag is short and the payload is plain`() {
         assertEquals("""{"t":"letters","seq":7,"letters":"TOP"}""", Protocol.encode(ClientMessage.SetLetters(7, "TOP")))
         assertEquals("""{"t":"browse"}""", Protocol.encode(ClientMessage.Browse))
+    }
+
+    @Test
+    fun `a state from a server that predates the held word reads as having none`() {
+        val old = """{"t":"state","lobby":"KQZT","rev":1,"length":3,"players":[],"words":["OOP"],"total":1}"""
+        assertNull((Protocol.decodeServer(old) as ServerMessage.State).word)
     }
 
     @Test
