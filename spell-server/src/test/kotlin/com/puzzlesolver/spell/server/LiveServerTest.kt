@@ -12,12 +12,14 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assume.assumeTrue
 import org.junit.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
 /**
  * A smoke test of a deployed server, from wherever this runs: two connections, one lobby,
- * the brief's example, and the real round trip. Skipped unless pointed at a server:
+ * the brief's example, the held word, and the real round trip. Skipped unless pointed at a
+ * server:
  *
  *     ./gradlew :spell-server:test --tests '*LiveServerTest*' -Dspell.live=spell.example.org
  *
@@ -43,9 +45,12 @@ class LiveServerTest {
             a.setLength(3)
             a.type('T')
             a.type('O')
+            val held = a.await("a word from T and O") { st -> st.room?.let { it.current && it.word != null } == true }.room!!.word
+            // P makes better words than any from T and O alone; the first one found stays.
             b.type('P')
             val words = b.await("TOP") { st -> st.room?.let { it.current && "TOP" in it.words } == true }.room!!
-            println("$base: lobby $id, ${words.total} three-letter words from T, O, P: ${words.words}")
+            assertEquals(held, words.word, "the first word found is held")
+            println("$base: lobby $id, held $held; ${words.total} three-letter words from T, O, P: ${words.words}")
 
             val samples = mutableListOf<Double>()
             runBlocking {

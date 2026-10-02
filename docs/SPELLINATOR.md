@@ -304,10 +304,11 @@ From any machine with the repo, against the real deployment:
 ./gradlew :spell-server:test --tests '*LiveServerTest*' -Dspell.live=spellinator.<you>.duckdns.org
 ```
 
-It opens a lobby, joins it from a second connection, checks that T, O and P give TOP, and
-prints the real keypress-to-other-phone time and ping from where it ran. Run from the house
-it measures the hairpin through the router. Run from a laptop tethered to a phone, it
-measures what the players will get.
+It opens a lobby, joins it from a second connection, checks that T, O and P give TOP and
+that the first word found is held when a better one turns up, and prints the real
+keypress-to-other-phone time and ping from where it ran. Run from the house, it may go
+straight to the NAS if local DNS answers the name with its LAN address. Run from a laptop
+tethered to a phone, it measures what the players will get.
 
 ## Configuration
 
