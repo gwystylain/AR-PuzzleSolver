@@ -313,11 +313,14 @@ class EndToEndTest {
         val id = a.hostLobby()
         b.joinLobby(id)
         a.typeAll("OPT")
-        a.await("sent") { it.room?.current == true }
+        // The letters themselves, acknowledged: "current" alone is already true before the
+        // typing has been taken in, and closing then would lose a race no real kill can,
+        // since a phone saves each letter as it is typed.
+        a.await("sent") { it.room?.letters == "OPT" && it.room!!.current }
         a.close()
 
         val again = session(s.port, store)
-        val room = again.await("restored") { it.room?.seated == true }.room!!
+        val room = again.await("restored") { it.room?.seated == true && it.room!!.current }.room!!
         assertEquals(1, room.me)
         assertEquals("OPT", room.letters)
         again.type('S')
