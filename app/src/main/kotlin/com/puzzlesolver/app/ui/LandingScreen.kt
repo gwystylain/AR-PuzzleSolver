@@ -229,7 +229,7 @@ private val LOOKS: Map<String, Look> = mapOf(
     TerminalAdapter.ID to Look(Color(0xFFFFC53D), "The two lowest numbers, live", 2100) { p, c -> terminalGlyph(p, c) },
     StrategyRoom.STRATEGY.id to Look(Color(0xFFFF9F1C), "Every wave's pressing order, split between players", 2400) { p, c -> strategyGlyph(p, c) },
     StrategyRoom.GRIDLOCK.id to Look(Color(0xFFB388FF), "Two boards, one plan, split between players", 2000) { p, c -> gridlockGlyph(p, c) },
-    SPELLINATOR_ID to Look(SPELL_ACCENT, "Everyone's letters, every word they spell", 2400) { p, c -> spellGlyph(p, c) },
+    SPELLINATOR_ID to Look(SPELL_ACCENT, "One word from everyone's letters, in their colours", 2400) { p, c -> spellGlyph(p, c) },
 )
 
 private val PLAIN = Look(Color(0xFF9AA6B2), "", 1000) { _, c -> plainGlyph(c) }

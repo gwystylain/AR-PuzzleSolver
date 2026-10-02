@@ -2,8 +2,9 @@
 
 A team word room. Every player can see some letters; the answer is a word of a given
 length spelt from all of them together. In the app, each player types the letters in
-front of them on their own phone, anyone picks the word length, and every phone shows
-every word of that length the team's letters can spell, as each letter is typed.
+front of them on their own phone, anyone picks the word length, and every phone shows a
+word of that length the team's letters spell, each letter in the colour of the player who
+has it, as each letter is typed.
 
 It is the one mode that is **online**. The phones meet in a lobby on a small server you
 run yourself, on the NAS. Nothing else in the app touches the network, and this mode
@@ -25,9 +26,21 @@ talks only to that server.
 6. **Clear all** empties your own letters; ⌫ takes back the last one. **Leave** needs two
    taps, so a stray thumb does not give up the seat.
 
-The words are listed alphabetically, the first 400 when there are more, with the total
-above them. A small spinner beside the count means the list does not yet include your
+The phone shows one word of the chosen length that the team's letters spell: the one with
+the **fewest different letters** (fewer letters to find), then, of those, the one using
+letters from **the most players**, then the first alphabetically. For T, O and P at length
+3 that is OOP: six words tie on two different letters and two players, and OOP comes
+first. Each letter is a tile in the colour of the player who has it, so
+everyone can see which letters are theirs to put in; a letter more than one player has is
+split between their colours, since any of them can supply it. Under the word, a line per
+player lists their letters of it ("You  T", "P2  O"), for anyone who cannot tell two
+colours apart. A small spinner in the corner means the word does not yet include your
 latest keypress, which it will a round trip later.
+
+(The server ranks every word and sends the best 400 with each update; the phone shows the
+first. The rest cost a few kilobytes an update and leave room to show more again without
+touching the server. The ranking is done by counting, not sorting -- see `Lexicon.find` --
+so it costs nothing measurable even when tens of thousands of words match.)
 
 On the keypad, your own letters are lit in your colour and letters someone else has are
 raised, so a glance at it shows what the team has between you.
@@ -49,8 +62,9 @@ live (see below).
 
 Collins Scrabble Words 2024 (CSW24): 280,887 words, of which the server loads the 120,018
 of 3 to 8 letters. A lookup is a scan of one length's words against a 26-bit mask of the
-team's letters. Even the longest, eight letters at 42,341 words, takes about 40 µs when
-nearly every word matches, so the word list adds nothing measurable to an update.
+team's letters, and a second scan to rank them (see *Playing*). Even the longest, eight
+letters at 42,341 words, all matching and all ranked against five players, takes about
+0.3 ms, so the word list adds nothing measurable to an update.
 
 **It is not in this repository, the APK or the server image, and must not be.** The list
 is HarperCollins' copyright, licensed for private, non-commercial use, and the repository,
@@ -215,18 +229,37 @@ to protect.
 
 ### 2. TrueNAS
 
-1. Create `/mnt/HDDs/Applications/Spellinator` and copy `csw24.txt` into it, readable by
-   the apps user (568).
-2. Apps → Discover Apps → Custom App → Install via YAML, and paste
-   [`spell-server/truenas.yaml`](../spell-server/truenas.yaml). It publishes port 8096.
-3. The log should open with `120018 words from csw24.txt`.
+The word list goes in the `SSD/ApplicationsDataset/ActivateAppServer` dataset. From the
+repo on the PC (Windows has `scp` built in), copy it to your home directory on the NAS:
+
+```bash
+scp spell-server/data/csw24.txt truenas_admin@<NAS address>:~/
+```
+
+then, in a shell on the NAS, move it into the dataset and hand it to the apps user:
+
+```bash
+sudo mv ~/csw24.txt /mnt/SSD/ApplicationsDataset/ActivateAppServer/
+sudo chown 568:568 /mnt/SSD/ApplicationsDataset/ActivateAppServer/csw24.txt
+sha256sum /mnt/SSD/ApplicationsDataset/ActivateAppServer/csw24.txt
+```
+
+The checksum should be the one under *The word list* above. The file has to be in place
+before the app is first started: Docker answers a missing file mount by making an empty
+directory in its place, and the server then stops at once, saying so in its log. If that
+has happened, `sudo rmdir` the directory, copy the file in, and start the app again.
+
+Then Apps → Discover Apps → Custom App → Install via YAML, and paste
+[`spell-server/truenas.yaml`](../spell-server/truenas.yaml). It publishes port 8422, mounts
+only the word list, read-only, and runs as the apps user with a read-only filesystem and
+no capabilities. Its log should open with `120018 words from csw24.txt`.
 
 ### 3. A hostname, and TLS
 
 DuckDNS resolves any name under your subdomain, so `spellinator.<you>.duckdns.org` already
 points home. In the reverse proxy that serves your other apps, add a proxy host for it:
 
-- forward to `http://<NAS LAN address>:8096`;
+- forward to `http://<NAS LAN address>:8422`;
 - **WebSocket support on.** In Nginx Proxy Manager it is the *Websockets Support* switch.
   In plain nginx it is `proxy_http_version 1.1` with the `Upgrade` and `Connection`
   headers passed through;
@@ -234,7 +267,7 @@ points home. In the reverse proxy that serves your other apps, add a proxy host 
 - `X-Forwarded-For` set by the proxy. Nginx Proxy Manager does this already.
 
 The proxy's idle timeout is no concern: the app pings every two seconds. Do **not** forward
-port 8096 on the router.
+port 8422 on the router.
 
 ### 4. Pointing the app at it
 

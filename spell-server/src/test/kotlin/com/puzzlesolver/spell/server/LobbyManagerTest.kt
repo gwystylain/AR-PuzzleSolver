@@ -81,8 +81,9 @@ class LobbyManagerTest {
             val s = p.state()
             assertEquals(3, s.length)
             assertTrue("TOP" in s.words, "player sees ${s.words}")
-            // Letters are reusable, so TOO and POP count too; TAPS needs an A and an S.
-            assertEquals(listOf("OOP", "OPT", "POP", "POT", "TOO", "TOP", "TOT"), s.words)
+            // Letters are reusable, so TOO and POP count too; TAPS needs an A and an S. The
+            // words with two different letters come first, OOP first of those.
+            assertEquals(listOf("OOP", "POP", "TOO", "TOT", "OPT", "POT", "TOP"), s.words)
             assertEquals(listOf("T", "O", "P"), s.players.map { it.letters })
         }
     }
@@ -136,6 +137,24 @@ class LobbyManagerTest {
         assertTrue("TOP" in p1.state().words)
         p2.say(ClientMessage.Leave)
         assertEquals(listOf("TOO", "TOT"), p1.state().words)
+    }
+
+    @Test
+    fun `the words are ranked by whose letters they use`() {
+        val (p1, id) = hosted()
+        val p2 = joining(id)
+        p1.say(ClientMessage.SetLength(1, 3))
+        p1.say(ClientMessage.SetLetters(2, "OP"))
+        p2.say(ClientMessage.SetLetters(1, "T"))
+        // TOO needs both players; OOP, alphabetically first, only P1.
+        assertEquals("TOO", p1.state().words.first())
+        // Same letters between them, different hands: now OOP needs both.
+        p1.say(ClientMessage.SetLetters(3, "T"))
+        p2.say(ClientMessage.SetLetters(2, "OP"))
+        assertEquals("TOO", p1.state().words.first())
+        p1.say(ClientMessage.SetLetters(4, "TO"))
+        p2.say(ClientMessage.SetLetters(3, "P"))
+        assertEquals("OOP", p1.state().words.first())
     }
 
     @Test

@@ -126,8 +126,9 @@ sealed interface ServerMessage {
     data class Joined(val lobby: String, val player: Int, val token: String, val ack: Long) : ServerMessage
 
     /**
-     * The whole lobby, sent to everyone in it on every change. [words] are the first of
-     * [total] words of [length] letters spelt from everyone's letters together.
+     * The whole lobby, sent to everyone in it on every change. [words] are the best of
+     * [total] words of [length] letters spelt from everyone's letters together, best first
+     * as [Lexicon.find] ranks them: fewest different letters, then the most players.
      */
     @Serializable
     @SerialName("state")

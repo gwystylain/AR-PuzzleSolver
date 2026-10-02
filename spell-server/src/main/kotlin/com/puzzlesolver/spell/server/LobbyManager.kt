@@ -58,10 +58,10 @@ class LobbyManager(
         var rev = 0L
         val players = TreeMap<Int, Player>()
 
-        // The last lookup, kept because most changes -- a letter someone else already
-        // has, a reconnect -- do not change what it would return.
-        var wordsMask = -1
-        var wordsLength = -1
+        // The last lookup, kept because many changes -- a repeated letter, a reconnect --
+        // do not change what it would return. Keyed by each player's letters as well as
+        // everyone's, since who has which letters decides the order.
+        var wordsKey: List<Int> = emptyList()
         var words = Matches.NONE
 
         fun freeSlot(): Int? = (1..Rules.MAX_PLAYERS).firstOrNull { it !in players }
@@ -268,11 +268,11 @@ class LobbyManager(
     }
 
     private fun stateOf(lobby: Lobby): String {
-        val mask = lobby.players.values.fold(0) { m, p -> m or LetterMask.of(p.letters) }
-        if (mask != lobby.wordsMask || lobby.length != lobby.wordsLength) {
-            lobby.words = lexicon.find(mask, lobby.length)
-            lobby.wordsMask = mask
-            lobby.wordsLength = lobby.length
+        val each = lobby.players.values.map { LetterMask.of(it.letters) }.toIntArray()
+        val key = each.toList() + lobby.length
+        if (key != lobby.wordsKey) {
+            lobby.words = lexicon.find(each.fold(0) { m, p -> m or p }, lobby.length, players = each)
+            lobby.wordsKey = key
         }
         return Protocol.encode(
             ServerMessage.State(

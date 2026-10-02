@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -29,10 +28,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -53,9 +48,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -78,11 +75,12 @@ const val SPELLINATOR_ID = "spellinator"
 
 /**
  * Spellinator: everyone in the lobby types the letters they can see, and every phone shows
- * the words of the chosen length that can be spelt from all of them together.
+ * a word of the chosen length spelt from all of them together, each letter in the colour of
+ * the player who has it.
  *
  * Two screens. Until you are in a lobby, the open lobbies and a button to host one. Once
  * in, from top to bottom: whose lobby and how good the link is, the word length (anyone
- * can change it, for everyone), everyone's letters, the words, and your own letters over a
+ * can change it, for everyone), everyone's letters, the word, and your own letters over a
  * keypad.
  *
  * The keypad is the app's own, not the phone's keyboard: what is typed is a string of
@@ -261,7 +259,7 @@ private fun RoomView(
                 Column(Modifier.weight(1.3f).fillMaxHeight()) {
                     RoomTop(room, link, onLeave, onLength)
                     Spacer(Modifier.height(8.dp))
-                    WordsPanel(room, Modifier.weight(1f))
+                    SuggestionPanel(room, Modifier.weight(1f))
                 }
                 Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.Bottom) {
                     MyLetters(room, onClear)
@@ -273,7 +271,7 @@ private fun RoomView(
             Column(Modifier.fillMaxSize()) {
                 RoomTop(room, link, onLeave, onLength)
                 Spacer(Modifier.height(8.dp))
-                WordsPanel(room, Modifier.weight(1f))
+                SuggestionPanel(room, Modifier.weight(1f))
                 Spacer(Modifier.height(8.dp))
                 MyLetters(room, onClear)
                 Spacer(Modifier.height(8.dp))
@@ -419,62 +417,127 @@ private fun PlayerChip(player: PlayerState, isMe: Boolean) {
     }
 }
 
+/**
+ * The one word to spell: of the chosen length, from the lobby's letters, the one with the
+ * fewest different letters, then letters from the most players, then first alphabetically
+ * -- the server ranks them (`Lexicon.find`). Each of its letters is a tile in the colour of the player who has it, so
+ * every player sees at a glance which letters are theirs to put in; a letter more than one
+ * player has is split between their colours, since any of them can supply it. A line per
+ * player under it says the same in words, for anyone who cannot tell two colours apart.
+ */
 @Composable
-private fun WordsPanel(room: Room, modifier: Modifier) {
-    // Kept in place by position, not by word. Keyed by word, the grid holds on to whichever
-    // word was at the top when the list is replaced, so a new list can open halfway down --
-    // at ARTAL rather than AALII -- with nothing to say the start is above. A new length is
-    // a new list altogether, so it starts again from the top.
-    val grid = rememberLazyGridState()
-    LaunchedEffect(room.length) { grid.scrollToItem(0) }
-    Column(
+private fun SuggestionPanel(room: Room, modifier: Modifier) {
+    val word = room.words.firstOrNull()
+    val shape = RoundedCornerShape(14.dp)
+    Box(
         modifier
             .fillMaxWidth()
-            .background(CARD, RoundedCornerShape(14.dp))
-            .padding(10.dp),
+            .background(CARD, shape)
+            .then(if (word != null) Modifier.border(2.dp, ACCENT.copy(alpha = 0.6f), shape) else Modifier)
+            .padding(12.dp),
+        contentAlignment = Alignment.Center,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            val shown = room.words.size
-            Text(
-                when {
-                    room.total == 0 -> "Words"
-                    room.total > shown -> "First $shown of ${"%,d".format(room.total)} words"
-                    room.total == 1 -> "1 word"
-                    else -> "${room.total} words"
-                },
-                color = TEXT_DIM,
-                fontSize = 13.sp,
-            )
-            Spacer(Modifier.weight(1f))
-            // The words are the server's and lag a keypress by a round trip; this says so
-            // rather than leaving an old list looking like the answer.
-            if (!room.current) CircularProgressIndicator(Modifier.size(14.dp), color = ACCENT, strokeWidth = 2.dp)
-        }
-        Spacer(Modifier.height(6.dp))
         when {
             room.everyone == 0 -> Hint("Type the letters you can see. Everyone's letters count, and any letter can be used more than once.")
-            room.words.isEmpty() && room.current -> Hint("No ${room.length}-letter words from these letters.")
-            else -> LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = (room.length * 15 + 18).dp),
-                state = grid,
-                modifier = Modifier.fillMaxSize().alpha(if (room.current) 1f else 0.6f),
-                contentPadding = PaddingValues(bottom = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                items(room.words) { word ->
+            word == null && room.current -> Hint("No ${room.length}-letter word from these letters.")
+            word != null -> {
+                val owners = word.map { c -> room.players.filter { c in it.letters }.map { it.id } }
+                Column(
+                    Modifier.alpha(if (room.current) 1f else 0.6f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
                     Text(
-                        word,
-                        color = Color.White,
-                        fontFamily = FontFamily.Monospace,
+                        "SPELL THIS",
+                        color = TEXT_FAINT,
+                        fontSize = 11.sp,
+                        letterSpacing = 2.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    WordTiles(word, owners)
+                    Spacer(Modifier.height(14.dp))
+                    WhoHasWhat(word, owners, room.me)
+                }
+            }
+        }
+        // The word is the server's and lags a keypress by a round trip; this says so rather
+        // than leaving an old answer looking like the new one.
+        if (!room.current) {
+            CircularProgressIndicator(
+                Modifier.align(Alignment.TopEnd).size(14.dp),
+                color = ACCENT,
+                strokeWidth = 2.dp,
+            )
+        }
+    }
+}
+
+/** The word as big tiles, each filled with its owners' colours side by side. */
+@Composable
+private fun WordTiles(word: String, owners: List<List<Int>>) {
+    BoxWithConstraints(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        val gap = 6.dp
+        val tile = minOf(64.dp, (maxWidth - gap * (word.length - 1)) / word.length)
+        val fontSize = with(LocalDensity.current) { (tile * 0.6f).toSp() }
+        Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+            word.forEachIndexed { i, c ->
+                val shape = RoundedCornerShape(tile * 0.18f)
+                Box(
+                    Modifier
+                        .size(width = tile, height = tile * 1.2f)
+                        .clip(shape)
+                        .background(KEY),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (owners[i].isNotEmpty()) {
+                        Row(Modifier.fillMaxSize()) {
+                            for (id in owners[i]) {
+                                Box(Modifier.weight(1f).fillMaxHeight().background(PLAYER_COLOURS[id - 1]))
+                            }
+                        }
+                    }
+                    Text(
+                        "$c",
+                        color = if (owners[i].isEmpty()) TEXT else INK,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 20.sp,
-                        letterSpacing = 1.sp,
-                        modifier = Modifier
-                            .background(KEY, RoundedCornerShape(6.dp))
-                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                        fontSize = fontSize,
                     )
                 }
+            }
+        }
+    }
+}
+
+/** "P1  T", "P2  O" -- each player's share of the word, in the word's order. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun WhoHasWhat(word: String, owners: List<List<Int>>, me: Int?) {
+    val shares = owners.flatten().distinct().sorted().map { id ->
+        id to word.filterIndexed { i, _ -> id in owners[i] }.toList().distinct().joinToString(" ")
+    }
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        for ((id, letters) in shares) {
+            val colour = PLAYER_COLOURS[id - 1]
+            val shape = RoundedCornerShape(8.dp)
+            Row(
+                Modifier
+                    .background(KEY, shape)
+                    .then(if (id == me) Modifier.border(1.dp, colour, shape) else Modifier)
+                    .padding(end = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier
+                        .background(colour, RoundedCornerShape(topStart = 8.dp, bottomStart = 8.dp))
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
+                ) {
+                    Text(if (id == me) "You" else "P$id", color = INK, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+                Spacer(Modifier.width(6.dp))
+                Text(letters, color = TEXT, fontWeight = FontWeight.Bold, fontSize = 15.sp)
             }
         }
     }
