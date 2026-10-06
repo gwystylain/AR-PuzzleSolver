@@ -1,6 +1,9 @@
 package com.puzzlesolver.spell.client
 
+import com.puzzlesolver.spell.GameMode
 import com.puzzlesolver.spell.LetterMask
+import com.puzzlesolver.spell.OneAndDone
+import com.puzzlesolver.spell.Rules
 import com.puzzlesolver.spell.LobbySummary
 import com.puzzlesolver.spell.PlayerState
 
@@ -49,9 +52,22 @@ data class Room(
     val current: Boolean,
     /** Whether the server has this phone seated right now, as opposed to reconnecting. */
     val seated: Boolean,
+    val mode: GameMode = GameMode.CLASSIC,
+    /** The host's player number. */
+    val host: Int = 0,
+    /** One and Done 2.0: the round's saved words so far. */
+    val saved: List<String> = emptyList(),
 ) {
     /** Every letter anyone in the lobby has, as a [LetterMask]. */
     val everyone: Int get() = players.fold(LetterMask.of(letters)) { m, p -> m or LetterMask.of(p.letters) }
+
+    val isHost: Boolean get() = me != null && me == host
+
+    /** One and Done 2.0: the letters the saved words have used up, as a [LetterMask]. */
+    val used: Int get() = OneAndDone.used(saved)
+
+    /** One and Done 2.0: all three words saved. */
+    val done: Boolean get() = mode == GameMode.ONE_AND_DONE && saved.size >= Rules.ONE_AND_DONE_WORDS
 }
 
 /** Something to tell the player once, e.g. that their lobby has closed. */

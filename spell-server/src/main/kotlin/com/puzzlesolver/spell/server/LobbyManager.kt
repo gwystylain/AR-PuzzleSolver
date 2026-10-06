@@ -2,11 +2,13 @@ package com.puzzlesolver.spell.server
 
 import com.puzzlesolver.spell.ClientMessage
 import com.puzzlesolver.spell.ErrorCode
+import com.puzzlesolver.spell.GameMode
 import com.puzzlesolver.spell.LetterMask
 import com.puzzlesolver.spell.Lexicon
 import com.puzzlesolver.spell.LobbyCode
 import com.puzzlesolver.spell.LobbySummary
 import com.puzzlesolver.spell.Matches
+import com.puzzlesolver.spell.OneAndDone
 import com.puzzlesolver.spell.PlayerState
 import com.puzzlesolver.spell.Protocol
 import com.puzzlesolver.spell.Rules
@@ -53,10 +55,25 @@ class LobbyManager(
         var shownOnline = true
     }
 
-    private class Lobby(val id: String) {
+    private class Lobby(val id: String, val mode: GameMode) {
         var length = Rules.DEFAULT_LENGTH
         var rev = 0L
         val players = TreeMap<Int, Player>()
+
+        /**
+         * Who opened it, or after they have gone for good the lowest-numbered player left.
+         * A host whose connection has only dropped keeps it while their seat is held.
+         */
+        var host = 1
+
+        /** One and Done 2.0: the round's saved words, whose letters are out of play. */
+        var saved: List<String> = emptyList()
+        val done: Boolean get() = mode == GameMode.ONE_AND_DONE && saved.size >= Rules.ONE_AND_DONE_WORDS
+
+        /** Called whenever a seat is given up, so the lobby is never left without a host. */
+        fun seatGone(slot: Int) {
+            if (slot == host && players.isNotEmpty()) host = players.firstKey()
+        }
 
         // The last lookup, kept because many changes -- a repeated letter, a reconnect --
         // do not change what it would return. Keyed by each player's letters as well as
@@ -94,7 +111,7 @@ class LobbyManager(
         synchronized(lock) {
             when (message) {
                 ClientMessage.Browse -> browse(peer)
-                ClientMessage.Host -> host(peer)
+                is ClientMessage.Host -> host(peer, message.mode)
                 is ClientMessage.Join -> join(peer, message.lobby)
                 is ClientMessage.Resume -> resume(peer, message)
                 ClientMessage.Leave -> leave(peer)
@@ -108,6 +125,7 @@ class LobbyManager(
                     if (message.length != lobby.length) lobby.held = null
                     lobby.length = message.length
                 }
+                is ClientMessage.SetSaved -> save(peer, message)
                 is ClientMessage.Ping -> Unit
             }
         }
@@ -141,6 +159,7 @@ class LobbyManager(
                 val gone = now - player.droppedAt
                 if (gone >= config.graceMillis) {
                     players.remove()
+                    lobby.seatGone(player.slot)
                     changed = true
                     listChanged = true
                     log.info("lobby {}: player {} timed out", lobby.id, player.slot)
@@ -167,16 +186,16 @@ class LobbyManager(
         peer.send(lobbyList())
     }
 
-    private fun host(peer: Peer) {
+    private fun host(peer: Peer, mode: GameMode) {
         if (peer in seats) return error(peer, ErrorCode.ALREADY_IN_LOBBY, "leave the lobby first")
         if (lobbies.size >= config.maxLobbies) return error(peer, ErrorCode.SERVER_FULL, "too many lobbies open")
         var id: String
         do {
             id = String(CharArray(LobbyCode.LENGTH) { LobbyCode.ALPHABET[random.nextInt(LobbyCode.ALPHABET.length)] })
         } while (id in lobbies)
-        val lobby = Lobby(id)
+        val lobby = Lobby(id, mode)
         lobbies[id] = lobby
-        log.info("lobby {} opened, {} open", id, lobbies.size)
+        log.info("lobby {} opened ({}), {} open", id, mode, lobbies.size)
         seat(peer, lobby, 1)
     }
 
@@ -221,6 +240,7 @@ class LobbyManager(
         val lobby = seat.lobby
         lobby.players.remove(seat.player.slot)
         peer.send(Protocol.encode(ServerMessage.Left))
+        lobby.seatGone(seat.player.slot)
         if (lobby.players.isEmpty()) {
             lobbies.remove(lobby.id)
             log.info("lobby {} closed, {} open", lobby.id, lobbies.size)
@@ -228,6 +248,27 @@ class LobbyManager(
             broadcast(lobby)
         }
         publishLobbies()
+    }
+
+    /**
+     * One and Done 2.0: the host sets the round's saved words. Each must be a real word, and
+     * no letter may appear twice across them ([ClientMessage.problem] has checked that much).
+     * The held word is let go, so the next one found avoids the saved words' letters.
+     */
+    private fun save(peer: Peer, message: ClientMessage.SetSaved) {
+        val seat = seats[peer] ?: return error(peer, ErrorCode.NOT_IN_LOBBY, "join a lobby first")
+        if (seat.lobby.mode != GameMode.ONE_AND_DONE) {
+            return error(peer, ErrorCode.BAD_REQUEST, "this lobby does not save words")
+        }
+        if (seat.player.slot != seat.lobby.host) return error(peer, ErrorCode.NOT_HOST, "only the host saves words")
+        if (!message.words.all { lexicon.contains(it) }) return error(peer, ErrorCode.BAD_REQUEST, "not a word")
+        change(peer, message.seq) { lobby, _ ->
+            if (message.words != lobby.saved) {
+                lobby.saved = message.words
+                lobby.held = null
+                log.info("lobby {}: {} saved", lobby.id, message.words.size)
+            }
+        }
     }
 
     /**
@@ -286,12 +327,17 @@ class LobbyManager(
     private fun stateOf(lobby: Lobby): String {
         val each = lobby.players.values.map { LetterMask.of(it.letters) }.toIntArray()
         val everyone = each.fold(0) { m, p -> m or p }
-        val key = each.toList() + lobby.length
+        val used = OneAndDone.used(lobby.saved)
+        val key = each.toList() + lobby.length + used + (if (lobby.done) 1 else 0)
         if (key != lobby.wordsKey) {
-            lobby.words = lexicon.find(everyone, lobby.length, players = each)
+            lobby.words = when {
+                lobby.done -> Matches.NONE
+                lobby.mode == GameMode.ONE_AND_DONE -> lexicon.findOneAndDone(everyone, lobby.length, used, players = each)
+                else -> lexicon.find(everyone, lobby.length, players = each)
+            }
             lobby.wordsKey = key
         }
-        if (everyone == 0) lobby.held = null
+        if (everyone == 0 || lobby.done) lobby.held = null
         if (lobby.held == null) lobby.held = lobby.words.words.firstOrNull()
         val held = lobby.held
         return Protocol.encode(
@@ -309,13 +355,16 @@ class LobbyManager(
                 },
                 total = lobby.words.total,
                 word = held,
+                mode = lobby.mode,
+                host = lobby.host,
+                saved = lobby.saved,
             ),
         )
     }
 
     private fun lobbyList(): String = Protocol.encode(
         ServerMessage.Lobbies(
-            lobbies.values.reversed().take(MAX_LISTED).map { LobbySummary(it.id, it.players.size, it.length) },
+            lobbies.values.reversed().take(MAX_LISTED).map { LobbySummary(it.id, it.players.size, it.length, it.mode) },
         ),
     )
 

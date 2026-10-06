@@ -2,6 +2,7 @@ package com.puzzlesolver.spell.client
 
 import com.puzzlesolver.spell.ClientMessage
 import com.puzzlesolver.spell.ErrorCode
+import com.puzzlesolver.spell.GameMode
 import com.puzzlesolver.spell.LobbyCode
 import com.puzzlesolver.spell.LobbySummary
 import com.puzzlesolver.spell.PlayerState
@@ -139,10 +140,10 @@ class SpellSession(
         if (running && socket != null) lost("no network")
     }
 
-    fun host() = post {
+    fun host(mode: GameMode = GameMode.CLASSIC) = post {
         if (lobby != null || wanted != null) return@post
-        wanted = Wanted.Host
-        if (online) send(ClientMessage.Host)
+        wanted = Wanted.Host(mode)
+        if (online) send(ClientMessage.Host(mode))
         publish()
     }
 
@@ -188,6 +189,25 @@ class SpellSession(
         publish()
     }
 
+    /** One and Done 2.0, host only: save the word on screen as the round's next. */
+    fun saveWord() = post {
+        val room = latest ?: return@post
+        val word = room.word ?: return@post
+        if (room.saved.size < Rules.ONE_AND_DONE_WORDS) setSaved(room, room.saved + word)
+    }
+
+    /** One and Done 2.0, host only: take back the last saved word. */
+    fun undoSaved() = post {
+        val room = latest ?: return@post
+        if (room.saved.isNotEmpty()) setSaved(room, room.saved.dropLast(1))
+    }
+
+    /** One and Done 2.0, host only: start a fresh round of three. */
+    fun newRound() = post {
+        val room = latest ?: return@post
+        if (room.saved.isNotEmpty()) setSaved(room, emptyList())
+    }
+
     fun dismissNotice(id: Long) = post {
         if (notice?.id == id) {
             notice = null
@@ -198,7 +218,7 @@ class SpellSession(
     // --- Everything below runs on the inbox coroutine only. ---
 
     private sealed interface Wanted {
-        data object Host : Wanted
+        data class Host(val mode: GameMode) : Wanted
         data class Join(val lobby: String) : Wanted
     }
 
@@ -309,7 +329,7 @@ class SpellSession(
         when {
             id != null && player != null && proof != null -> send(ClientMessage.Resume(id, player, proof))
             id != null -> send(ClientMessage.Join(id))
-            wanting is Wanted.Host -> send(ClientMessage.Host)
+            wanting is Wanted.Host -> send(ClientMessage.Host(wanting.mode))
             wanting is Wanted.Join -> send(ClientMessage.Join(wanting.lobby))
             else -> send(ClientMessage.Browse)
         }
@@ -470,6 +490,17 @@ class SpellSession(
         socket?.send(Protocol.encode(message))
     }
 
+    /**
+     * Sends the round's saved words. Not kept for resending like letters are: a save lost to
+     * a dropped connection simply has not happened yet, the word is still on the host's
+     * screen, and the host taps again -- the server keeping its own copy is what matters.
+     */
+    private fun setSaved(room: ServerMessage.State, words: List<String>) {
+        if (!seated || room.mode != GameMode.ONE_AND_DONE || me != room.host) return
+        send(ClientMessage.SetSaved(++seq, words))
+        persist()
+    }
+
     private fun changeLetters(new: String) {
         letters = new
         lettersSeq = ++seq
@@ -552,6 +583,9 @@ class SpellSession(
                 total = server?.total ?: 0,
                 current = server != null && mine != null && mine.ack >= newest && !adoptServerLetters,
                 seated = seated,
+                mode = server?.mode ?: GameMode.CLASSIC,
+                host = server?.host ?: 0,
+                saved = server?.saved.orEmpty(),
             )
         }
         _state.value = SpellState(

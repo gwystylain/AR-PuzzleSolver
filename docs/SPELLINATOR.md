@@ -62,6 +62,40 @@ raised, so a glance at it shows what the team has between you.
 the phone's keyboard tries to correct, predict and capitalise into a word. The keypad also
 fires on touch-down rather than on release.
 
+## One and Done 2.0
+
+A second way to play, chosen by whoever hosts: **One and Done 2.0** is the switch at the foot
+of the lobby list. With it on, **Host** opens a One and Done 2.0 lobby, tagged as such in
+everyone's list; the phones that join play whatever the lobby plays.
+
+The goal is three words, one per wave, with **no letter used twice** -- not inside a word,
+and not across the three. A round goes:
+
+1. Everyone types the letters in front of them, as usual. A word appears and is held.
+2. Once it has been spelt, the **host** taps **Save word**. It fills the first of three
+   slots under the players, and its letters are spent for the rest of the round: they are
+   never suggested again, and the keypad shows them dark and struck through.
+3. Everyone clears and types the next wave's letters. The next word found avoids every
+   spent letter.
+4. After the third word the round is complete, and the host can start a **New round**.
+
+The **host** is whoever opened the lobby. If they leave, or their seat times out, it passes
+to the lowest-numbered player left; a connection that has only dropped keeps it. The host
+also has **Undo**, which takes back the last saved word and puts its letters back in play.
+
+**Which word is suggested.** Every letter spent is gone for the waves to come, so the word
+to take is the one whose letters the rest of the word list needs least. Each letter costs
+the number of words of the chosen length that contain it, counting only words still
+possible later -- no repeated letter, nothing spent -- and a word costs the sum over its
+letters. The cheapest comes first; then, as in the classic game, the one using the most
+players' letters; then the first alphabetically. So Q, J, X and Z go early and E, S and A
+are kept: with every letter in play the best eight-letter words are WHIPJACK, SHOWJUMP and
+HUMPBACK. Costing and sorting every candidate takes under 2 ms even then. (`findOneAndDone`
+in `Lexicon.kt`.)
+
+The server keeps the round, so a phone that reconnects gets the saved words back. A server
+restart ends it, like any lobby.
+
 ## Why the server is on the NAS and not a phone
 
 The obvious design is for the host's phone to be the server. It cannot work here: phones on
@@ -121,17 +155,18 @@ a future protocol can be served alongside this one.
 | Phone sends | Meaning |
 | --- | --- |
 | `browse` | Send me the lobby list, now and on every change |
-| `host` / `join {lobby}` | Seat me |
+| `host {mode}` / `join {lobby}` | Seat me; `host` opens a lobby playing `classic` or `one_and_done` |
 | `resume {lobby, player, token}` | Give me back my seat after a dropped connection |
 | `letters {seq, letters}` | My letters are now these |
 | `length {seq, length}` | Everyone's word length is now this |
+| `saved {seq, words}` | One and Done 2.0, host only: the round's saved words are now these |
 | `leave`, `ping {at}` | |
 
 | Server sends | Meaning |
 | --- | --- |
 | `lobbies` | The open lobbies, newest first |
 | `joined {lobby, player, token, ack}` | You are seated; `token` takes the seat back later |
-| `state` | The whole lobby: length, every player's letters, online and `ack`, the held `word`, and the ranked words |
+| `state` | The whole lobby: length, every player's letters, online and `ack`, the held `word`, the ranked words, and the `mode`, `host` and `saved` words |
 | `error {code}`, `left`, `pong {at}` | |
 
 Two choices carry most of the weight:

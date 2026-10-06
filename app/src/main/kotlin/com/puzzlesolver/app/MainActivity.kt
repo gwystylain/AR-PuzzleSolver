@@ -424,6 +424,7 @@ class MainActivity : ComponentActivity() {
             PuzzleSolverTheme {
                 val spellState by spell.state.collectAsState()
                 val spellServer by spell.server.collectAsState()
+                val spellOneAndDone by spell.oneAndDone.collectAsState()
                 // Back from the HUD or a guide goes to the landing page, which is the
                 // one place a room is picked: there is no menu to swipe in any more.
                 BackHandler(enabled = !showLanding) { showLanding = true }
@@ -493,6 +494,11 @@ class MainActivity : ComponentActivity() {
                                     onLength = { spell.setLength(it) },
                                     onDismissNotice = { spell.dismissNotice(it) },
                                     onSetServer = { spell.setServer(it) },
+                                    oneAndDone = spellOneAndDone,
+                                    onOneAndDone = { spell.setOneAndDone(it) },
+                                    onSaveWord = { spell.saveWord() },
+                                    onUndoSaved = { spell.undoSaved() },
+                                    onNewRound = { spell.newRound() },
                                 )
                             }
                         } else guideRoom?.let { room -> {

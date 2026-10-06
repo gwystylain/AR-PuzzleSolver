@@ -36,6 +36,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -57,9 +59,11 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.puzzlesolver.spell.LetterMask
+import com.puzzlesolver.spell.GameMode
 import com.puzzlesolver.spell.LobbySummary
 import com.puzzlesolver.spell.PlayerState
 import com.puzzlesolver.spell.Rules
@@ -103,6 +107,12 @@ fun SpellScreen(
     onDismissNotice: (Long) -> Unit,
     /** Returns what is wrong with the address, or null once it is set. */
     onSetServer: (String) -> String?,
+    /** Whether a lobby hosted from here plays One and Done 2.0. */
+    oneAndDone: Boolean,
+    onOneAndDone: (Boolean) -> Unit,
+    onSaveWord: () -> Unit,
+    onUndoSaved: () -> Unit,
+    onNewRound: () -> Unit,
 ) {
     var editingServer by remember { mutableStateOf(false) }
     Box(
@@ -114,9 +124,12 @@ fun SpellScreen(
     ) {
         val room = state.room
         if (room != null) {
-            RoomView(room, state.link, onLeave, onType, onBackspace, onClear, onLength)
+            RoomView(
+                room, state.link, onLeave, onType, onBackspace, onClear, onLength,
+                Round(onSaveWord, onUndoSaved, onNewRound),
+            )
         } else {
-            LobbyView(state, server, onHost, onJoin, onEditServer = { editingServer = true })
+            LobbyView(state, server, onHost, onJoin, oneAndDone, onOneAndDone, onEditServer = { editingServer = true })
         }
         NoticeBanner(state.notice, onDismissNotice, Modifier.align(Alignment.TopCenter))
     }
@@ -133,6 +146,8 @@ private fun LobbyView(
     server: String?,
     onHost: () -> Unit,
     onJoin: (String) -> Unit,
+    oneAndDone: Boolean,
+    onOneAndDone: (Boolean) -> Unit,
     onEditServer: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
@@ -155,7 +170,11 @@ private fun LobbyView(
         }
 
         BigButton(
-            text = if (state.joining) "Opening a lobby" else "Host a lobby",
+            text = when {
+                state.joining -> "Opening a lobby"
+                oneAndDone -> "Host One and Done 2.0"
+                else -> "Host a lobby"
+            },
             colour = ACCENT,
             enabled = !state.joining,
             onClick = onHost,
@@ -188,6 +207,8 @@ private fun LobbyView(
                 }
             }
         }
+        Spacer(Modifier.height(8.dp))
+        ModeSwitch(oneAndDone, onOneAndDone)
         Text(
             "Server: ${ServerAddress.describe(server)}",
             color = TEXT_FAINT,
@@ -233,13 +254,51 @@ private fun LobbyRow(lobby: LobbySummary, enabled: Boolean, onJoin: () -> Unit) 
                 }
             }
             Spacer(Modifier.height(4.dp))
-            Text("${lobby.length}-letter words", color = TEXT_DIM, fontSize = 12.sp)
+            if (lobby.mode == GameMode.ONE_AND_DONE) {
+                Text("One and Done 2.0 · ${lobby.length} letters", color = ACCENT, fontSize = 12.sp)
+            } else {
+                Text("${lobby.length}-letter words", color = TEXT_DIM, fontSize = 12.sp)
+            }
         }
         Text(if (full) "Full" else "Join ›", color = ACCENT, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
+/**
+ * One and Done 2.0, for the lobbies this phone hosts. At the foot of the list because it is
+ * set once and lived with, like the debug switch on the landing page.
+ */
+@Composable
+private fun ModeSwitch(on: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(CARD, RoundedCornerShape(12.dp))
+            .clickable { onChange(!on) }
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("One and Done 2.0", color = TEXT, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Three words, no letter used twice. The host saves each one.",
+                color = TEXT_DIM,
+                fontSize = 12.sp,
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Switch(
+            checked = on,
+            onCheckedChange = onChange,
+            colors = SwitchDefaults.colors(checkedTrackColor = ACCENT, checkedThumbColor = INK),
+        )
+    }
+}
+
 // --- In a lobby ----------------------------------------------------------
+
+/** The host's One and Done 2.0 controls, passed down together. */
+private class Round(val save: () -> Unit, val undo: () -> Unit, val newRound: () -> Unit)
 
 @Composable
 private fun RoomView(
@@ -250,6 +309,7 @@ private fun RoomView(
     onBackspace: () -> Unit,
     onClear: () -> Unit,
     onLength: (Int) -> Unit,
+    round: Round,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp)) {
         // Sideways, the words and the keypad sit side by side rather than stacked, or the
@@ -257,9 +317,9 @@ private fun RoomView(
         if (maxWidth > maxHeight) {
             Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Column(Modifier.weight(1.3f).fillMaxHeight()) {
-                    RoomTop(room, link, onLeave, onLength)
+                    RoomTop(room, link, onLeave, onLength, round)
                     Spacer(Modifier.height(8.dp))
-                    SuggestionPanel(room, Modifier.weight(1f))
+                    SuggestionPanel(room, round, Modifier.weight(1f))
                 }
                 Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.Bottom) {
                     MyLetters(room, onClear)
@@ -269,9 +329,9 @@ private fun RoomView(
             }
         } else {
             Column(Modifier.fillMaxSize()) {
-                RoomTop(room, link, onLeave, onLength)
+                RoomTop(room, link, onLeave, onLength, round)
                 Spacer(Modifier.height(8.dp))
-                SuggestionPanel(room, Modifier.weight(1f))
+                SuggestionPanel(room, round, Modifier.weight(1f))
                 Spacer(Modifier.height(8.dp))
                 MyLetters(room, onClear)
                 Spacer(Modifier.height(8.dp))
@@ -282,7 +342,7 @@ private fun RoomView(
 }
 
 @Composable
-private fun ColumnScope.RoomTop(room: Room, link: Link, onLeave: () -> Unit, onLength: (Int) -> Unit) {
+private fun ColumnScope.RoomTop(room: Room, link: Link, onLeave: () -> Unit, onLength: (Int) -> Unit, round: Round) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("Lobby ", color = TEXT_DIM, fontSize = 14.sp)
         Text(
@@ -324,6 +384,76 @@ private fun ColumnScope.RoomTop(room: Room, link: Link, onLeave: () -> Unit, onL
     LengthPicker(room.length, onLength)
     Spacer(Modifier.height(8.dp))
     Players(room)
+    if (room.mode == GameMode.ONE_AND_DONE) {
+        Spacer(Modifier.height(8.dp))
+        RoundStrip(room, round)
+    }
+}
+
+/**
+ * The One and Done 2.0 round so far: three slots, filled as the host saves words, and whose
+ * job saving is. Undo is the host's, for a tap on the wrong word.
+ */
+@Composable
+private fun RoundStrip(room: Room, round: Round) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(CARD, RoundedCornerShape(12.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (room.done) {
+                    "All three words saved"
+                } else {
+                    "One and Done 2.0 · word ${room.saved.size + 1} of ${Rules.ONE_AND_DONE_WORDS}"
+                },
+                color = TEXT,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                if (room.isHost) "You save" else "P${room.host} saves",
+                color = if (room.host > 0) PLAYER_COLOURS[room.host - 1] else TEXT_DIM,
+                fontSize = 12.sp,
+            )
+            if (room.isHost && room.saved.isNotEmpty()) {
+                Spacer(Modifier.width(10.dp))
+                Box(
+                    Modifier
+                        .background(KEY, RoundedCornerShape(8.dp))
+                        .clickable(onClick = round.undo)
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                ) {
+                    Text("Undo", color = TEXT, fontSize = 12.sp)
+                }
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (i in 0 until Rules.ONE_AND_DONE_WORDS) {
+                val word = room.saved.getOrNull(i)
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .height(30.dp)
+                        .background(if (word != null) ACCENT.copy(alpha = 0.18f) else KEY, RoundedCornerShape(8.dp))
+                        .then(if (word != null) Modifier.border(1.dp, ACCENT, RoundedCornerShape(8.dp)) else Modifier),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        word ?: "${i + 1}",
+                        color = if (word != null) Color.White else TEXT_FAINT,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                    )
+                }
+            }
+        }
+    }
 }
 
 /** Two taps, so a stray thumb does not give up the seat. */
@@ -429,8 +559,9 @@ private fun PlayerChip(player: PlayerState, isMe: Boolean) {
  * player under it says the same in words, for anyone who cannot tell two colours apart.
  */
 @Composable
-private fun SuggestionPanel(room: Room, modifier: Modifier) {
+private fun SuggestionPanel(room: Room, round: Round, modifier: Modifier) {
     val word = room.word
+    val oneAndDone = room.mode == GameMode.ONE_AND_DONE
     val shape = RoundedCornerShape(14.dp)
     Box(
         modifier
@@ -441,8 +572,21 @@ private fun SuggestionPanel(room: Room, modifier: Modifier) {
         contentAlignment = Alignment.Center,
     ) {
         when {
-            room.everyone == 0 -> Hint("Type the letters you can see. Everyone's letters count, and any letter can be used more than once.")
-            word == null && room.current -> Hint("No ${room.length}-letter word from these letters.")
+            room.done -> RoundDone(room, round)
+            room.everyone == 0 -> Hint(
+                if (oneAndDone) {
+                    "Type the letters you can see. Each word uses a letter at most once, and no letter twice in the round."
+                } else {
+                    "Type the letters you can see. Everyone's letters count, and any letter can be used more than once."
+                },
+            )
+            word == null && room.current -> Hint(
+                if (oneAndDone && room.used != 0) {
+                    "No ${room.length}-letter word from these letters without one already used."
+                } else {
+                    "No ${room.length}-letter word from these letters."
+                },
+            )
             word != null -> {
                 val owners = word.map { c -> room.players.filter { c in it.letters }.map { it.id } }
                 Column(
@@ -461,11 +605,19 @@ private fun SuggestionPanel(room: Room, modifier: Modifier) {
                     Spacer(Modifier.height(14.dp))
                     WhoHasWhat(word, owners, room.me)
                     Spacer(Modifier.height(14.dp))
-                    Text(
-                        "Held until someone clears their letters",
-                        color = TEXT_FAINT,
-                        fontSize = 12.sp,
-                    )
+                    when {
+                        oneAndDone && room.isHost -> {
+                            SmallButton("Save word ${room.saved.size + 1}", enabled = room.current, onClick = round.save)
+                            Spacer(Modifier.height(8.dp))
+                            Hint("Save it once it is spelt. Then everyone clears for the next wave.")
+                        }
+                        oneAndDone -> Hint("Held until P${room.host} saves it or someone clears their letters")
+                        else -> Text(
+                            "Held until someone clears their letters",
+                            color = TEXT_FAINT,
+                            fontSize = 12.sp,
+                        )
+                    }
                 }
             }
         }
@@ -478,6 +630,52 @@ private fun SuggestionPanel(room: Room, modifier: Modifier) {
                 strokeWidth = 2.dp,
             )
         }
+    }
+}
+
+/** One and Done 2.0 with three words saved: the round, and for the host a fresh one. */
+@Composable
+private fun RoundDone(room: Room, round: Round) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            "ROUND COMPLETE",
+            color = TEXT_FAINT,
+            fontSize = 11.sp,
+            letterSpacing = 2.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.height(12.dp))
+        for (word in room.saved) {
+            Text(
+                word,
+                color = Color.White,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                fontSize = 28.sp,
+                letterSpacing = 3.sp,
+            )
+        }
+        Spacer(Modifier.height(16.dp))
+        if (room.isHost) {
+            SmallButton("New round", enabled = true, onClick = round.newRound)
+        } else {
+            Hint("P${room.host} can start a new round.")
+        }
+    }
+}
+
+@Composable
+private fun SmallButton(text: String, enabled: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .height(46.dp)
+            .alpha(if (enabled) 1f else 0.5f)
+            .background(ACCENT, RoundedCornerShape(12.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 24.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text, color = INK, fontWeight = FontWeight.Bold, fontSize = 16.sp)
     }
 }
 
@@ -609,19 +807,20 @@ private fun Keypad(room: Room, onType: (Char) -> Unit, onBackspace: () -> Unit) 
     val anyone = room.everyone
     val colour = room.me?.let { PLAYER_COLOURS[it - 1] } ?: ACCENT
     val full = room.letters.length >= Rules.MAX_LETTERS
+    val used = room.used
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         // Every row adds up to ten key-widths, so all the letter keys are the same size.
         KeyRow {
-            for (c in "QWERTYUIOP") LetterKey(c, mine, anyone, colour, full, onType)
+            for (c in "QWERTYUIOP") LetterKey(c, mine, anyone, used, colour, full, onType)
         }
         KeyRow {
             Spacer(Modifier.weight(0.5f))
-            for (c in "ASDFGHJKL") LetterKey(c, mine, anyone, colour, full, onType)
+            for (c in "ASDFGHJKL") LetterKey(c, mine, anyone, used, colour, full, onType)
             Spacer(Modifier.weight(0.5f))
         }
         KeyRow {
             Spacer(Modifier.weight(1.5f))
-            for (c in "ZXCVBNM") LetterKey(c, mine, anyone, colour, full, onType)
+            for (c in "ZXCVBNM") LetterKey(c, mine, anyone, used, colour, full, onType)
             Key("⌫", KEY_DARK, TEXT, enabled = room.letters.isNotEmpty(), weight = 1.5f, onPress = onBackspace)
         }
     }
@@ -637,22 +836,32 @@ private fun androidx.compose.foundation.layout.RowScope.LetterKey(
     c: Char,
     mine: Int,
     anyone: Int,
+    used: Int,
     colour: Color,
     full: Boolean,
     onType: (Char) -> Unit,
 ) {
-    val isMine = LetterMask.contains(mine, c)
-    val isTheirs = !isMine && LetterMask.contains(anyone, c)
+    // A letter a saved word has used is out of play for the round, whoever has it: still
+    // typeable, since it may well be on the wall, but drawn as spent.
+    val isUsed = LetterMask.contains(used, c)
+    val isMine = !isUsed && LetterMask.contains(mine, c)
+    val isTheirs = !isUsed && !isMine && LetterMask.contains(anyone, c)
     Key(
         label = "$c",
         background = when {
+            isUsed -> KEY_USED
             isMine -> colour
             isTheirs -> KEY_THEIRS
             else -> KEY
         },
-        textColour = if (isMine) INK else TEXT,
+        textColour = when {
+            isUsed -> TEXT_FAINT
+            isMine -> INK
+            else -> TEXT
+        },
         enabled = !full,
         weight = 1f,
+        struck = isUsed,
         onPress = { onType(c) },
     )
 }
@@ -665,6 +874,7 @@ private fun androidx.compose.foundation.layout.RowScope.Key(
     textColour: Color,
     enabled: Boolean,
     weight: Float,
+    struck: Boolean = false,
     onPress: () -> Unit,
 ) {
     val haptics = LocalHapticFeedback.current
@@ -690,7 +900,13 @@ private fun androidx.compose.foundation.layout.RowScope.Key(
             },
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = textColour, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+        Text(
+            label,
+            color = textColour,
+            fontWeight = FontWeight.Bold,
+            fontSize = 20.sp,
+            textDecoration = if (struck) TextDecoration.LineThrough else null,
+        )
     }
 }
 
@@ -814,6 +1030,8 @@ private val KEY = Color(0xFF1F2730)
 private val KEY_DARK = Color(0xFF2A333D)
 /** A letter someone else has: lifted off the plain keys, but nowhere near a player colour. */
 private val KEY_THEIRS = Color(0xFF3A4654)
+/** One and Done 2.0: a letter a saved word has used, sunk below the plain keys. */
+private val KEY_USED = Color(0xFF12161B)
 private val INK = Color(0xFF06121F)
 private val TEXT = Color(0xFFDDE5EC)
 private val TEXT_DIM = Color(0xFF9AA6B2)

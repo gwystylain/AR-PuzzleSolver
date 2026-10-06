@@ -1,5 +1,7 @@
 package com.puzzlesolver.spell.server
 
+import com.puzzlesolver.spell.GameMode
+import com.puzzlesolver.spell.LetterMask
 import com.puzzlesolver.spell.Lexicon
 import com.puzzlesolver.spell.Protocol
 import com.puzzlesolver.spell.Rules
@@ -28,6 +30,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
@@ -137,6 +140,36 @@ class EndToEndTest {
         b.await("TOO let go") { st -> st.room?.word == null && st.room!!.players.none { it.letters.contains('T') } }
         a.type('O')
         for (p in listOf(a, b)) p.await("OOP found") { it.room?.word == "OOP" && it.room!!.current }
+    }
+
+    @Test
+    fun `one and done through the phones - the host saves, everyone sees it, its letters are spent`() {
+        val s = server()
+        val a = session(s.port)
+        val b = session(s.port)
+        a.await("connected") { it.link is Link.Online }
+        a.host(GameMode.ONE_AND_DONE)
+        val id = a.await("hosting") { it.room?.seated == true && it.room!!.current }.room!!.lobby
+        b.joinLobby(id)
+        assertEquals(GameMode.ONE_AND_DONE, b.state.value.room!!.mode)
+        assertTrue(a.state.value.room!!.isHost)
+        assertFalse(b.state.value.room!!.isHost)
+
+        a.setLength(3)
+        a.typeAll("TO")
+        b.type('P')
+        // OPT, POT and TOP spend the same letters and use both players; OPT comes first.
+        a.await("OPT") { it.room?.word == "OPT" && it.room!!.current }
+
+        b.saveWord() // not the host: the phone does not even ask
+        a.saveWord()
+        for (p in listOf(a, b)) p.await("OPT saved") { it.room?.saved == listOf("OPT") }
+        // O, P and T are spent, and they were all there was.
+        assertNull(b.state.value.room!!.word)
+        assertEquals(LetterMask.of("OPT"), b.state.value.room!!.used)
+
+        a.undoSaved()
+        b.await("undone") { it.room?.saved?.isEmpty() == true && it.room!!.word == "OPT" }
     }
 
     @Test

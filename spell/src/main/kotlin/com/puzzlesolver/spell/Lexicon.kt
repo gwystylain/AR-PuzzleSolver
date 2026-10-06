@@ -70,6 +70,74 @@ class Lexicon private constructor(private val buckets: Map<Int, Bucket>) {
         return Matches(kept.map { it!! }, total)
     }
 
+    /**
+     * For a One and Done 2.0 round: words of [length] spelt from [available], with no letter
+     * twice and none of [used] (the letters of the round's saved words), best first:
+     *
+     * 1. the rarest letters -- the round wants three words with no letter in common, and a
+     *    letter spent now is gone for the waves to come, so the word to take is the one
+     *    whose letters the rest of the word list needs least. A letter's cost is how many
+     *    words of [length] contain it among those still possible later (no repeated letter,
+     *    none of [used]); a word's is the sum over its letters. Q, J, X and Z are cheap; E,
+     *    S and A dear;
+     * 2. then letters from the most [players];
+     * 3. then alphabetical.
+     *
+     * At most [limit] are listed; [Matches.total] counts them all.
+     */
+    fun findOneAndDone(
+        available: Int,
+        length: Int,
+        used: Int,
+        limit: Int = Rules.MAX_WORDS,
+        players: IntArray = IntArray(0),
+    ): Matches {
+        val bucket = buckets[length] ?: return Matches.NONE
+        val usable = available and used.inv()
+        if (usable == 0) return Matches.NONE
+        val masks = bucket.masks
+
+        val cost = IntArray(26)
+        for (mask in masks) {
+            if (mask and used != 0 || Integer.bitCount(mask) != length) continue
+            var m = mask
+            while (m != 0) {
+                cost[Integer.numberOfTrailingZeros(m)]++
+                m = m and (m - 1)
+            }
+        }
+
+        // One key per candidate, packed so a plain sort orders them: cost, then players
+        // left out, then position in the bucket, which is alphabetical. The bucket index
+        // fits 16 bits (the largest has 42,341 words) and players left out 3.
+        val outside = usable.inv()
+        var keys = LongArray(256)
+        var n = 0
+        for (i in masks.indices) {
+            val mask = masks[i]
+            if (mask and outside != 0 || Integer.bitCount(mask) != length) continue
+            var sum = 0
+            var m = mask
+            while (m != 0) {
+                sum += cost[Integer.numberOfTrailingZeros(m)]
+                m = m and (m - 1)
+            }
+            var missed = 0
+            for (p in players) if (p and mask == 0) missed++
+            if (n == keys.size) keys = keys.copyOf(n * 2)
+            keys[n++] = (sum.toLong() shl 19) or (minOf(missed, Rules.MAX_PLAYERS).toLong() shl 16) or i.toLong()
+        }
+        if (n == 0) return Matches.NONE
+        keys.sort(0, n)
+        return Matches(List(minOf(limit, n)) { bucket.words[(keys[it] and 0xFFFF).toInt()] }, n)
+    }
+
+    /** Whether [word] is in the list (at a length it holds). */
+    fun contains(word: String): Boolean {
+        val bucket = buckets[word.length] ?: return false
+        return bucket.words.binarySearch(word) >= 0
+    }
+
     /** Lower is better: different letters first, then how many players the word leaves out. */
     private fun rank(mask: Int, players: IntArray): Int {
         var missed = 0

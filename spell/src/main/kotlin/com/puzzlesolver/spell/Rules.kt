@@ -33,6 +33,9 @@ object Rules {
      */
     const val MAX_FRAME_BYTES = 1024
 
+    /** Words saved in a One and Done 2.0 round. */
+    const val ONE_AND_DONE_WORDS = 3
+
     fun isValidLetters(letters: String): Boolean =
         letters.length <= MAX_LETTERS && letters.all { it in 'A'..'Z' }
 

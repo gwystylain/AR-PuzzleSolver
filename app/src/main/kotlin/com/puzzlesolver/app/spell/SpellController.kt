@@ -6,6 +6,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.util.Log
 import com.puzzlesolver.app.BuildConfig
+import com.puzzlesolver.spell.GameMode
 import com.puzzlesolver.spell.client.ServerAddress
 import com.puzzlesolver.spell.client.SessionStore
 import com.puzzlesolver.spell.client.SpellSession
@@ -51,6 +52,18 @@ class SpellController(context: Context) {
     /** The server in use: the one set in the app, else the one built in, else none. */
     private val _server = MutableStateFlow(prefs.getString(KEY_SERVER, null) ?: builtIn())
     val server: StateFlow<String?> = _server.asStateFlow()
+
+    /**
+     * Whether a lobby hosted from this phone plays One and Done 2.0. Switched at the foot of
+     * the lobby list and remembered, since a team that plays it tends to keep playing it.
+     */
+    private val _oneAndDone = MutableStateFlow(prefs.getBoolean(KEY_ONE_AND_DONE, false))
+    val oneAndDone: StateFlow<Boolean> = _oneAndDone.asStateFlow()
+
+    fun setOneAndDone(on: Boolean) {
+        _oneAndDone.value = on
+        prefs.edit().putBoolean(KEY_ONE_AND_DONE, on).apply()
+    }
 
     private var session: SpellSession? = null
     private var mirror: Job? = null
@@ -107,7 +120,7 @@ class SpellController(context: Context) {
         return null
     }
 
-    fun host() = session?.host()
+    fun host() = session?.host(if (_oneAndDone.value) GameMode.ONE_AND_DONE else GameMode.CLASSIC)
     fun join(lobby: String) = session?.join(lobby)
     fun leave() = session?.leave()
     fun type(letter: Char) = session?.type(letter)
@@ -115,6 +128,9 @@ class SpellController(context: Context) {
     fun clear() = session?.clear()
     fun setLength(length: Int) = session?.setLength(length)
     fun dismissNotice(id: Long) = session?.dismissNotice(id)
+    fun saveWord() = session?.saveWord()
+    fun undoSaved() = session?.undoSaved()
+    fun newRound() = session?.newRound()
 
     private fun builtIn(): String? = ServerAddress.parse(BuildConfig.SPELL_SERVER, BuildConfig.DEBUG)
 
@@ -210,6 +226,7 @@ class SpellController(context: Context) {
     private companion object {
         const val TAG = "Spellinator"
         const val KEY_SERVER = "server"
+        const val KEY_ONE_AND_DONE = "mode.oneAndDone"
         const val KEY_SEAT_SERVER = "seat.server"
         const val KEY_LOBBY = "seat.lobby"
         const val KEY_PLAYER = "seat.player"

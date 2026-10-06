@@ -44,7 +44,7 @@ class LobbyManagerTest {
 
     private fun hosted(): Pair<FakePeer, String> {
         val host = FakePeer()
-        host.say(ClientMessage.Host)
+        host.say(ClientMessage.Host())
         return host to host.joined().lobby
     }
 
@@ -343,7 +343,7 @@ class LobbyManagerTest {
     @Test
     fun `one seat per connection`() {
         val (p1, id) = hosted()
-        p1.say(ClientMessage.Host)
+        p1.say(ClientMessage.Host())
         assertEquals(ErrorCode.ALREADY_IN_LOBBY, p1.lastError())
         val (_, other) = hosted()
         p1.say(ClientMessage.Join(other))
@@ -356,7 +356,7 @@ class LobbyManagerTest {
     @Test
     fun `there is a cap on lobbies`() {
         repeat(config.maxLobbies) { hosted() }
-        val late = FakePeer().apply { say(ClientMessage.Host) }
+        val late = FakePeer().apply { say(ClientMessage.Host()) }
         assertEquals(ErrorCode.SERVER_FULL, late.lastError())
     }
 

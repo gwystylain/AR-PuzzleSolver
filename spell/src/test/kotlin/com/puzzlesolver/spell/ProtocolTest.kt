@@ -14,7 +14,9 @@ class ProtocolTest {
     fun `every client message survives the wire`() {
         val messages = listOf(
             ClientMessage.Browse,
-            ClientMessage.Host,
+            ClientMessage.Host(),
+            ClientMessage.Host(GameMode.ONE_AND_DONE),
+            ClientMessage.SetSaved(4, listOf("DAB", "COT")),
             ClientMessage.Join("KQZT"),
             ClientMessage.Resume("KQZT", 3, "A".repeat(Token.LENGTH)),
             ClientMessage.Leave,
@@ -28,7 +30,11 @@ class ProtocolTest {
     @Test
     fun `every server message survives the wire`() {
         val messages = listOf(
-            ServerMessage.Lobbies(listOf(LobbySummary("KQZT", 2, 5))),
+            ServerMessage.Lobbies(listOf(LobbySummary("KQZT", 2, 5), LobbySummary("BCDF", 1, 3, GameMode.ONE_AND_DONE))),
+            ServerMessage.State(
+                "BCDF", 2, 3, listOf(PlayerState(2, "FIN", true, 1)), listOf("FIN"), 1,
+                word = "FIN", mode = GameMode.ONE_AND_DONE, host = 2, saved = listOf("DAB", "COT"),
+            ),
             ServerMessage.Joined("KQZT", 2, "b".repeat(Token.LENGTH), 41),
             ServerMessage.State(
                 "KQZT", 9, 3,
@@ -52,6 +58,33 @@ class ProtocolTest {
     fun `a state from a server that predates the held word reads as having none`() {
         val old = """{"t":"state","lobby":"KQZT","rev":1,"length":3,"players":[],"words":["OOP"],"total":1}"""
         assertNull((Protocol.decodeServer(old) as ServerMessage.State).word)
+    }
+
+    @Test
+    fun `hosting from an app that predates modes, or naming a mode this side does not know, means classic`() {
+        assertEquals(ClientMessage.Host(GameMode.CLASSIC), Protocol.decodeClient("""{"t":"host"}"""))
+        assertEquals(ClientMessage.Host(GameMode.CLASSIC), Protocol.decodeClient("""{"t":"host","mode":"chess"}"""))
+        assertEquals(
+            ClientMessage.Host(GameMode.ONE_AND_DONE),
+            Protocol.decodeClient("""{"t":"host","mode":"one_and_done"}"""),
+        )
+    }
+
+    @Test
+    fun `saved words must be words that use no letter twice, three at most`() {
+        assertNull(ClientMessage.SetSaved(1, emptyList()).problem())
+        assertNull(ClientMessage.SetSaved(1, listOf("DAB", "COT", "FIN")).problem())
+        for (bad in listOf(
+            listOf("DAB", "COT", "FIN", "JUG"), // four
+            listOf("BOOK"), // O twice in one word
+            listOf("DAB", "BOT"), // B in both
+            listOf("dab"),
+            listOf("DA"),
+            listOf("DAB1"),
+        )) {
+            assertNotNull(ClientMessage.SetSaved(1, bad).problem(), bad.toString())
+        }
+        assertNotNull(ClientMessage.SetSaved(-1, emptyList()).problem())
     }
 
     @Test

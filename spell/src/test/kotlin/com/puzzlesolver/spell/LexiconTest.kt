@@ -132,6 +132,50 @@ class LexiconTest {
         assertEquals(listOf("AAHS"), lex.find(LetterMask.of("AHS"), 4).words)
     }
 
+    // --- One and Done 2.0 ------------------------------------------------------
+
+    private val waves = Lexicon.of("CAB", "COT", "CUT", "COP", "DAB", "DIG", "DYE", "TOO", "BOB")
+
+    @Test
+    fun `one and done spends the rarest letters first`() {
+        // Among the words with no repeated letter, C is in four (CAB COT CUT COP) and D in
+        // three (DAB DIG DYE), so DAB costs less than CAB and comes first.
+        assertEquals(listOf("DAB", "CAB"), waves.findOneAndDone(LetterMask.of("ABCD"), 3, used = 0).words)
+    }
+
+    @Test
+    fun `a letter's cost counts only the words still possible after the saved ones`() {
+        // With O and U used up, COT CUT and COP are out of reach for the rest of the round,
+        // so C is now in one word and D still in three: CAB is the cheaper word.
+        assertEquals(listOf("CAB", "DAB"), waves.findOneAndDone(LetterMask.of("ABCD"), 3, used = LetterMask.of("OU")).words)
+    }
+
+    @Test
+    fun `one and done never offers a used letter or a letter twice`() {
+        val m = waves.findOneAndDone(LetterMask.of("ABCDOT"), 3, used = LetterMask.of("D"))
+        // TOO and BOB repeat a letter; DAB has the used D.
+        assertEquals(setOf("CAB", "COT"), m.words.toSet())
+        assertEquals(2, m.total)
+        assertEquals(Matches.NONE, waves.findOneAndDone(LetterMask.of("ABCD"), 3, used = LetterMask.of("ABCD")))
+    }
+
+    @Test
+    fun `at equal cost, the word using the most players comes first, then alphabetical`() {
+        val same = Lexicon.of("ABC", "ABD")
+        // C and D are in one word each, so ABC and ABD cost the same.
+        assertEquals(listOf("ABC", "ABD"), same.findOneAndDone(LetterMask.of("ABCD"), 3, used = 0).words)
+        val players = intArrayOf(LetterMask.of("ABC"), LetterMask.of("D"))
+        assertEquals(listOf("ABD", "ABC"), same.findOneAndDone(LetterMask.of("ABCD"), 3, used = 0, players = players).words)
+    }
+
+    @Test
+    fun `contains finds exactly the words held`() {
+        assertTrue(waves.contains("DAB"))
+        assertFalse(waves.contains("DAD"))
+        assertFalse(waves.contains("DA"))
+        assertFalse(waves.contains("DABBLING"))
+    }
+
     /**
      * The real CSW24 list, when it is on this machine. Skipped in CI, where it is not --
      * see docs/SPELLINATOR.md for why it is not in the repo.
@@ -164,5 +208,15 @@ class LexiconTest {
         val perLookupMicros = (System.nanoTime() - t0) / 1000 / runs
         println("CSW24: loaded in ${loadMillis}ms; worst-case lookup ${perLookupMicros}us")
         assertEquals(42_341, lex.find(all, 8).total)
+
+        // One and Done's worst case: every letter available, so every eight-letter word with
+        // no repeat is a candidate, costed and sorted.
+        repeat(5) { lex.findOneAndDone(all, 8, used = 0, players = five) }
+        val t1 = System.nanoTime()
+        repeat(20) { lex.findOneAndDone(all, 8, used = 0, players = five) }
+        val oneAndDoneMicros = (System.nanoTime() - t1) / 1000 / 20
+        val best = lex.findOneAndDone(all, 8, used = 0, players = five)
+        println("CSW24: one and done worst case ${oneAndDoneMicros}us over ${best.total} words; best ${best.words.take(5)}")
+        assertTrue(best.words.all { it.toSet().size == 8 })
     }
 }

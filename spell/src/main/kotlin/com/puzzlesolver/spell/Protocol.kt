@@ -30,6 +30,8 @@ object Protocol {
         // New fields can be added to either side without breaking the other.
         ignoreUnknownKeys = true
         encodeDefaults = true
+        // And new values: a mode this side has never heard of reads as the default.
+        coerceInputValues = true
     }
 
     fun encode(message: ClientMessage): String = json.encodeToString(ClientMessage.serializer(), message)
@@ -50,10 +52,10 @@ sealed interface ClientMessage {
     @SerialName("browse")
     data object Browse : ClientMessage
 
-    /** Open a lobby and seat me in it. */
+    /** Open a lobby playing [mode] and seat me in it, as its host. */
     @Serializable
     @SerialName("host")
-    data object Host : ClientMessage
+    data class Host(val mode: GameMode = GameMode.CLASSIC) : ClientMessage
 
     @Serializable
     @SerialName("join")
@@ -81,6 +83,15 @@ sealed interface ClientMessage {
     @SerialName("length")
     data class SetLength(val seq: Long, val length: Int) : ClientMessage
 
+    /**
+     * One and Done 2.0, from the host only: the round's saved words are now [words]. The
+     * whole list rather than "add this one", so saving, undoing the last one and starting a
+     * new round are one message, and a resend is harmless.
+     */
+    @Serializable
+    @SerialName("saved")
+    data class SetSaved(val seq: Long, val words: List<String>) : ClientMessage
+
     /** Echoed straight back as [ServerMessage.Pong], to time the round trip and prove the link is alive. */
     @Serializable
     @SerialName("ping")
@@ -88,7 +99,7 @@ sealed interface ClientMessage {
 
     /** Why the server should refuse this message, or null if it is well formed. */
     fun problem(): String? = when (this) {
-        Browse, Host, Leave, is Ping -> null
+        Browse, Leave, is Host, is Ping -> null
         is Join -> if (LobbyCode.isValid(lobby)) null else "bad lobby code"
         is Resume -> when {
             !LobbyCode.isValid(lobby) -> "bad lobby code"
@@ -104,6 +115,13 @@ sealed interface ClientMessage {
         is SetLength -> when {
             seq < 0 -> "bad seq"
             !Rules.isValidLength(length) -> "length must be ${Rules.MIN_LENGTH}-${Rules.MAX_LENGTH}"
+            else -> null
+        }
+        is SetSaved -> when {
+            seq < 0 -> "bad seq"
+            words.size > Rules.ONE_AND_DONE_WORDS -> "at most ${Rules.ONE_AND_DONE_WORDS} words"
+            words.any { it.length !in Rules.LENGTHS || !it.all { c -> c in 'A'..'Z' } } -> "not a word"
+            !OneAndDone.allLettersOnce(words) -> "a letter is used twice"
             else -> null
         }
     }
@@ -146,6 +164,11 @@ sealed interface ServerMessage {
          * none. Absent from servers that predate it, which is why it defaults.
          */
         val word: String? = null,
+        val mode: GameMode = GameMode.CLASSIC,
+        /** The host's player number; in One and Done 2.0 only they save words. */
+        val host: Int = 0,
+        /** One and Done 2.0: the words saved so far this round, in order. */
+        val saved: List<String> = emptyList(),
     ) : ServerMessage
 
     /** You have left; you are browsing again. */
@@ -163,7 +186,45 @@ sealed interface ServerMessage {
 }
 
 @Serializable
-data class LobbySummary(val id: String, val players: Int, val length: Int)
+data class LobbySummary(
+    val id: String,
+    val players: Int,
+    val length: Int,
+    val mode: GameMode = GameMode.CLASSIC,
+)
+
+/** How a lobby plays, chosen by its host when it is opened. */
+@Serializable
+enum class GameMode {
+    /** One word at a time from everyone's letters, letters reusable. */
+    @SerialName("classic")
+    CLASSIC,
+
+    /**
+     * Three words in three waves, no letter used twice across them: each saved word's
+     * letters are out of play for the rest of the round. See [OneAndDone].
+     */
+    @SerialName("one_and_done")
+    ONE_AND_DONE,
+}
+
+/** The rule of a One and Done 2.0 round: every letter at most once, across all its words. */
+object OneAndDone {
+    fun allLettersOnce(words: List<String>): Boolean {
+        var seen = 0
+        for (word in words) {
+            for (c in word) {
+                val bit = 1 shl (c - 'A')
+                if (seen and bit != 0) return false
+                seen = seen or bit
+            }
+        }
+        return true
+    }
+
+    /** The letters [words] have used up, as a [LetterMask]. */
+    fun used(words: List<String>): Int = words.fold(0) { m, w -> m or LetterMask.of(w) }
+}
 
 /**
  * One seat. [online] goes false a moment after the player's connection drops, not at once,
@@ -184,4 +245,6 @@ object ErrorCode {
     const val RESUME_FAILED = "resume_failed"
     const val NOT_IN_LOBBY = "not_in_lobby"
     const val ALREADY_IN_LOBBY = "already_in_lobby"
+    /** Only a One and Done 2.0 lobby's host saves its words. */
+    const val NOT_HOST = "not_host"
 }
