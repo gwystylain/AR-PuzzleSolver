@@ -204,7 +204,40 @@ class ScanPipeline(
      */
     private val spotShot = AtomicReference<((RgbImage?) -> Unit)?>(null)
 
-    /** Set when the active source is the pose-free camera, i.e. Gems, Terminal or Spot. */
+    /**
+     * Where Mines' frames go: upright, half size, and whether each is a lattice frame.
+     * Called on the solver thread. See [com.puzzlesolver.app.mines.MinesController].
+     */
+    @Volatile
+    var minesFrames: ((RgbImage, Boolean, Long) -> Unit)? = null
+
+    /** Whether the mines camera -- the LED-wall preset plus lattice frames -- has been set up. */
+    @Volatile
+    private var minesCameraApplied = false
+
+    @Volatile
+    private var minesFramesRead = 0L
+
+    @Volatile
+    private var minesLatticeRead = 0L
+
+    @Volatile
+    private var minesSingleRead = 0L
+
+    /** Time spent turning frames upright, and in the scan itself, since the last heartbeat. */
+    @Volatile
+    private var minesConvertNanos = 0L
+
+    @Volatile
+    private var minesScanNanos = 0L
+
+    private var minesReadAtHeartbeat = 0L
+
+    // Solver thread only.
+    private val minesBuffers = arrayOfNulls<RgbImage>(2)
+    private var minesBufferNext = 0
+
+    /** Set when the active source is the pose-free camera, i.e. Gems, Terminal, Spot or Mines. */
     private var liveSource: Camera2FrameSource? = null
 
     /**
@@ -400,7 +433,7 @@ class ScanPipeline(
      * indirection -- the alternative is a hardcoded list that silently goes stale.
      */
     /** Which pose-free live mode the camera is being driven for, if any. */
-    private enum class LiveMode { NONE, GEMS, TERMINAL, SPOT }
+    private enum class LiveMode { NONE, GEMS, TERMINAL, SPOT, MINES }
 
     /**
      * One display to outline, in viewport pixels.
@@ -449,7 +482,7 @@ class ScanPipeline(
                 it.id,
                 it.displayName,
                 it.requiresColour,
-                it.id == GemAdapter.ID || it.id == TerminalAdapter.ID,
+                it.id == GemAdapter.ID || it.id == TerminalAdapter.ID || it.id == BombAdapter.ID,
             )
         }
     }
@@ -549,6 +582,8 @@ class ScanPipeline(
         val terminalCaptureMessage: String? = null,
         /** True while the pose-free camera is driving Spot. */
         val liveSpot: Boolean = false,
+        /** True while the pose-free camera is driving Mines. */
+        val liveMines: Boolean = false,
         /**
          * The Spot screen's corners in viewport pixels, x then y, top-left round to
          * bottom-left; empty while it is not in view. Drawn so the user can see it is
@@ -612,10 +647,16 @@ class ScanPipeline(
          * property of the *pipeline* rather than of either puzzle -- which is why it is
          * asked as one question and not as two.
          */
-        val livePoseFree: Boolean get() = liveGems || liveTerminal || liveSpot
+        val livePoseFree: Boolean get() = liveGems || liveTerminal || liveSpot || liveMines
 
         /** Whether Spot is the mode picked. Never identified: it has no adapter to identify it. */
         val isSpotMode: Boolean get() = pinnedPuzzleId == SpotFinder.ID
+
+        /**
+         * Whether Mines is the mode picked. Picked, not identified: the scan is something
+         * the user starts, standing at the green button, so there is nothing to identify.
+         */
+        val isMinesMode: Boolean get() = pinnedPuzzleId == BombAdapter.ID
     }
 
     // --- GLSurfaceView.Renderer ------------------------------------------
@@ -810,6 +851,7 @@ class ScanPipeline(
             // reached about the old one is about a device that is no longer in play.
             autoExposure.reset()
             cameraPresetApplied = false
+            minesCameraApplied = false
             liveSource = source as? Camera2FrameSource
             liveResult = GemScanner.Result.EMPTY
             liveTerminalResult = TerminalScanner.Result.EMPTY
@@ -832,6 +874,7 @@ class ScanPipeline(
                         liveGems = false,
                         liveTerminal = false,
                         liveSpot = false,
+                        liveMines = false,
                         gemOverlay = emptyList(),
                         terminalOverlay = emptyList(),
                         terminalSettled = false,
@@ -861,6 +904,7 @@ class ScanPipeline(
         // ignores the request should say so in the first second rather than never.
         source.tuning?.let { autoExposure.noteHonoured(it.honoured()) }
         maybeApplyCameraPreset(source)
+        keepMinesCamera(source)
 
         val frame = source.nextFrame()
         if (frame == null) {
@@ -909,6 +953,7 @@ class ScanPipeline(
                 LiveMode.TERMINAL -> publishLiveTerminal(it, frameStart)
                 LiveMode.GEMS -> publishLive(it, frameStart)
                 LiveMode.SPOT -> publishLiveSpot(it, frameStart)
+                LiveMode.MINES -> publishLiveMines(it, frameStart)
                 // The window between the user picking a canvas mode and the frame source
                 // actually being swapped back to ARCore for it. Claiming a mode here is
                 // not harmless: falling through to the Gems publisher is what left the
@@ -1019,10 +1064,7 @@ class ScanPipeline(
      * two stops on the round that misread `058` as `008`. It is metered on its own
      * displays now, continuously, by [terminalExposure] from the solver thread.
      *
-     * Mines gets nothing. Its classifier reads the glow around a button that has clipped
-     * its own face to white, and it was verified on device at the camera's own exposure,
-     * so touching that would take away the very thing it reads. The dials are on screen
-     * for all three walls; this is only about what happens without being asked.
+     * Mines gets the same preset, and more: see [keepMinesCamera].
      *
      * Keyed off the mode the user pinned as well as the one identification settled on,
      * because pinning is a decision made before any of the evidence arrives and it
@@ -1048,6 +1090,35 @@ class ScanPipeline(
                 Log.i(TAG, "gems active; applying the LED-wall camera preset")
             }
             return
+        }
+    }
+
+    /**
+     * Holds the camera where Mines needs it: Gems' LED-wall preset for the colour, with a
+     * bright lattice frame between every two so the unlit buttons can be counted.
+     *
+     * Checked every frame rather than set once, because the lattice frames are a property
+     * of the mode and not of the moment. A camera reset drops them, so they come back; and
+     * every other live mode shares this camera, so leaving Mines has to take them away or
+     * Gems would be handed every other frame two stops over.
+     */
+    private fun keepMinesCamera(source: FrameSource) {
+        val tuning = source.tuning ?: return
+        if (!tuning.capabilities.available) return
+        if (liveMode != LiveMode.MINES) {
+            minesCameraApplied = false
+            if (tuning.settings.lattice != null) tuning.setLatticeFrames(false)
+            return
+        }
+        if (!minesCameraApplied) {
+            minesCameraApplied = true
+            tuning.applyLedWallPreset()
+            Log.i(TAG, "mines active; applying the LED-wall preset with lattice frames")
+        }
+        if (tuning.settings.lattice == null && tuning.capabilities.manualSensor &&
+            tuning.settings.mode == CameraTuning.Mode.MANUAL
+        ) {
+            tuning.setLatticeFrames(true)
         }
     }
 
@@ -1114,6 +1185,22 @@ class ScanPipeline(
         } else {
             ""
         }
+        val mines = if (liveMode == LiveMode.MINES) {
+            // Per frame, averaged since the last heartbeat: the conversion and the scan
+            // are the two halves of the cost, and which one grows says what to fix.
+            val n = (minesFramesRead - minesReadAtHeartbeat).coerceAtLeast(1)
+            val perFrame = "convert=%.1f scan=%.1fms/frame".format(minesConvertNanos / 1e6 / n, minesScanNanos / 1e6 / n)
+            minesReadAtHeartbeat = minesFramesRead
+            minesConvertNanos = 0L
+            minesScanNanos = 0L
+            " mines[read=$minesFramesRead lattice=$minesLatticeRead single=$minesSingleRead " +
+                "rate=%.1f/s ".format(n / elapsed) +
+                "dropped=${liveSource?.droppedFrames ?: 0} $perFrame " +
+                "lattice-cam=${tuning()?.settings?.lattice?.describe() ?: "off"} -> " +
+                "${tuning()?.latticeReported?.describe() ?: "-"}]"
+        } else {
+            ""
+        }
         Log.i(
             TAG,
             "f=$frameCounter fps=${"%.1f".format(fps)} " +
@@ -1140,7 +1227,7 @@ class ScanPipeline(
                 "ae[${autoExposure.describe()} changes=$exposureChanges " +
                 "washed=${"%.2f".format(liveResult.washedOut)}] " +
                 "frame=${"%.1f".format((System.nanoTime() - frameStart) / 1e6f)}ms " +
-                "solve=${"%.1f".format(engineState?.lastStepMillis ?: 0f)}ms" + gems + terminal + spot,
+                "solve=${"%.1f".format(engineState?.lastStepMillis ?: 0f)}ms" + gems + terminal + spot + mines,
         )
     }
 
@@ -1332,7 +1419,9 @@ class ScanPipeline(
      */
     private fun maybeDispatchLiveScan() {
         if (solverBusy.get()) return
-        if (frameCounter % LIVE_SCAN_EVERY_N_FRAMES != 0L) return
+        // Mines counts columns as the wall goes by, and every frame it misses is a longer
+        // step to match across. The others read whatever is in front of them now.
+        if (liveMode != LiveMode.MINES && frameCounter % LIVE_SCAN_EVERY_N_FRAMES != 0L) return
         solverThread.enqueue(false)
     }
 
@@ -1580,6 +1669,88 @@ class ScanPipeline(
             spotExposure.consider(source.tuning, reading)
         } finally {
             source.releaseView()
+        }
+    }
+
+    /**
+     * Hands Mines every frame waiting, lattice and colour, oldest first.
+     *
+     * All of them in one dispatch, not one: dispatches come at the preview's rate and
+     * only when this thread is free, and the camera takes two frames for every one the
+     * preview shows. On the phone, taking two a dispatch still read lattice frames at
+     * only 7.5 a second during a scan, the edge of what the count holds at. Turned upright
+     * and halved on the way, which is the size the scanner's fixture is and still more
+     * than a button needs.
+     */
+    private fun runMinesFrames(source: Camera2FrameSource) {
+        val sink = minesFrames ?: return
+        val started = System.nanoTime()
+        repeat(MINES_FRAMES_PER_DISPATCH) {
+            val frame = source.acquire() ?: return@repeat
+            val image: RgbImage
+            val convertStart = System.nanoTime()
+            try {
+                val turns = (((source.geometry?.rotationDegrees ?: 0) % 360) + 360) % 360 / 90
+                // Into one of two buffers, alternately: the scanner keeps nothing of a
+                // frame once it has read it, and anything kept longer is copied.
+                val reuse = minesBuffers[minesBufferNext]
+                image = RgbImage.fromCanvasView(frame.view, turns, MINES_FRAME_STEP, reuse)
+                minesBuffers[minesBufferNext] = image
+                minesBufferNext = 1 - minesBufferNext
+            } finally {
+                // Released before the scan rather than after it: the image is a copy, and
+                // the camera can be filling the buffer again while this is read.
+                source.releaseView()
+            }
+            val scanStart = System.nanoTime()
+            val lattice = frame.exposure != Camera2FrameSource.Exposure.COLOUR
+            if (frame.exposure == Camera2FrameSource.Exposure.LATTICE) minesLatticeRead++
+            if (frame.exposure == Camera2FrameSource.Exposure.SINGLE) minesSingleRead++
+            minesFramesRead++
+            sink(image, lattice, frame.timestampNanos)
+            val end = System.nanoTime()
+            minesConvertNanos += scanStart - convertStart
+            minesScanNanos += end - scanStart
+        }
+        liveScanMillis = (System.nanoTime() - started) / 1e6f
+    }
+
+    private fun publishLiveMines(source: Camera2FrameSource, frameStart: Long) {
+        val scanMs = liveScanMillis
+        publish {
+            it.copy(
+                activePuzzleId = BombAdapter.ID,
+                liveGems = false,
+                liveTerminal = false,
+                liveSpot = false,
+                liveMines = true,
+                gemOverlay = emptyList(),
+                terminalOverlay = emptyList(),
+                spotOutline = emptyList(),
+                wallDescription = "live camera, no wall fitting",
+                wallConverged = true,
+                wallIssue = null,
+                solved = false,
+                solutionLabel = "",
+                gridSummary = null,
+                puzzleName = "Mines",
+                readStats = "scan " + scanMs.toInt() + "ms read=" + minesFramesRead +
+                    " lattice=" + minesLatticeRead + " dropped=" + source.droppedFrames,
+                exposureHint = -1f,
+                frameMillis = (System.nanoTime() - frameStart) / 1e6f,
+                solveMillis = scanMs,
+                sourceKind = source.kind,
+                cameraRequest = source.tuning.describeRequest(),
+                cameraActual = source.tuning.reported.describe(),
+                cameraStatus = source.status,
+                cameraControllable = source.tuning.capabilities.available,
+                cameraCapabilities = source.tuning.capabilities.describe(),
+                cameraHonoured = source.tuning.honoured(),
+                autoExposure = null,
+                cameraManual = source.tuning.settings.mode == CameraTuning.Mode.MANUAL,
+                aeLocked = source.tuning.settings.lockAe,
+                awbLocked = source.tuning.settings.lockAwb,
+            )
         }
     }
 
@@ -1938,8 +2109,12 @@ class ScanPipeline(
             GemAdapter.ID -> LiveMode.GEMS
             TerminalAdapter.ID -> LiveMode.TERMINAL
             SpotFinder.ID -> LiveMode.SPOT
+            BombAdapter.ID -> LiveMode.MINES
             else -> LiveMode.NONE
         }
+        // Set up afresh on the way in: Terminal and Spot meter the camera for themselves,
+        // and coming from either leaves it wherever they put it.
+        minesCameraApplied = false
         liveTerminalResult = TerminalScanner.Result.EMPTY
         liveSpotScreen = null
         gemLoadArmed = false
@@ -1952,10 +2127,11 @@ class ScanPipeline(
             terminalScanner.reset()
             terminalExposure.reset()
             spotExposure.reset()
-            // Spot has no adapter: it is not a wall the engine reads.
+            // Spot has no adapter: it is not a wall the engine reads. Mines has one, but the
+            // live scan reads the wall now, not the engine.
             when (id) {
                 null -> engine.autoDetectPuzzle()
-                SpotFinder.ID -> Unit
+                SpotFinder.ID, BombAdapter.ID -> Unit
                 else -> engine.pinAdapter(id)
             }
         }
@@ -2165,6 +2341,10 @@ class ScanPipeline(
                         runSpotFrame(live)
                         continue
                     }
+                    if (live != null && liveMode == LiveMode.MINES) {
+                        runMinesFrames(live)
+                        continue
+                    }
                     if (live != null) {
                         runLiveScan(live)
                         // The loop is fed from here rather than from the frame clock
@@ -2233,6 +2413,12 @@ class ScanPipeline(
 
         /** Live gem scans at ~10 Hz on a 30 fps stream. Walls do not move that fast. */
         const val LIVE_SCAN_EVERY_N_FRAMES = 3L
+
+        /** Mines reads every other pixel each way: 960x540 off a 1080p camera. */
+        const val MINES_FRAME_STEP = 2
+
+        /** At most this many waiting frames per dispatch: the two ready slots, twice over. */
+        const val MINES_FRAMES_PER_DISPATCH = 4
 
         /**
          * Radius of the drawn highlight as a fraction of the button pitch. Half a pitch

@@ -86,9 +86,11 @@ Three things got better in the process:
   the canvas version reached, and a test the canvas version could never have had,
   because its input was a mosaic that only existed after standing in the room.
 
-Mines still runs on ARCore, unchanged. Its classifier reads the glow around a button
-that has clipped its own face to white, so it *wants* the exposure the camera picks, and
-it needs the pose because a mine plan is about the whole board at once.
+Mines ran on ARCore for a long time after this, on the argument that its classifier
+read the glow round a clipped button and a mine plan is about the whole board at once.
+It has since followed Gems off it: it reads colour at this exposure, and gets the whole
+board by counting columns from the green button as the user pans rather than from a
+pose. See [BOMB_PUZZLE.md](BOMB_PUZZLE.md).
 
 ## Loading the targets off the wall
 

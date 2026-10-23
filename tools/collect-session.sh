@@ -124,6 +124,16 @@ else
   echo "  no terminal captures -- press Capture in Terminal mode while pointing at the wall"
 fi
 
+# 5b. Mines scans. Every scan keeps itself, a folder each: the frames it read, which
+#     were lattice and which colour, the scanner's log, and the board and plan. MinesReplay
+#     reads a folder as it stands.
+if MSYS_NO_PATHCONV=1 "$ADB" shell ls "$REMOTE/mines" >/dev/null 2>&1; then
+  MSYS_NO_PATHCONV=1 "$ADB" pull "$REMOTE/mines" "$OUT/mines" >/dev/null 2>&1
+  echo "  mines/ ($(ls -d "$OUT"/mines/*/ 2>/dev/null | wc -l | tr -d ' ') scans)"
+else
+  echo "  no mines scans -- tap Scan in Mines mode"
+fi
+
 # 6. The Log button's files. The same heartbeat as logcat-app.txt, but written on the
 #    phone as it happened, so it is complete however long ago the run was -- the ring
 #    buffer behind logcat-app.txt wraps in minutes. Since the Export button went, this

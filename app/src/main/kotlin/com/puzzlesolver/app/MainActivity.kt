@@ -37,6 +37,7 @@ import com.puzzlesolver.app.frame.VideoFrameSource
 import com.puzzlesolver.app.pipeline.ScanPipeline
 import com.puzzlesolver.core.canvas.CanvasSpec
 import com.puzzlesolver.core.puzzle.gems.GemAdapter
+import com.puzzlesolver.core.puzzle.bombs.BombAdapter
 import com.puzzlesolver.core.puzzle.gems.GemColour
 import com.puzzlesolver.core.puzzle.gems.GemPattern
 import com.puzzlesolver.core.puzzle.spot.SpotFinder
@@ -45,11 +46,13 @@ import com.puzzlesolver.app.record.LogCapture
 import com.puzzlesolver.app.record.SessionStore
 import com.puzzlesolver.app.spell.SpellController
 import com.puzzlesolver.app.spot.SpotController
+import com.puzzlesolver.app.mines.MinesController
 import com.puzzlesolver.app.ui.LandingScreen
 import com.puzzlesolver.app.ui.PuzzleSolverTheme
 import com.puzzlesolver.app.ui.ScanScreen
 import com.puzzlesolver.app.ui.SpellScreen
 import com.puzzlesolver.app.ui.SpotScreen
+import com.puzzlesolver.app.ui.MinesScreen
 import com.puzzlesolver.app.ui.StrategyScreen
 import com.puzzlesolver.core.puzzle.strategy.StageSplits
 import com.puzzlesolver.core.puzzle.strategy.StrategyRoom
@@ -128,6 +131,13 @@ class MainActivity : ComponentActivity() {
      * round is thrown away.
      */
     private lateinit var spot: SpotController
+
+    /**
+     * Mines: the wall scanned in one pan and solved on a board of the app's own. Kept
+     * across a trip to another room and back, so an answer is not lost to a stray Back;
+     * Rescan is how it is thrown away.
+     */
+    private lateinit var mines: MinesController
 
     /** A guide or Spellinator is up, so the camera is off. */
     private val cameraFree: Boolean get() = guideRoom != null || spellOpen
@@ -325,6 +335,19 @@ class MainActivity : ComponentActivity() {
                 spot.reset()
                 Log.i(TAG, "debug: spot reset")
             }
+            // Mines' buttons, likewise: scan, finish where it is, and start again.
+            if (intent.getBooleanExtra("minesscan", false)) {
+                mines.startScan()
+                Log.i(TAG, "debug: mines scan")
+            }
+            if (intent.getBooleanExtra("minesfinish", false)) {
+                mines.finishScan()
+                Log.i(TAG, "debug: mines finish")
+            }
+            if (intent.getBooleanExtra("minesrescan", false)) {
+                mines.rescan()
+                Log.i(TAG, "debug: mines rescan")
+            }
         }
     }
 
@@ -432,6 +455,8 @@ class MainActivity : ComponentActivity() {
             "${"%.2f".format(spec.widthMetres)}m wide")
         pipeline = ScanPipeline(spec = spec, displayRotationProvider = ::currentDisplayRotation)
         spot = SpotController(this) { pipeline.takeSpotPhoto(it) }
+        mines = MinesController(this) { pipeline.tuning() }
+        pipeline.minesFrames = mines::onFrame
 
         glView = GLSurfaceView(this).apply {
             preserveEGLContextOnPause = true
@@ -451,6 +476,7 @@ class MainActivity : ComponentActivity() {
                 val spellServer by spell.server.collectAsState()
                 val spellOneAndDone by spell.oneAndDone.collectAsState()
                 val spotState by spot.state.collectAsState()
+                val minesState by mines.state.collectAsState()
                 // Back from the HUD or a guide goes to the landing page, which is the
                 // one place a room is picked: there is no menu to swipe in any more.
                 BackHandler(enabled = !showLanding) { showLanding = true }
@@ -558,6 +584,19 @@ class MainActivity : ComponentActivity() {
                                     onReset = { spot.reset() },
                                 )
                             }
+                        } else if (uiState.isMinesMode) {
+                            // Camera behind it while aiming and scanning; the answer covers it.
+                            {
+                                MinesScreen(
+                                    state = minesState,
+                                    onScan = { mines.startScan() },
+                                    onFinish = { mines.finishScan() },
+                                    onRescan = { mines.rescan() },
+                                    onCorrect = { col, row -> mines.correctCell(col, row) },
+                                    onNudgeLattice = { mines.nudgeLattice(it) },
+                                    onNudgeColour = { mines.nudgeColour(it) },
+                                )
+                            }
                         } else null,
                     )
                     LandingScreen(
@@ -590,7 +629,8 @@ class MainActivity : ComponentActivity() {
                 // there is one trip to the room, and a setting whose absence is only
                 // discovered afterwards is not one to leave to memory. An explicit Stop
                 // is respected.
-                val liveMode = uiState.isGemsMode || uiState.isTerminalMode || uiState.isSpotMode
+                val liveMode = uiState.isGemsMode || uiState.isTerminalMode || uiState.isSpotMode ||
+                    uiState.isMinesMode
                 if (liveMode && !cameraFree && !loggingSuppressed && !logCapture.isRunning) {
                     startLogging()
                 }
@@ -733,6 +773,7 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         spell.release()
         spot.release()
+        mines.release()
         probe?.close()
         pipeline.release()
         pipeline.frameSource.get()?.close()
@@ -758,12 +799,13 @@ class MainActivity : ComponentActivity() {
     /**
      * Chooses the puzzle type, and with it the camera.
      *
-     * The two are not independent any more. Three modes read the camera frame directly and
+     * The two are not independent any more. Four modes read the camera frame directly and
      * want no pose at all, so they run on a plain Camera2 source; everything else needs
      * the pose and runs on ARCore. Gems is there because ARCore will not pass its
      * exposure request through to the sensor, Terminal because the wall it reads is
-     * being played while it is read and there is nothing worth accumulating, and Spot
-     * because it compares photos of a flat screen, which needs no pose to line up. Switching
+     * being played while it is read and there is nothing worth accumulating, Spot
+     * because it compares photos of a flat screen, which needs no pose to line up, and
+     * Mines for Gems' exposure and because its answer is drawn in the app, not on the wall. Switching
      * modes therefore switches the source, which is heavier than it used to be -- but it
      * happens on a deliberate tap, and the alternative is a mode that cannot see the
      * wall it is pointed at.
@@ -773,14 +815,15 @@ class MainActivity : ComponentActivity() {
         showLanding = false
         leaveCameraFree()
         pipeline.selectPuzzleMode(id)
-        val wantsLiveCamera = id == GemAdapter.ID || id == TerminalAdapter.ID || id == SpotFinder.ID
+        val wantsLiveCamera = id == GemAdapter.ID || id == TerminalAdapter.ID || id == SpotFinder.ID ||
+            id == BombAdapter.ID
         if (wantsLiveCamera != usingLiveCamera) {
             usingLiveCamera = wantsLiveCamera
             startLiveSource()
         }
     }
 
-    /** True while the plain Camera2 source is driving, i.e. Gems, Terminal or Spot. */
+    /** True while the plain Camera2 source is driving, i.e. Gems, Terminal, Spot or Mines. */
     private var usingLiveCamera = false
 
     private fun startLiveSource() {

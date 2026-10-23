@@ -70,31 +70,43 @@ class RgbImage(
          * `PreviewGeometry` works it out for the preview -- so the photo comes out the way
          * the user was looking at it, which is the way they will want to see it back.
          * BT.601 full range, matching [CanvasView.rgbAt]. Grey when there is no chroma.
+         *
+         * [step] keeps every step-th pixel each way, for a reader that wants the frame
+         * smaller and would only shrink it again. [into] is reused when it is the right
+         * size, for a reader taking thirty frames a second that would otherwise hand the
+         * collector a frame's worth of garbage each time.
          */
-        fun fromCanvasView(view: CanvasView, quarterTurns: Int): RgbImage {
+        fun fromCanvasView(view: CanvasView, quarterTurns: Int, step: Int = 1, into: RgbImage? = null): RgbImage {
             val turns = ((quarterTurns % 4) + 4) % 4
             val iw = view.width
             val ih = view.height
-            val ow = if (turns % 2 == 0) iw else ih
-            val oh = if (turns % 2 == 0) ih else iw
-            val out = RgbImage(ow, oh)
+            val fw = if (turns % 2 == 0) iw else ih
+            val fh = if (turns % 2 == 0) ih else iw
+            val ow = fw / step
+            val oh = fh / step
+            val out = into?.takeIf { it.width == ow && it.height == oh } ?: RgbImage(ow, oh)
             val luma = view.luma.data
             val chroma = view.chroma?.data
+            // Upright pixel back to buffer pixel; the inverse of PreviewGeometry's
+            // toUpright. Each turn is a start per row and a fixed stride along it, so the
+            // loop carries no branch per pixel.
+            val along = when (turns) {
+                1 -> -step * iw
+                2 -> -step
+                3 -> step * iw
+                else -> step
+            }
             var o = 0
-            for (uy in 0 until oh) {
-                for (ux in 0 until ow) {
-                    // Upright pixel back to buffer pixel; the inverse of PreviewGeometry's
-                    // toUpright, written out per turn so the loop carries no branches it
-                    // does not need.
-                    val ix: Int
-                    val iy: Int
-                    when (turns) {
-                        1 -> { ix = uy; iy = ih - 1 - ux }
-                        2 -> { ix = iw - 1 - ux; iy = ih - 1 - uy }
-                        3 -> { ix = iw - 1 - uy; iy = ux }
-                        else -> { ix = ux; iy = uy }
-                    }
-                    val p = iy * iw + ix
+            for (sy in 0 until oh) {
+                val uy = sy * step
+                var p = when (turns) {
+                    1 -> (ih - 1) * iw + uy
+                    2 -> (ih - 1 - uy) * iw + iw - 1
+                    3 -> iw - 1 - uy
+                    else -> uy * iw
+                } - along
+                for (sx in 0 until ow) {
+                    p += along
                     val y = (luma[p].toInt() and 0xFF).toFloat()
                     if (chroma == null) {
                         out.data[o] = y.toInt().toByte()

@@ -69,8 +69,8 @@ The distinction you asked for is explicit in the type system, as
 A puzzle like sudoku could be answered the moment its read clues become uniquely
 completable — typically long before the whole wall has been panned. The engine still
 supports that, though no puzzle in the app uses it since the sudoku and nonogram modes
-were removed. Mines refuses until the board is fully covered, and says so in the HUD
-while it waits.
+were removed. Mines waits for the whole wall: it is scanned in one pan, from the green
+button to the end, and only then planned.
 
 ## The three rooms
 
@@ -79,7 +79,9 @@ darkened room, and each needed its own detection path because none of them has a
 drawn anywhere on it.
 
 - **Mines** — a wall of single-colour RGB buttons; place mines, detonate, clear the
-  board. See [docs/BOMB_PUZZLE.md](docs/BOMB_PUZZLE.md).
+  board. Tap Scan at the green button and pan the wall; the app reads it into a board of
+  its own and shows which buttons to mine, in which detonation. See
+  [docs/BOMB_PUZZLE.md](docs/BOMB_PUZZLE.md).
 - **Gems** — a wall of buttons carrying three concentric rings of colour. Four target
   gems are shown above the wall; you tap them into the HUD and the app rings every gem
   that matches as you pan. See [docs/GEM_PUZZLE.md](docs/GEM_PUZZLE.md).
@@ -140,7 +142,8 @@ the shutter.
 same request through plain Camera2 is honoured exactly, so it is ARCore rather than the
 phone and it is not a bug waiting to be fixed. Gems therefore runs on its own Camera2
 source with no ARCore at all, where a manual 1/250 s at ISO 100 is honoured to the
-microsecond; Mines keeps the AR pipeline, which suits it better anyway.
+microsecond. Mines has since moved to the same source, alternating that exposure with a
+brighter one so it can count the unlit buttons as it pans.
 The app detects it, says so, and stands the loop down rather than throwing scans away for
 nothing. Gems therefore cannot yet work in that room through ARCore. The measurements,
 the probe that isolates it, and what would have to change are in

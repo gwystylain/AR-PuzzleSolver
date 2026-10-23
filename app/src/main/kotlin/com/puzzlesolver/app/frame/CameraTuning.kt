@@ -64,7 +64,25 @@ class CameraTuning(
         val lockAe: Boolean = false,
         val lockAwb: Boolean = false,
         val diagnosticMono: Boolean = false,
+        /**
+         * A second, brighter exposure interleaved with this one frame for frame, or null
+         * for none. Manual only. See [Lattice].
+         */
+        val lattice: Lattice? = null,
     )
+
+    /**
+     * The bright half of an alternating pair, for the mines wall.
+     *
+     * Mines reads colour at the LED-wall preset, like Gems, and the preset leaves every
+     * unlit button black. But the scan counts columns along the wall, and the unlit
+     * buttons are most of what it counts by. So the camera alternates: this exposure for
+     * the lattice, the ordinary settings for the colour. See
+     * [com.puzzlesolver.core.puzzle.bombs.WallScanner].
+     */
+    data class Lattice(val exposureNanos: Long, val iso: Int) {
+        fun describe(): String = "1/${(1_000_000_000.0 / exposureNanos).toInt()}s iso$iso"
+    }
 
     /** What the device says it can do. All defaults are the "cannot" answer. */
     data class Capabilities(
@@ -129,6 +147,10 @@ class CameraTuning(
     @Volatile
     var reported: Reported = Reported()
 
+    /** What the lattice frames actually got, when they are on. Kept apart from [reported]. */
+    @Volatile
+    var latticeReported: Reported = Reported()
+
     /**
      * Bumped on every settings change.
      *
@@ -164,6 +186,12 @@ class CameraTuning(
             evSteps = s.evSteps.coerceIn(c.minEvSteps, c.maxEvSteps),
             exposureNanos = s.exposureNanos.coerceIn(c.minExposureNanos, c.maxExposureNanos),
             iso = s.iso.coerceIn(c.minIso, c.maxIso),
+            lattice = s.lattice?.takeIf { c.manualSensor }?.let {
+                Lattice(
+                    exposureNanos = it.exposureNanos.coerceIn(c.minExposureNanos, minOf(c.maxExposureNanos, LATTICE_MAX_EXPOSURE_NANOS)),
+                    iso = it.iso.coerceIn(c.minIso, c.maxIso),
+                )
+            },
         )
     }
 
@@ -196,6 +224,40 @@ class CameraTuning(
                 lockAwb = true,
             )
         }
+    }
+
+    /**
+     * Turns the interleaved lattice frames on or off.
+     *
+     * The default is as much light as 1/250 s at ISO 3200, about two stops under what the
+     * phone's own camera chose for the reference footage of the mines wall, where the
+     * unlit buttons sat near 190 and the lit ones were long since clipped. Two stops down
+     * keeps every unlit button well clear of the panel while giving them room either side.
+     * Sensitivity first, so the shutter stays short enough not to smear a pan.
+     *
+     * @return whether anything changed; false on a device without manual control too.
+     */
+    fun setLatticeFrames(on: Boolean): Boolean = update {
+        val c = capabilities
+        if (!on || !c.manualSensor) return@update it.copy(lattice = null)
+        if (it.lattice != null) return@update it
+        val iso = minOf(c.maxIso, LATTICE_ISO)
+        val exposure = (LATTICE_LIGHT / iso).coerceIn(LED_WALL_EXPOSURE_NANOS, LATTICE_MAX_EXPOSURE_NANOS)
+        it.copy(lattice = Lattice(exposure, iso))
+    }
+
+    /** Doubles or halves the lattice frames' light: sensitivity first, then shutter. */
+    fun nudgeLattice(brighter: Boolean): Boolean = update {
+        val l = it.lattice ?: return@update it
+        val c = capabilities
+        val next = if (brighter) {
+            if (l.iso * 2 <= c.maxIso) l.copy(iso = l.iso * 2)
+            else l.copy(exposureNanos = l.exposureNanos * 2)
+        } else {
+            if (l.exposureNanos / 2 >= LED_WALL_EXPOSURE_NANOS) l.copy(exposureNanos = l.exposureNanos / 2)
+            else l.copy(iso = l.iso / 2)
+        }
+        it.copy(lattice = next)
     }
 
     /**
@@ -297,7 +359,8 @@ class CameraTuning(
         } else {
             "auto ev%+d".format(s.evSteps)
         }
-        return head + (if (s.lockAe) " AE-lock" else "") + (if (s.lockAwb) " AWB-lock" else "")
+        return head + (if (s.lockAe) " AE-lock" else "") + (if (s.lockAwb) " AWB-lock" else "") +
+            (s.lattice?.let { " + lattice ${it.describe()}" } ?: "")
     }
 
     companion object {
@@ -307,6 +370,13 @@ class CameraTuning(
 
         /** 1/250 s, which is roughly where the readable reference clips sit. */
         const val LED_WALL_EXPOSURE_NANOS = 4_000_000L
+
+        /** The lattice frames' default: 1/250 s at ISO 3200, as exposure time times ISO. */
+        const val LATTICE_ISO = 3200
+        const val LATTICE_LIGHT = 4_000_000L * LATTICE_ISO
+
+        /** A sixtieth: the longest a lattice frame may run before a pan smears it. */
+        const val LATTICE_MAX_EXPOSURE_NANOS = 16_666_666L
 
         /**
          * How long the sensor may go on disagreeing with a request before the camera is

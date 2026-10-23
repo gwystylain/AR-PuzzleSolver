@@ -39,8 +39,9 @@ import com.puzzlesolver.core.math.Intrinsics
  * AR-anchored overlay. For Gems that turned out to be no price at all: whether a gem
  * matches depends on that gem alone, a highlight only has to land where the gem is on
  * screen right now, and the wall is rearranged between rounds so there was never
- * anything worth accumulating. Mines still runs on ARCore, where its classifier wants
- * the exposure the camera picks anyway.
+ * anything worth accumulating. Mines left too, for the same exposure, and asks for one
+ * thing more: a bright frame between every two, so the unlit buttons can be counted.
+ * See [CameraTuning.Lattice].
  *
  * Two outputs, because the app needs the frame twice over: a `SurfaceTexture` so the GL
  * background can draw it without a copy, and an `ImageReader` so the gem scanner can read
@@ -175,6 +176,9 @@ class Camera2FrameSource(
     @Volatile
     private var captureCount = 0L
 
+    @Volatile
+    private var latticeCount = 0L
+
     private val transformMatrix = FloatArray(16)
     private val texCoords = FloatArray(8)
     private var logComposite = false
@@ -197,13 +201,43 @@ class Camera2FrameSource(
         var view: CanvasView? = null
         var width = 0
         var height = 0
+        var timestampNanos = 0L
+        var exposure = Exposure.SINGLE
     }
 
+    /** Which request a frame came from, when the camera is alternating two. */
+    enum class Exposure {
+        /** Not alternating: the one exposure there is. */
+        SINGLE,
+
+        /** The bright frame of an alternating pair, for seeing every button. */
+        LATTICE,
+
+        /** The ordinary exposure of an alternating pair. */
+        COLOUR,
+    }
+
+    /** A frame handed to the scanner, with what it is. */
+    class Acquired(val view: CanvasView, val exposure: Exposure, val timestampNanos: Long)
+
+    // Three buffers and a ready slot per kind of frame. One slot was enough while every
+    // frame was alike; with two exposures alternating, a single slot can be refilled by
+    // the same kind every time the consumer looks -- it looks at the preview's rate,
+    // which is the lattice frames' -- and the other kind is never read at all.
     private val bufferA = Buffer()
     private val bufferB = Buffer()
+    private val bufferC = Buffer()
     private val lock = Object()
     private var ready: Buffer? = null
+    private var readyLattice: Buffer? = null
     private var consuming: Buffer? = null
+
+    // Which request each frame came from, by sensor timestamp. Written in
+    // onCaptureStarted, which lands before the image does, and read when the image
+    // arrives; both on the camera thread.
+    private val tagTimes = LongArray(16)
+    private val tagKinds = arrayOfNulls<Exposure>(16)
+    private var tagNext = 0
 
     /** Frames the scanner never saw because it was still busy with an earlier one. */
     @Volatile
@@ -216,11 +250,23 @@ class Camera2FrameSource(
      * The caller must call [releaseView] when finished, or the producer will assume the
      * buffer is still in use and keep dropping frames into the other one.
      */
-    fun acquireView(): CanvasView? = synchronized(lock) {
-        val b = ready ?: return null
-        ready = null
+    fun acquireView(): CanvasView? = acquire()?.view
+
+    /**
+     * Takes the newest frame of one kind, or the older of the two waiting when [kind] is
+     * null, or null when there is none. Release it with [releaseView] like any other.
+     */
+    fun acquire(kind: Exposure? = null): Acquired? = synchronized(lock) {
+        val lattice = readyLattice
+        val other = ready
+        val b = when (kind) {
+            Exposure.LATTICE -> lattice
+            null -> if (lattice != null && (other == null || lattice.timestampNanos <= other.timestampNanos)) lattice else other
+            else -> other
+        } ?: return null
+        if (b === lattice) readyLattice = null else ready = null
         consuming = b
-        b.view
+        Acquired(b.view ?: return null, b.exposure, b.timestampNanos)
     }
 
     fun releaseView() = synchronized(lock) { consuming = null }
@@ -463,7 +509,7 @@ class Camera2FrameSource(
     }
 
     private fun allocateBuffers() {
-        for (b in listOf(bufferA, bufferB)) {
+        for (b in listOf(bufferA, bufferB, bufferC)) {
             b.width = captureSize.width
             b.height = captureSize.height
             b.view = CanvasView(
@@ -473,6 +519,7 @@ class Camera2FrameSource(
         }
         synchronized(lock) {
             ready = null
+            readyLattice = null
             consuming = null
         }
     }
@@ -579,6 +626,12 @@ class Camera2FrameSource(
         // roughly constant distance for the whole session.
         b.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
 
+        val lattice = settings.lattice
+        if (lattice != null && settings.mode == CameraTuning.Mode.MANUAL && caps.manualSensor) {
+            return writeAlternating(s, settings, lattice)
+        }
+        b.setTag(null)
+
         return try {
             // Stopped before being restarted. Submitting a new repeating request over a
             // running one is legal and is what the API documents, but on this HAL only
@@ -592,6 +645,55 @@ class Camera2FrameSource(
             // a retune that threw looking identical to one that worked.
             Log.e(TAG, "setRepeatingRequest failed", e)
             status = "camera rejected: ${e.javaClass.simpleName} ${e.message}"
+            false
+        }
+    }
+
+    /**
+     * Issues the two requests of an alternating pair as one repeating burst.
+     *
+     * The lattice frame goes to the preview as well as the scanner, so what the user aims
+     * with is the bright view; the colour frame goes to the scanner only, because a preview
+     * flickering between the two at thirty a second is unwatchable. Both are tagged, so
+     * each frame can be told apart when it arrives -- see [onImage].
+     *
+     * Issued as the session's first request, like every request here: on this HAL nothing
+     * issued later reaches the sensor (see [retune]).
+     */
+    private fun writeAlternating(
+        s: CameraCaptureSession,
+        settings: CameraTuning.Settings,
+        lattice: CameraTuning.Lattice,
+    ): Boolean {
+        val camera = device ?: return false
+        val preview = previewSurface ?: return false
+        val r = reader ?: return false
+        return try {
+            fun manual(b: CaptureRequest.Builder, exposureNanos: Long, iso: Int) {
+                b.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
+                b.set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_OFF)
+                b.set(CaptureRequest.SENSOR_EXPOSURE_TIME, exposureNanos)
+                b.set(CaptureRequest.SENSOR_SENSITIVITY, iso)
+                b.set(CaptureRequest.SENSOR_FRAME_DURATION, maxOf(exposureNanos, FRAME_DURATION))
+                b.set(CaptureRequest.CONTROL_AWB_LOCK, settings.lockAwb)
+                b.set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+            }
+            val bright = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                addTarget(preview)
+                addTarget(r.surface)
+                manual(this, lattice.exposureNanos, lattice.iso)
+                setTag(Exposure.LATTICE)
+            }.build()
+            val colour = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                addTarget(r.surface)
+                manual(this, settings.exposureNanos, settings.iso)
+                setTag(Exposure.COLOUR)
+            }.build()
+            s.setRepeatingBurst(listOf(bright, colour), captureCallback, handler)
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "setRepeatingBurst failed", e)
+            status = "camera rejected the alternating pair: ${e.javaClass.simpleName} ${e.message}"
             false
         }
     }
@@ -635,11 +737,34 @@ class Camera2FrameSource(
     }
 
     private val captureCallback = object : CameraCaptureSession.CaptureCallback() {
+        override fun onCaptureStarted(
+            s: CameraCaptureSession,
+            request: CaptureRequest,
+            timestamp: Long,
+            frameNumber: Long,
+        ) {
+            val kind = request.tag as? Exposure ?: return
+            tagTimes[tagNext] = timestamp
+            tagKinds[tagNext] = kind
+            tagNext = (tagNext + 1) % tagTimes.size
+        }
+
         override fun onCaptureCompleted(
             s: CameraCaptureSession,
             request: CaptureRequest,
             result: TotalCaptureResult,
         ) {
+            // The lattice frames are read back on their own. Mixed into [reported] they
+            // would have the HUD -- and [CameraTuning.honoured] -- comparing the colour
+            // request against a frame taken at the other exposure half the time.
+            if (request.tag == Exposure.LATTICE) {
+                if (latticeCount++ % METADATA_EVERY_N_CAPTURES != 0L) return
+                tuning.latticeReported = CameraTuning.Reported(
+                    exposureNanos = result.get(CaptureResult.SENSOR_EXPOSURE_TIME),
+                    iso = result.get(CaptureResult.SENSOR_SENSITIVITY),
+                )
+                return
+            }
             // Counted here rather than off the render loop's frame index. That index
             // advances on a different thread and at a different rate, so gating on it
             // meant the read-back could sit stale indefinitely -- which is fatal for the
@@ -759,6 +884,7 @@ class Camera2FrameSource(
             null
         } ?: return
         try {
+            val kind = kindOf(image.timestamp)
             val target = synchronized(lock) {
                 // Dropped *before* the conversion, not after it.
                 //
@@ -776,11 +902,13 @@ class Camera2FrameSource(
                 // stayed saturated. Live Gems settled at 0.5 fps with the scanner
                 // effectively stopped, and the camera looked healthy throughout because
                 // capture callbacks and metadata read-back were never the thing blocked.
-                if (ready != null) {
+                if ((if (kind == Exposure.LATTICE) readyLattice else ready) != null) {
                     droppedFrames++
                     return
                 }
-                if (consuming === bufferA) bufferB else bufferA
+                listOf(bufferA, bufferB, bufferC).first {
+                    it !== consuming && it !== ready && it !== readyLattice
+                }
             }
             val view = target.view
             if (view == null || target.width != image.width || target.height != image.height) {
@@ -788,12 +916,22 @@ class Camera2FrameSource(
                 return
             }
             convert(image, view)
-            synchronized(lock) { ready = target }
+            target.timestampNanos = image.timestamp
+            target.exposure = kind
+            synchronized(lock) {
+                if (kind == Exposure.LATTICE) readyLattice = target else ready = target
+            }
         } catch (e: Exception) {
             Log.w(TAG, "frame conversion failed", e)
         } finally {
             image.close()
         }
+    }
+
+    /** Which request produced the frame taken at [timestamp]; [Exposure.SINGLE] when none was tagged. */
+    private fun kindOf(timestamp: Long): Exposure {
+        for (i in tagTimes.indices) if (tagTimes[i] == timestamp) return tagKinds[i] ?: Exposure.SINGLE
+        return Exposure.SINGLE
     }
 
     private fun convert(image: Image, view: CanvasView) {
@@ -834,19 +972,36 @@ class Camera2FrameSource(
         val vPixelStride = vPlane.pixelStride
         val chroma = view.chroma!!.data
 
-        for (y in 0 until height) {
-            val cy = y shr 1
-            val uRow = cy * uRowStride
-            val vRow = cy * vRowStride
-            var out = y * width * 2
+        // A chroma row at a time, read in bulk and written out twice -- once for each of
+        // the two image rows it covers. It used to be two ByteBuffer reads per pixel for
+        // every pixel, which is what kept this thread at 70% of a core once Mines started
+        // taking every frame the camera sends.
+        val chromaWidth = (width + 1) / 2
+        val uLength = (chromaWidth - 1) * uPixelStride + 1
+        val vLength = (chromaWidth - 1) * vPixelStride + 1
+        val uRowBytes = chromaRowU?.takeIf { it.size >= uLength } ?: ByteArray(uLength).also { chromaRowU = it }
+        val vRowBytes = chromaRowV?.takeIf { it.size >= vLength } ?: ByteArray(vLength).also { chromaRowV = it }
+        val rowBytes = width * 2
+        for (cy in 0 until (height + 1) / 2) {
+            uBuf.position(cy * uRowStride)
+            uBuf.get(uRowBytes, 0, minOf(uLength, uBuf.remaining()))
+            vBuf.position(cy * vRowStride)
+            vBuf.get(vRowBytes, 0, minOf(vLength, vBuf.remaining()))
+            val y = cy * 2
+            var out = y * rowBytes
             for (x in 0 until width) {
                 val cx = x shr 1
-                chroma[out] = uBuf.get(uRow + cx * uPixelStride)
-                chroma[out + 1] = vBuf.get(vRow + cx * vPixelStride)
+                chroma[out] = uRowBytes[cx * uPixelStride]
+                chroma[out + 1] = vRowBytes[cx * vPixelStride]
                 out += 2
             }
+            if (y + 1 < height) System.arraycopy(chroma, y * rowBytes, chroma, (y + 1) * rowBytes, rowBytes)
         }
     }
+
+    // Row scratch for [convert]; the camera thread only.
+    private var chromaRowU: ByteArray? = null
+    private var chromaRowV: ByteArray? = null
 
     private fun closeCamera() {
         try { session?.close() } catch (_: Exception) {}

@@ -91,8 +91,8 @@ then *reset* returned it to metered auto at `ae:on`. All confirmed on the device
 a `SurfaceTexture` for the preview and an `ImageReader` for the scanner off one capture
 request, so what the user sees and what the scanner reads are the same frame. The price
 is the world pose, which that mode turned out not to need — see
-[GEM_PUZZLE.md](GEM_PUZZLE.md). Mines keeps the AR pipeline, where its classifier wants
-the camera's own exposure anyway.
+[GEM_PUZZLE.md](GEM_PUZZLE.md). Mines has since followed it, for the same exposure; see
+below for the one thing it needed more.
 
 A fourth was found later, on the device, and it is the one that actually stopped the
 mode working. **The preview and the scanner starved each other.** `onImage` converted
@@ -274,16 +274,23 @@ above.
 
 ## What gets the preset, and what does not
 
-**Gems** gets the exposure dropped for it the moment the mode becomes active. **Mines**
-does not, and that is deliberate: its classifier reads the glow *around* a button that
-has clipped its own face to white — see [BOMB_PUZZLE.md](BOMB_PUZZLE.md) — and it was
-verified on device at the camera's own exposure. Darkening for it would take away the
-thing it reads. The dials are on screen for both walls; this is only about what happens
-without being asked.
+**Gems** gets the exposure dropped for it the moment the mode becomes active, and so
+does **Mines**, which reads its colours off the button faces at the same preset. Mines
+used to be the exception -- its old classifier read the glow round a clipped face, at the
+camera's own exposure -- until it moved off ARCore. See [BOMB_PUZZLE.md](BOMB_PUZZLE.md).
 
-Mines also has no `exposureHint`, so the loop does not run for it. Adding one would mean
-first deciding what correct exposure means for a classifier that wants its subject
-clipped.
+Mines asks for one thing more: **a second, brighter exposure interleaved frame for
+frame** (`CameraTuning.Lattice`), because the preset leaves every unlit button black and
+the scan counts columns by them. The pair is issued as one repeating burst, as the
+session's first request like every request here; the lattice frame goes to the preview
+and the scanner, the colour frame to the scanner only, and each is tagged so it can be
+told apart on arrival. Its read-back is kept apart from the main one (`latticeReported`),
+or `honoured()` would compare the colour request against the other exposure half the
+time. Leaving Mines takes the lattice frames away again, since every live mode shares
+this camera.
+
+Mines has no `exposureHint`, so the loop does not run for its colour frames. Its lattice
+frames steer themselves while aiming instead, off how bright the unlit buttons came out.
 
 ## Which way up the preview is
 

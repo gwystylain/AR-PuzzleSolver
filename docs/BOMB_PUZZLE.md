@@ -1,8 +1,181 @@
 # The bomb puzzle
 
-A wall of RGB buttons, roughly 7 rows by 100 columns. Press a black (unlit) button to
+A wall of RGB buttons, 7 rows by 64 columns. Press a black (unlit) button to
 place a mine; press the green button to detonate every mine at once. Clear all the
 white buttons (one hit) and blue buttons (two hits) within a fixed number of mines.
+
+**How it is used.** Pick *Mines* on the landing page, stand at the green button with all
+seven rows in view, tap **Scan**, and pan slowly right to the end of the wall. The app
+reads the whole wall into a board of its own, plans the fewest mines, and shows the
+answer on that board -- every button numbered from the green, each one to mine ringed and
+numbered by its detonation. A misread is a tap on the board, not a rescan. Nothing is
+drawn on the wall any more; the next section says why, and how the pan becomes a board.
+
+## Scanning the wall in one pan
+
+Until 2026-10-23 Mines ran on the AR pipeline: ARCore fitted the wall, a mosaic
+accumulated as the user panned, and the plan was drawn back onto the wall through the
+camera. It is replaced by something much smaller, for three reasons:
+
+- **The answer needs the whole wall anyway.** The planner cannot say anything until the
+  last button is read (see [What the solver returns](#what-the-solver-returns)), so there
+  is no moment where an overlay helps before the scan is over -- and after it, holding
+  the phone up to the wall to see which button to press is worse than looking at a board.
+- **Colour reads better at Gems' exposure**, and ARCore will not set one
+  ([CAMERA_CONTROL.md](CAMERA_CONTROL.md)). Gems moved to its own Camera2 source for that
+  reason and now reads its LEDs reliably; Mines follows it.
+- **The wall has a landmark.** The green button is always in the first column, third row,
+  so a board indexed from it is the same board every round, and "column 23, row 4" is a
+  button the user can walk to. The wall's two-column panels, drawn the same way on the
+  board, make the count easy.
+
+### Two exposures, alternating
+
+Gems' exposure (1/250 s at floor ISO, white balance locked) keeps an LED's face in
+colour, and leaves every **unlit** button black. Measured on a Gems frame at that
+exposure, an unlit button sits at a luma of about 8 against a panel of 2. But unlit
+buttons are most of what there is to count columns by: on the reference pan, stretches
+of ten columns and more have nothing lit at all.
+
+So the camera alternates, frame by frame, as one repeating burst
+(`Camera2FrameSource.writeAlternating`):
+
+| frame | exposure | goes to | used for |
+| --- | --- | --- | --- |
+| lattice | 1/250 s at ISO 3200 (two stops under the phone's own choice for the reference pan) | preview and scanner | every button's position; lit or not |
+| colour | the LED-wall preset, as Gems | scanner only | the colour of each lit button |
+
+The preview shows only the lattice frames, because a preview strobing between the two
+is unwatchable. Each frame is tagged with its request and read back by sensor timestamp;
+the two kinds get a ready slot each in the hand-off, because one slot refilled at the
+preview's rate would only ever hold one kind. While aiming, the lattice exposure steers
+itself a stop at a time (at most two either way) to keep the unlit buttons between 45 and
+205; during a scan it is left alone, because a retune stops the camera for a moment and
+the count cannot afford a gap. A camera without manual control sends one exposure, every
+frame is a lattice frame, and colour falls back to the glow (below).
+
+### Counting the columns
+
+`WallScanner`, in `core`, testable at a desk:
+
+1. **Find the buttons** in each lattice frame (`GemBlobDetector`, as Gems), take the
+   camera's roll off, group the discs into columns and the columns into rows. A column
+   with exactly seven evenly spaced discs fixes the row lines for the whole frame -- which
+   is why all seven rows have to be in view -- and every cell's position comes from where
+   its column's line crosses its row's, so a lit button too bloomed to be found as a disc
+   is still where it should be.
+2. **Place the frame on the wall.** Every button of the last placed frame is moved on
+   by the pan's velocity and each disc in this one votes for the column offset that puts
+   it next to one. A slow pan moves a fraction of a column between frames, so the vote is
+   lopsided. When the lit buttons contradict the winning offset -- the vote can only be
+   wrong by a whole column, and a whole column moves every lit button off the ones
+   already recorded -- the neighbouring offset that agrees with them wins.
+3. **Find the place again** after losing it. Past 0.6 s untracked the velocity says
+   nothing useful, and only the lit buttons can place a frame: it is matched against the
+   board read so far, and accepted only if exactly one offset puts two or more lit
+   buttons on lit buttons and none on dark ones.
+4. **Anchor on the green.** Columns are counted from wherever the scan starts until a
+   cell reads green; that cell is column 1, row 3, and everything is renumbered from it.
+5. **Find the end.** The wall just stops. A frame whose last column is whole and has a
+   pitch and a half of clear panel after it, inside the frame, three frames running, is
+   the end. The count is then checked against the 64 the wall has, and the board says so
+   if it differs.
+
+Every look at a cell is a vote -- lit or not, and if lit, which colour -- and the board is
+the vote. A face reading counts for 1, a glow reading for 0.35, and a cell's colour is
+the face's verdict whenever there is one. A split vote is *unknown*.
+
+**Measured on `testVideos/Mines/mines1.mp4`**, a single-exposure pan of the whole wall
+on the phone's own camera app, at 10 frames a second and 270x480 (the fixture
+`core/src/test/resources/mines/pan`): it counts exactly 64 columns from the green to the
+end, and reads every one of the 21 lit buttons the right colour on every look, against a
+board read by eye off full-resolution crops of each. At 7.5 frames a second it still
+counts 64; at 5, the first step of that pan is more than a column and position alone
+cannot tell which. The phone reads both kinds of frame each time the preview advances,
+which should keep it well above 10.
+
+**Measured on a rendered pan** (`WallScanPanTest`), alternating as the app does, with
+the lattice frames' blooms all plain white so every colour on the board has to have come
+from the colour frames: the whole wall reads exactly, an armed mine included. Black out
+a second of it mid-pan and the count is lost, then found again by the lit buttons.
+
+### Reading colour
+
+**At the colour exposure, off the face** (`ButtonFace`). Gems' vote with the rings taken
+out: every texel bright enough to be LED votes, white if barely saturated, otherwise for
+the nearest hue -- red 352, green 146, blue 198, measured on the gem wall on this camera
+at this preset, and an armed mine (red *and* blue) at 275 between them. **Not yet
+measured on the mines wall itself**; no footage of it at this exposure exists yet. The
+scan log records every lit cell's mean colour, so the first scan in the room is the
+measurement.
+
+**At the lattice exposure, off the glow.** The fallback, and what the reference pan can
+test. The face of a lit button is clipped there, so the colour is read off the light it
+throws on the panel, the way the original classifier was -- but against the **panel's own
+colour, taken from between the unlit buttons in the same frame**, not against the panel
+right round the button. That change is the difference between working and not. A green
+or blue LED lights its whole neighbourhood, so the panel next to it is already its
+colour: the green's surround measured (23, 134, 40) against a panel of about
+(45, 43, 78), and subtracting it subtracted the answer -- the green came back unnamed and
+the blues flickered between blue and unknown. Measured against the frame's panel and
+named by hue, on the reference pan: whites at saturation 0.09-0.22, every colour above
+0.66; blue at 207-211 degrees, red at 344-349, green at 117.
+
+### What is planned
+
+The board goes to the same planner as before, with the same budget. A cell nobody could
+read is planned as a **red hazard**: it might be anything, red is the one thing a ray
+must never land on, and so it is the only assumption that cannot lose the room. The board
+shows it as a "?" for the user to look at and tap. On the reference wall the plan is five
+mines in two detonations, found in about a third of a second, and checked by detonating
+it against the board read by eye.
+
+### Keeping the evidence
+
+Every scan writes itself to the phone under `files/mines/<date-time>/`: the frames it read
+at half size, `frames.txt` saying when each was taken and which kind it was, `scan.txt`
+with the scanner's reading of every frame and every lit cell, and `board.txt` with the
+board, each correction made by hand, and each plan. `tools/collect-session.sh` brings them
+off, and `MinesReplay` runs one back through the scanner at a desk:
+
+```bash
+./gradlew :core:test --tests '*MinesReplay*' -Dmines.frames=/path/to/mines/20261023-190000
+```
+
+### Verified on the phone, at a desk
+
+Run on the CPH2655 on 2026-10-23, pointed at a desk and a monitor rather than the wall:
+
+- **The burst is honoured.** Colour frames asked 1/250 s at ISO 100 and got it; lattice
+  frames asked their own exposure and got that, read back separately. Half the frames
+  read were lattice frames, and the saved ones average a brightness of 50 against the
+  colour frames' 5. Frames come out upright.
+- **Every frame is read.** 27 to 30 frames a second during a scan -- 14 or so lattice
+  frames, against the 7.5 the count needs -- at about 7 ms a frame to turn upright and
+  7 ms to scan an empty view. Two things had to change to get there, both found by this
+  run. Taking two frames a dispatch managed only 7.5 lattice frames a second; taking all
+  that are waiting fixed it. And the camera thread was at 70% of a core converting every
+  frame a byte at a time; reading the chroma a row at a time took it to 17%.
+- **The aiming steer** pushed the lattice two stops brighter with the phone face down on
+  the desk -- a black frame, read as a room too dark. It now only brightens a black frame
+  when the colour frames show lit buttons, which a phone pointed at the floor never has.
+- Some seconds after a scan ends, the phone's own clocks drop and both costs roughly
+  triple; the rate stays above 20 frames a second.
+
+### Not yet verified
+
+- **A scan of the wall itself**, and with it the scan's cost with buttons in view. Every
+  measurement above was of a view with no wall in it.
+- **Face colours at the colour exposure on this wall**, above.
+- **The lattice exposure's default** is two stops under one auto-exposed video, not a
+  measurement at that setting. The aiming steer is there in case it is wrong.
+
+## How it used to work: the AR overlay
+
+Everything from here down describes the AR pipeline's Mines -- `BombAdapter`, the mosaic
+and the overlay -- which the scan above replaced. It is kept because the rules, the
+planner and the solver are shared, and the colour findings are what the glow reading
+grew from.
 
 ## Rules, and how sure we are of each
 
@@ -244,10 +417,8 @@ detection, identification, colour reading, planning, and finally detonating the 
 against the board that was drawn. All 84 cells read back the colour they were drawn
 with, and the plan clears the board without firing on the hazard.
 
-To try it on the real thing: pick *Mines* on the landing page (Back from the HUD
-returns there). Pinning is not
-usually needed -- the lattice detector identifies the wall on its own -- but it skips the
-ambiguity while the board is still half-scanned.
+Picking *Mines* on the landing page now starts the one-pan scan above rather than this
+path.
 
 One thing the device caught that no bench test would have. Run over the whole 4096-square
 canvas, the lattice search cost about **1.5 seconds** a pass, showing up as a 1528 ms

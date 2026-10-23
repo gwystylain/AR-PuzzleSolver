@@ -3,13 +3,11 @@
 You get one trip to the room and the scan probably will not work first time. This is
 what to capture so the failure can be diagnosed without going back.
 
-**Two modes, two sets of artifacts, and they have nothing in common.** Mines runs on
-ARCore, so what to capture is an ARCore recording and the canvas built from it. Gems
-threw all of that away -- its own camera, no world tracking, no mosaic -- so neither
-exists, and in Gems the **Record** button is not even on screen. What Gems leaves behind
-instead is a **Capture**: the frames the scanner actually read, each paired with the
-reading it made of that frame. Where it matters, the sections below say which wall they
-are about.
+**No mode records ARCore any more.** Gems threw all of that away -- its own camera, no
+world tracking, no mosaic -- and Mines, Terminal and Spot followed. What Gems leaves
+behind instead is a **Capture**: the frames the scanner actually read, each paired with
+the reading it made of that frame. Mines keeps every scan without being asked. Where it
+matters, the sections below say which wall they are about.
 
 **Nothing in the room needs a cable.** Everything the app can be told to do there, it
 has a button for, and everything it writes waits on the phone. A cable is needed
@@ -50,24 +48,18 @@ after the interesting bit.
 
 ## In the room, on the mines wall
 
-1. **Start recording before you start scanning.** Press **Record**. It writes an ARCore
-   dataset, which is not a video: playback re-runs ARCore's real tracking over the
-   recorded camera and IMU streams, so poses, feature points and depth behave exactly as
-   they did in front of you. That makes it a faithful regression test of the whole
-   stack, and the only artifact that lets a fix be *proven* rather than argued.
-2. **Pick Mines on the landing page** (Back from the HUD returns there). Identification should manage on its own, but
-   pinning removes one variable, and a half-scanned board is exactly when the evidence
-   is thinnest.
-3. **Pan slowly, and pan the whole wall.** The solver is `REQUIRES_FULL_SCAN` and will
-   not answer until every button has been seen — a white button at the far end changes
-   where mines go at this end.
-4. **Do a second pass over anything that looked wrong**, rather than stopping. Cells are
-   re-read when the view of them improves, so a second look is cheap and often fixes a
-   misread on its own.
-5. **Stop recording, but leave the app open and in the foreground.**
+1. **Pick Mines on the landing page.** The LED-wall preset and the lattice frames go on
+   by themselves, and so does the Log.
+2. **Stand at the green button with all seven rows in view**, until both chips at the
+   top say so. The lattice exposure steers itself in this time.
+3. **Tap Scan and pan slowly right**, rows in view all the way, to the end of the wall.
+   The count at the top should climb a column at a time. If it says the count was lost,
+   pan back left to lit buttons already passed; it finds its place from them.
+4. **Check the board against the wall** before pressing anything. A misread is a tap.
 
-That last point matters more than it sounds. The canvas dump and the heartbeat log are
-both live state. Killing the app first throws away the two most useful artifacts.
+Every scan keeps itself under `files/mines/<date-time>/` -- frames, the scanner's log,
+and the board and plan -- so there is nothing to remember to press. Rescanning starts a
+new folder rather than overwriting the last.
 
 ## In the room, on the gem wall
 
@@ -105,13 +97,12 @@ Plug the phone in and run:
 tools/collect-session.sh my-attempt --with-sessions
 ```
 
-Phone still connected, app still open. Drop `--with-sessions` if you only ran Gems --
-there will not be any. It gathers:
+Phone still connected, app still open. Drop `--with-sessions` unless you made an ARCore
+recording -- no mode makes one on its own any more. It gathers:
 
 | file | mode | what it answers |
 | --- | --- | --- |
-| `canvas-dump.png` | Mines | What the app actually saw, in colour. Sharp or smeared, square or skewed, the right wall or the wrong one. |
-| `sessions/` | Mines | The ARCore recording, for replaying the whole pipeline offline. |
+| `mines/<date-time>/` | Mines | One folder a scan: the frames it read (`frames.txt` says which were lattice and which colour), `scan.txt` with the scanner's reading of each frame and every lit cell, and `board.txt` with the board and the plan. `MinesReplay` runs a folder back through the scanner. |
 | `gems/` | Gems | Every captured frame, as the scanner received it. Unpacked from `.ppm.gz` on the way in, which is the format `core`'s `GemFixture` loads -- so one of these dropped into `core/src/test/resources` turns the failure into a unit test. |
 | `gems-log.txt` | Gems | The reading made of each of those frames: pitch, exposure asked and actual, the targets in play, and every gem's three rings with its confidence and matched slot. |
 | `terminal/`, `terminal-log.txt` | Terminal | The frames the reader read, gzipped as `TerminalReplay` and the tests load them, and a row per display per frame with the exposure metered on the wall. |
@@ -160,9 +151,9 @@ grid=43x45 pitch=7.0/7.0tx gconf=0.80 puzzle=- cells=0/1935 outcome=NeedMoreData
 
 - **`cov`** — fraction of the canvas seen. If it barely moves while you pan, the wall
   is not being tracked and nothing downstream can work.
-- **`chromaTiles`** — colour is streaming. **Zero while Mines is selected means the
-  board cannot be read at all**, since every lit button is the same clipped white
-  without it.
+- **`chromaTiles`** — colour is streaming. On a self-lit wall read through ARCore, zero
+  meant the board could not be read at all, since every lit button is the same clipped
+  white without it. (That was Mines, before it moved to the live camera.)
 - **`gridWhy`** — why the grid was rejected, per detector. The example above is the
   lattice detector declining because the buttons looked 1.7 cm apart, which is what
   happens when the "wall" is a monitor across the desk rather than a wall.
@@ -203,11 +194,33 @@ opposite fixes.
   number on the line can be perfect while the screen shows nothing.
 - **`cap`** — frames left in a capture burst.
 
+### `mines[...]`, which only Mines prints
+
+```
+mines[read=861 lattice=430 single=3 rate=28.9/s dropped=27 convert=6.6 scan=7.0ms/frame
+      lattice-cam=1/250s iso3200 -> 1/250s iso3200]
+```
+
+- **`lattice`** — lattice frames read. About half of `read` means the camera is
+  alternating as asked. **Zero, with `single` climbing, means it is not**: every frame is
+  one exposure, and colour is falling back to the glow.
+- **`lattice-cam`** — the lattice exposure asked for, then what the sensor did. The two
+  differing is the camera ignoring the burst, which this HAL has done to other requests.
+- **`rate`** — frames read a second since the last heartbeat, both kinds. Half of it is
+  the lattice rate; under about 15 and the count starts to need the lit buttons to stay
+  on track. On the phone it runs 27 to 30 during a scan.
+- **`convert` / `scan`** — the two halves of the cost of a frame, averaged: turning it
+  upright, and reading it. Which one has grown says what to fix. Both tripling together
+  a while after a scan is the phone lowering its clocks, not the app.
+
+What the scanner made of each frame is not in the heartbeat; it is in the scan's own
+`scan.txt`, a line a frame and a line for every lit button.
+
 ## If you can only capture one thing
 
-On **Mines**, the ARCore recording. Everything else can be regenerated from it by
-replaying, and it is the only artifact that survives leaving the room.
-`canvas-dump.png` is second.
+On **Mines**, the scan folder, which is kept without being asked. Its frames replay
+through `MinesReplay`, and its `scan.txt` carries the colour of every lit button at the
+colour exposure -- the one measurement of the mines wall that does not exist yet.
 
 On **Gems**, a Capture taken while the wall was misbehaving. There is no
 replay to fall back on: an MP4 shot by the phone's camera app carries that app's exposure
