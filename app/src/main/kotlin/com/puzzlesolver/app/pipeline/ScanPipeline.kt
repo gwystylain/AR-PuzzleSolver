@@ -24,12 +24,16 @@ import com.puzzlesolver.core.canvas.CoverageMap
 import com.puzzlesolver.core.image.CanvasView
 import com.puzzlesolver.core.image.ChromaImage
 import com.puzzlesolver.core.image.GrayImage
+import com.puzzlesolver.core.image.RgbImage
 import com.puzzlesolver.core.puzzle.PuzzleRegistry
 import com.puzzlesolver.core.puzzle.bombs.BombAdapter
 import com.puzzlesolver.core.puzzle.gems.GemAdapter
 import com.puzzlesolver.core.puzzle.gems.GemPattern
 import com.puzzlesolver.core.puzzle.gems.GemScanner
 import com.puzzlesolver.core.puzzle.gems.GemTargets
+import com.puzzlesolver.core.puzzle.spot.ScreenLocator
+import com.puzzlesolver.core.puzzle.spot.ScreenMeter
+import com.puzzlesolver.core.puzzle.spot.SpotFinder
 import com.puzzlesolver.core.puzzle.terminal.TerminalAdapter
 import com.puzzlesolver.core.puzzle.terminal.TerminalScanner
 import com.puzzlesolver.core.solve.SolveOutcome
@@ -140,7 +144,38 @@ class ScanPipeline(
      */
     private val terminalScanner = TerminalScanner()
 
-    /** Set when the active source is the pose-free camera, i.e. Gems or Terminal. */
+    /**
+     * Finds the Spot screen in each preview frame, for the outline that says it is framed
+     * and for metering it. The photos themselves are compared elsewhere, once all six are
+     * in -- see [takeSpotPhoto].
+     */
+    private val spotLocator = ScreenLocator()
+    private val spotMeter = ScreenMeter()
+
+    /**
+     * Keeps the Spot screen exposed where the comparison wants it, metered on the screen
+     * alone. The terminal wall's loop, fed a reading of a different screen: the problem --
+     * a lit thing in a dark room, which the camera's own metering over-exposes -- is the
+     * same, and so is the answer.
+     */
+    val spotExposure = TerminalExposure()
+
+    @Volatile
+    private var liveSpotScreen: ScreenLocator.Screen? = null
+
+    @Volatile
+    private var liveSpotFailure: String = ""
+
+    @Volatile
+    private var liveSpotReading: String = "-"
+
+    /**
+     * A photo asked for and not yet taken. The solver thread hands the next frame it reads
+     * to this, turned upright, and clears it.
+     */
+    private val spotShot = AtomicReference<((RgbImage?) -> Unit)?>(null)
+
+    /** Set when the active source is the pose-free camera, i.e. Gems, Terminal or Spot. */
     private var liveSource: Camera2FrameSource? = null
 
     /**
@@ -336,7 +371,7 @@ class ScanPipeline(
      * indirection -- the alternative is a hardcoded list that silently goes stale.
      */
     /** Which pose-free live mode the camera is being driven for, if any. */
-    private enum class LiveMode { NONE, GEMS, TERMINAL }
+    private enum class LiveMode { NONE, GEMS, TERMINAL, SPOT }
 
     /**
      * One display to outline, in viewport pixels.
@@ -479,6 +514,16 @@ class ScanPipeline(
         val terminalCaptureRemaining: Int = 0,
         /** What the last terminal capture wrote, so the room gets a confirmation. */
         val terminalCaptureMessage: String? = null,
+        /** True while the pose-free camera is driving Spot. */
+        val liveSpot: Boolean = false,
+        /**
+         * The Spot screen's corners in viewport pixels, x then y, top-left round to
+         * bottom-left; empty while it is not in view. Drawn so the user can see it is
+         * framed before taking a photo, and why not when it is not.
+         */
+        val spotOutline: List<Float> = emptyList(),
+        /** One line on what the Spot camera sees: the screen, or why not. */
+        val spotStatus: String = "",
         /** One line on what the auto-exposure loop is doing. */
         val autoExposure: String? = null,
         /**
@@ -534,7 +579,10 @@ class ScanPipeline(
          * property of the *pipeline* rather than of either puzzle -- which is why it is
          * asked as one question and not as two.
          */
-        val livePoseFree: Boolean get() = liveGems || liveTerminal
+        val livePoseFree: Boolean get() = liveGems || liveTerminal || liveSpot
+
+        /** Whether Spot is the mode picked. Never identified: it has no adapter to identify it. */
+        val isSpotMode: Boolean get() = pinnedPuzzleId == SpotFinder.ID
     }
 
     // --- GLSurfaceView.Renderer ------------------------------------------
@@ -732,9 +780,11 @@ class ScanPipeline(
             liveSource = source as? Camera2FrameSource
             liveResult = GemScanner.Result.EMPTY
             liveTerminalResult = TerminalScanner.Result.EMPTY
+            liveSpotScreen = null
             solverThread.post {
                 terminalScanner.reset()
                 terminalExposure.reset()
+                spotExposure.reset()
             }
             // Swapping *away* from the pose-free camera is the one moment that can end a
             // live mode, and it has to be done here rather than in a publisher. The AR
@@ -748,9 +798,11 @@ class ScanPipeline(
                     it.copy(
                         liveGems = false,
                         liveTerminal = false,
+                        liveSpot = false,
                         gemOverlay = emptyList(),
                         terminalOverlay = emptyList(),
                         terminalSettled = false,
+                        spotOutline = emptyList(),
                     )
                 }
             }
@@ -823,6 +875,7 @@ class ScanPipeline(
             when (liveMode) {
                 LiveMode.TERMINAL -> publishLiveTerminal(it, frameStart)
                 LiveMode.GEMS -> publishLive(it, frameStart)
+                LiveMode.SPOT -> publishLiveSpot(it, frameStart)
                 // The window between the user picking a canvas mode and the frame source
                 // actually being swapped back to ARCore for it. Claiming a mode here is
                 // not harmless: falling through to the Gems publisher is what left the
@@ -1018,6 +1071,15 @@ class ScanPipeline(
         } else {
             ""
         }
+        val spot = if (liveMode == LiveMode.SPOT) {
+            " spot[screen=${if (liveSpotScreen != null) "found" else "'$liveSpotFailure'"} " +
+                "luma=$liveMeanLuma dropped=${liveSource?.droppedFrames ?: 0} " +
+                "scan=${"%.1f".format(liveScanMillis)}ms] " +
+                "exp[$liveSpotReading loop='${spotExposure.describe()}' " +
+                "last=${"%+.2f".format(spotExposure.lastError)}]"
+        } else {
+            ""
+        }
         Log.i(
             TAG,
             "f=$frameCounter fps=${"%.1f".format(fps)} " +
@@ -1044,7 +1106,7 @@ class ScanPipeline(
                 "ae[${autoExposure.describe()} changes=$exposureChanges " +
                 "washed=${"%.2f".format(liveResult.washedOut)}] " +
                 "frame=${"%.1f".format((System.nanoTime() - frameStart) / 1e6f)}ms " +
-                "solve=${"%.1f".format(engineState?.lastStepMillis ?: 0f)}ms" + gems + terminal,
+                "solve=${"%.1f".format(engineState?.lastStepMillis ?: 0f)}ms" + gems + terminal + spot,
         )
     }
 
@@ -1412,6 +1474,92 @@ class ScanPipeline(
         }
     }
 
+    /**
+     * Reads the newest frame for Spot: finds the screen, meters it, and hands it over as a
+     * photo if one was asked for.
+     *
+     * Run on every scan dispatch even when no photo is wanted, and not only for the
+     * outline. The camera's hand-off keeps one finished frame and drops the rest until it
+     * is taken, so a reader that only looked when the shutter was tapped would be handed a
+     * frame from whenever it last looked -- possibly the previous picture on the screen.
+     * Reading continuously keeps the waiting frame a tenth of a second old at most.
+     */
+    private fun runSpotFrame(source: Camera2FrameSource) {
+        val view = source.acquireView() ?: return
+        val started = System.nanoTime()
+        try {
+            val screen = spotLocator.locate(view.luma)
+            liveSpotScreen = screen
+            liveSpotFailure = spotLocator.lastFailure
+            liveMeanLuma = meanLuma(view.luma)
+            // Inside the borrow: the buffer is the camera's again the moment it is released.
+            spotShot.getAndSet(null)?.let { deliver ->
+                val turns = (((source.geometry?.rotationDegrees ?: 0) % 360) + 360) % 360 / 90
+                deliver(RgbImage.fromCanvasView(view, turns))
+            }
+            liveScanMillis = (System.nanoTime() - started) / 1e6f
+            val reading = screen?.let { spotMeter.measure(view.luma, it) }
+            liveSpotReading = reading?.describe() ?: "no screen metered"
+            // After the photo, so a change this reading asks for applies to the next one
+            // rather than racing it. The comparison evens out exposure between photos, so
+            // a change mid-round costs nothing there.
+            spotExposure.consider(source.tuning, reading)
+        } finally {
+            source.releaseView()
+        }
+    }
+
+    private fun publishLiveSpot(source: Camera2FrameSource, frameStart: Long) {
+        val screen = liveSpotScreen
+        val geometry = source.geometry
+        val outline = if (screen == null || geometry == null) {
+            emptyList()
+        } else {
+            val point = FloatArray(2)
+            (0 until 4).flatMap { i ->
+                geometry.imageToView(screen.corners[i * 2], screen.corners[i * 2 + 1], point)
+                listOf(point[0], point[1])
+            }
+        }
+        val scanMs = liveScanMillis
+        publish {
+            it.copy(
+                activePuzzleId = SpotFinder.ID,
+                liveGems = false,
+                liveTerminal = false,
+                liveSpot = true,
+                gemOverlay = emptyList(),
+                terminalOverlay = emptyList(),
+                spotOutline = outline,
+                spotStatus = if (screen != null) "Screen in view" else "Looking for the screen: $liveSpotFailure",
+                wallDescription = "live camera, no wall fitting",
+                wallConverged = true,
+                wallIssue = null,
+                status = if (screen != null) "Screen in view" else "Point the camera at the screen",
+                solved = false,
+                solutionLabel = "",
+                gridSummary = null,
+                puzzleName = "Spot",
+                readStats = "scan " + scanMs.toInt() + "ms luma=" + liveMeanLuma +
+                    " dropped=" + source.droppedFrames + "  ·  " + liveSpotReading,
+                exposureHint = -1f,
+                frameMillis = (System.nanoTime() - frameStart) / 1e6f,
+                solveMillis = scanMs,
+                sourceKind = source.kind,
+                cameraRequest = source.tuning.describeRequest(),
+                cameraActual = source.tuning.reported.describe(),
+                cameraStatus = source.status,
+                cameraControllable = source.tuning.capabilities.available,
+                cameraCapabilities = source.tuning.capabilities.describe(),
+                cameraHonoured = source.tuning.honoured(),
+                autoExposure = spotExposure.describe(),
+                cameraManual = source.tuning.settings.mode == CameraTuning.Mode.MANUAL,
+                aeLocked = source.tuning.settings.lockAe,
+                awbLocked = source.tuning.settings.lockAwb,
+            )
+        }
+    }
+
     private fun publishLive(source: Camera2FrameSource, frameStart: Long) {
         val result = liveResult
         val geometry = source.geometry
@@ -1713,17 +1861,36 @@ class ScanPipeline(
         liveMode = when (id) {
             GemAdapter.ID -> LiveMode.GEMS
             TerminalAdapter.ID -> LiveMode.TERMINAL
+            SpotFinder.ID -> LiveMode.SPOT
             else -> LiveMode.NONE
         }
         liveTerminalResult = TerminalScanner.Result.EMPTY
+        liveSpotScreen = null
+        // A photo still waiting belongs to the mode being left.
+        spotShot.getAndSet(null)?.invoke(null)
         // Posted rather than called here: the scanner belongs to the solver thread, and
         // resetting it from under a scan in progress is exactly the kind of race that
         // shows up once a week and never in a test.
         solverThread.post {
             terminalScanner.reset()
             terminalExposure.reset()
-            if (id == null) engine.autoDetectPuzzle() else engine.pinAdapter(id)
+            spotExposure.reset()
+            // Spot has no adapter: it is not a wall the engine reads.
+            when (id) {
+                null -> engine.autoDetectPuzzle()
+                SpotFinder.ID -> Unit
+                else -> engine.pinAdapter(id)
+            }
         }
+    }
+
+    /**
+     * Takes a Spot photo: [deliver] is handed the next frame the camera produces, turned
+     * upright, on the solver thread -- or null if the mode is left first. A second request
+     * before the first is served replaces it, and the first is told null.
+     */
+    fun takeSpotPhoto(deliver: (RgbImage?) -> Unit) {
+        spotShot.getAndSet(deliver)?.invoke(null)
     }
 
     /** The live camera's dials, or null when the current source has no camera. */
@@ -1884,6 +2051,10 @@ class ScanPipeline(
                     if (live != null && liveMode == LiveMode.NONE) continue
                     if (live != null && liveMode == LiveMode.TERMINAL) {
                         runTerminalScan(live)
+                        continue
+                    }
+                    if (live != null && liveMode == LiveMode.SPOT) {
+                        runSpotFrame(live)
                         continue
                     }
                     if (live != null) {

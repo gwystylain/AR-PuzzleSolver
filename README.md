@@ -88,6 +88,16 @@ drawn anywhere on it.
   is empty. The app outlines the lowest number in green and the second lowest in yellow.
   See [docs/TERMINAL_PUZZLE.md](docs/TERMINAL_PUZZLE.md).
 
+**Spot** is a fourth camera room, and not a wall at all: a screen shows one picture after
+another, each with one thing changed. You take six photos, one per picture, and the app
+gives all six back straightened with the difference in each boxed. It never needs the
+original picture: each pixel of it is in five photos out of six, so the per-pixel median
+of the photos is the original, and what a photo has that the median does not is its
+difference. Most of the work is lining the photos up on the picture itself, trusting the
+screen's outline only roughly, because on the phone it can come back round the neon.
+A Reset button is always one tap away.
+See [docs/SPOT_PUZZLE.md](docs/SPOT_PUZZLE.md).
+
 Two more rooms, **Strategy** and **Gridlock**, are in the app without any camera at all.
 Their stages are fixed, so the app carries a transcription of every level, works out the
 pressing order for each stage, and splits it between the players so that independent
@@ -104,11 +114,12 @@ accounts: host, and the others tap to join. The design is built around phones on
 dropping their connection, and around latency: a keypress reaches the other phones in one
 round trip. See [docs/SPELLINATOR.md](docs/SPELLINATOR.md).
 
-Gems and Terminal do **not** use the AR pipeline. Both own the camera directly and read
-each frame in image space with no pose, wall fit or canvas — Gems because ARCore will not
-let it set an exposure the gem rings are visible at, Terminal because the wall changes
-while you are reading it and a mosaic of a wall taken at different moments would answer
-with a number that is no longer on it.
+Gems, Terminal and Spot do **not** use the AR pipeline. All three own the camera directly
+and read each frame in image space with no pose, wall fit or canvas. Gems does because
+ARCore will not let it set an exposure the gem rings are visible at. Terminal does because
+the wall changes while you are reading it, and a mosaic of a wall taken at different
+moments would answer with a number that is no longer on it. Spot does because it compares
+photos of a flat screen, which line up on the screen itself.
 
 Gems is the one mode where the app answers a question the *user* asked rather than one
 the wall poses, so it has no "solved" moment — the answer is a live count of matches
@@ -143,8 +154,8 @@ there end to end** — 32 displays found, the two lowest numbers outlined on the
 panels, the ranking steady on every heartbeat — against the reference clip played back on
 a monitor. Nothing has yet been pointed at any of the three rooms themselves.
 
-- `./gradlew :core:test` — 186 tests, 186 passing, including a whole terminal wall read
-  off a real frame
+- `./gradlew :core:test` — 198 tests, 198 passing, including a whole terminal wall read
+  off a real frame and three rounds of Spot
 - `./gradlew :app:testDebugUnitTest` — 55 tests, 55 passing (camera tuning, the
   auto-exposure loop and the preview geometry, all pure state machines and maths)
 - `./gradlew :spell:test :spell-client:test :spell-server:test` — 86 tests, 86 passing

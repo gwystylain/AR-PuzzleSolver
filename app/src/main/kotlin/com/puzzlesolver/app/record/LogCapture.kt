@@ -225,6 +225,7 @@ class LogCapture(private val directory: File) {
             "AutoExposure",
             "TerminalExposure",
             "TerminalRecorder",
+            "SpotController",
             "Camera2Source",
             "CameraProbe",
             "ArCoreFrameSource",

@@ -61,6 +61,7 @@ import androidx.compose.ui.unit.sp
 import com.puzzlesolver.app.pipeline.ScanPipeline
 import com.puzzlesolver.core.puzzle.bombs.BombAdapter
 import com.puzzlesolver.core.puzzle.gems.GemAdapter
+import com.puzzlesolver.core.puzzle.spot.SpotFinder
 import com.puzzlesolver.core.puzzle.strategy.StrategyRoom
 import com.puzzlesolver.core.puzzle.terminal.TerminalAdapter
 import kotlinx.coroutines.delay
@@ -94,6 +95,7 @@ fun LandingScreen(
     onSelectMode: (String) -> Unit,
     onSelectGuide: (StrategyRoom) -> Unit,
     onSelectSpell: () -> Unit,
+    onSelectSpot: () -> Unit,
     /** Whether the HUD shows the debug panel, switched at the foot of the page. */
     debug: Boolean,
     onToggleDebug: () -> Unit,
@@ -113,6 +115,10 @@ fun LandingScreen(
                     else -> null
                 }
                 Entry(m.id, m.displayName, camera = true, LOOKS[m.id] ?: PLAIN, note) { onSelectMode(m.id) }
+            } + Entry(SpotFinder.ID, "Spot", camera = true, LOOKS.getValue(SpotFinder.ID), "live camera -- no AR, no replay") {
+                // Not from the registry: Spot has no adapter, because it reads no wall --
+                // it compares photos. It is picked like any other camera room.
+                onSelectSpot()
             } + StrategyRoom.entries.map { r ->
                 Entry(r.id, r.displayName, camera = false, LOOKS[r.id] ?: PLAIN, null) { onSelectGuide(r) }
             } + Entry(SPELLINATOR_ID, "Spellinator", camera = false, LOOKS.getValue(SPELLINATOR_ID), "online -- phones join one lobby") {
@@ -230,6 +236,7 @@ private val LOOKS: Map<String, Look> = mapOf(
     StrategyRoom.STRATEGY.id to Look(Color(0xFFFF9F1C), "Every wave's pressing order, split between players", 2400) { p, c -> strategyGlyph(p, c) },
     StrategyRoom.GRIDLOCK.id to Look(Color(0xFFB388FF), "Two boards, one plan, split between players", 2000) { p, c -> gridlockGlyph(p, c) },
     SPELLINATOR_ID to Look(SPELL_ACCENT, "One word from everyone's letters, in their colours", 2400) { p, c -> spellGlyph(p, c) },
+    SpotFinder.ID to Look(Color(0xFFFF3DCB), "Six photos of the screen, every difference boxed", 2600) { p, c -> spotGlyph(p, c) },
 )
 
 private val PLAIN = Look(Color(0xFF9AA6B2), "", 1000) { _, c -> plainGlyph(c) }
@@ -558,6 +565,38 @@ private fun DrawScope.spellGlyph(phase: Float, accent: Color) {
         val ink = Color(0xFF06121F)
         drawLine(ink, Offset(x, top - drop + h * 0.25f), Offset(x, top - drop + h * 0.75f), w * 0.14f)
         drawLine(ink, Offset(x - w * 0.22f, top - drop + h * 0.25f), Offset(x + w * 0.22f, top - drop + h * 0.25f), w * 0.14f)
+    }
+}
+
+/**
+ * Two copies of a little picture, a sun appearing in the second, then boxed -- which is
+ * the whole of what the mode does.
+ */
+private fun DrawScope.spotGlyph(phase: Float, accent: Color) {
+    val s = size.minDimension
+    val gap = s * 0.08f
+    val w = (s - gap) / 2f
+    val h = w * 1.25f
+    val top = (s - h) / 2f
+    val hill = Color(0xFF33DD77)
+    for (i in 0 until 2) {
+        val x0 = i * (w + gap)
+        drawRoundRect(Color(0x33DDE5EC), Offset(x0, top), Size(w, h), CornerRadius(w * 0.12f))
+        drawCircle(hill.copy(alpha = 0.8f), w * 0.42f, Offset(x0 + w * 0.5f, top + h * 1.05f))
+    }
+    // The sun fades in on the second, and the box draws itself round it once it is there.
+    val appear = (phase * 3f).coerceIn(0f, 1f)
+    val boxed = ((phase - 0.4f) * 4f).coerceIn(0f, 1f)
+    val centre = Offset(w + gap + w * 0.68f, top + h * 0.3f)
+    drawCircle(Color(0xFFFFD166).copy(alpha = appear), w * 0.14f, centre)
+    if (boxed > 0f) {
+        val r = w * 0.26f
+        drawRect(
+            accent.copy(alpha = boxed),
+            Offset(centre.x - r, centre.y - r),
+            Size(2 * r, 2 * r),
+            style = Stroke(1.5.dp.toPx()),
+        )
     }
 }
 

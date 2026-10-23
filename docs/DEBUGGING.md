@@ -243,6 +243,10 @@ adb shell am broadcast -a com.puzzlesolver.app.DEBUG --ez gemdump true --ei gemf
 
 Worth having over the button for two things a tap cannot do: capturing without the tap
 jogging the aim, and capturing on a schedule alongside a scripted sequence of exposures.
+
+For Spot (`--es pin spot`), `--ez spotshot true` takes a photo and `--ez spotreset true`
+starts the round again. Every round is kept under `files/spot/` and replays at a desk;
+see [SPOT_PUZZLE.md](SPOT_PUZZLE.md#replaying-a-round).
 `--ez dump true` does *nothing* in Gems and is not a substitute -- there is no canvas to
 dump, and the live path returns before the dump is ever serviced.
 

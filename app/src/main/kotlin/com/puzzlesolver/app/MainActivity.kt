@@ -39,14 +39,17 @@ import com.puzzlesolver.core.canvas.CanvasSpec
 import com.puzzlesolver.core.puzzle.gems.GemAdapter
 import com.puzzlesolver.core.puzzle.gems.GemColour
 import com.puzzlesolver.core.puzzle.gems.GemPattern
+import com.puzzlesolver.core.puzzle.spot.SpotFinder
 import com.puzzlesolver.core.puzzle.terminal.TerminalAdapter
 import com.puzzlesolver.app.record.LogCapture
 import com.puzzlesolver.app.record.SessionStore
 import com.puzzlesolver.app.spell.SpellController
+import com.puzzlesolver.app.spot.SpotController
 import com.puzzlesolver.app.ui.LandingScreen
 import com.puzzlesolver.app.ui.PuzzleSolverTheme
 import com.puzzlesolver.app.ui.ScanScreen
 import com.puzzlesolver.app.ui.SpellScreen
+import com.puzzlesolver.app.ui.SpotScreen
 import com.puzzlesolver.app.ui.StrategyScreen
 import com.puzzlesolver.core.puzzle.strategy.StageSplits
 import com.puzzlesolver.core.puzzle.strategy.StrategyRoom
@@ -118,6 +121,13 @@ class MainActivity : ComponentActivity() {
      */
     private var spellOpen by mutableStateOf(false)
     private lateinit var spell: SpellController
+
+    /**
+     * Spot's round: the photos taken so far and, once there are six, what differs in each.
+     * Kept across a trip to another room and back, like Spellinator's seat; Reset is how a
+     * round is thrown away.
+     */
+    private lateinit var spot: SpotController
 
     /** A guide or Spellinator is up, so the camera is off. */
     private val cameraFree: Boolean get() = guideRoom != null || spellOpen
@@ -301,6 +311,16 @@ class MainActivity : ComponentActivity() {
                 pipeline.restartEverything()
                 Log.i(TAG, "debug: restart everything")
             }
+            // Spot's two buttons, for a scripted round without a hand on the phone to
+            // jog the aim.
+            if (intent.getBooleanExtra("spotshot", false)) {
+                spot.takePhoto()
+                Log.i(TAG, "debug: spot photo")
+            }
+            if (intent.getBooleanExtra("spotreset", false)) {
+                spot.reset()
+                Log.i(TAG, "debug: spot reset")
+            }
         }
     }
 
@@ -407,6 +427,7 @@ class MainActivity : ComponentActivity() {
         Log.i(TAG, "canvas: ${"%.4f".format(spec.metresPerTexel)} m/texel, " +
             "${"%.2f".format(spec.widthMetres)}m wide")
         pipeline = ScanPipeline(spec = spec, displayRotationProvider = ::currentDisplayRotation)
+        spot = SpotController(this) { pipeline.takeSpotPhoto(it) }
 
         glView = GLSurfaceView(this).apply {
             preserveEGLContextOnPause = true
@@ -425,6 +446,7 @@ class MainActivity : ComponentActivity() {
                 val spellState by spell.state.collectAsState()
                 val spellServer by spell.server.collectAsState()
                 val spellOneAndDone by spell.oneAndDone.collectAsState()
+                val spotState by spot.state.collectAsState()
                 // Back from the HUD or a guide goes to the landing page, which is the
                 // one place a room is picked: there is no menu to swipe in any more.
                 BackHandler(enabled = !showLanding) { showLanding = true }
@@ -519,7 +541,18 @@ class MainActivity : ComponentActivity() {
                                     strategyPlayers = it
                                 },
                             )
-                        } },
+                        } } ?: if (uiState.isSpotMode) {
+                            // Unlike the other takeovers this one has the camera behind it:
+                            // Spot is a camera mode whose HUD is entirely its own.
+                            {
+                                SpotScreen(
+                                    state = spotState,
+                                    camera = uiState,
+                                    onTakePhoto = { spot.takePhoto() },
+                                    onReset = { spot.reset() },
+                                )
+                            }
+                        } else null,
                     )
                     LandingScreen(
                         modes = pipeline.puzzleModes,
@@ -527,6 +560,7 @@ class MainActivity : ComponentActivity() {
                         onSelectMode = { selectPuzzleMode(it) },
                         onSelectGuide = { enterGuide(it) },
                         onSelectSpell = { enterSpell() },
+                        onSelectSpot = { selectPuzzleMode(SpotFinder.ID) },
                         debug = showDebugPanel,
                         onToggleDebug = { showDebugPanel = !showDebugPanel },
                     )
@@ -546,7 +580,7 @@ class MainActivity : ComponentActivity() {
                 // there is one trip to the room, and a setting whose absence is only
                 // discovered afterwards is not one to leave to memory. An explicit Stop
                 // is respected.
-                val liveMode = uiState.isGemsMode || uiState.isTerminalMode
+                val liveMode = uiState.isGemsMode || uiState.isTerminalMode || uiState.isSpotMode
                 if (liveMode && !cameraFree && !loggingSuppressed && !logCapture.isRunning) {
                     startLogging()
                 }
@@ -688,6 +722,7 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         spell.release()
+        spot.release()
         probe?.close()
         pipeline.release()
         pipeline.frameSource.get()?.close()
@@ -713,11 +748,12 @@ class MainActivity : ComponentActivity() {
     /**
      * Chooses the puzzle type, and with it the camera.
      *
-     * The two are not independent any more. Two modes read the camera frame directly and
+     * The two are not independent any more. Three modes read the camera frame directly and
      * want no pose at all, so they run on a plain Camera2 source; everything else needs
      * the pose and runs on ARCore. Gems is there because ARCore will not pass its
      * exposure request through to the sensor, Terminal because the wall it reads is
-     * being played while it is read and there is nothing worth accumulating. Switching
+     * being played while it is read and there is nothing worth accumulating, and Spot
+     * because it compares photos of a flat screen, which needs no pose to line up. Switching
      * modes therefore switches the source, which is heavier than it used to be -- but it
      * happens on a deliberate tap, and the alternative is a mode that cannot see the
      * wall it is pointed at.
@@ -727,14 +763,14 @@ class MainActivity : ComponentActivity() {
         showLanding = false
         leaveCameraFree()
         pipeline.selectPuzzleMode(id)
-        val wantsLiveCamera = id == GemAdapter.ID || id == TerminalAdapter.ID
+        val wantsLiveCamera = id == GemAdapter.ID || id == TerminalAdapter.ID || id == SpotFinder.ID
         if (wantsLiveCamera != usingLiveCamera) {
             usingLiveCamera = wantsLiveCamera
             startLiveSource()
         }
     }
 
-    /** True while the plain Camera2 source is driving, i.e. Gems or Terminal. */
+    /** True while the plain Camera2 source is driving, i.e. Gems, Terminal or Spot. */
     private var usingLiveCamera = false
 
     private fun startLiveSource() {
