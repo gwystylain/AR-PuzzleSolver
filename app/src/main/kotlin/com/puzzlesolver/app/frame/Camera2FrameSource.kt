@@ -863,7 +863,24 @@ class Camera2FrameSource(
         builtForMode = null
         opening = false
         appliedGeneration = -1
-        frameAvailable = false
+        // Set, not cleared -- clearing it here is what froze the app after a lock screen.
+        //
+        // The SurfaceTexture outlives the camera, and so does any frame queued in it that
+        // the GL thread had not yet taken. On a pause there nearly always is one: the GL
+        // thread stops first and the camera keeps delivering until this runs. A queued,
+        // untaken frame is not harmless. The next camera's frames *replace* it rather
+        // than queue behind it, and a replaced frame never fires onFrameAvailable -- so
+        // with this flag cleared the GL thread never took the frame, the listener never
+        // fired again, and the preview and the scanner stopped for good while the status
+        // said the camera was running. The room logs since September show it on five
+        // resumes in six: the frame counter frozen, fps 0.0, "camera running", and every
+        // later pause and resume stuck the same way, since nothing ever drained the queue.
+        //
+        // Set, the GL thread's first poll once it runs again calls updateTexImage, which
+        // takes whatever is queued and empties the queue; from then on each new frame
+        // fires the listener as normal. If nothing was queued it keeps the current image
+        // and costs one redraw of it.
+        frameAvailable = true
     }
 
     private companion object {
