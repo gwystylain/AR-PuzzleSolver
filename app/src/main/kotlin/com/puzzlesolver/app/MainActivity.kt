@@ -249,6 +249,10 @@ class MainActivity : ComponentActivity() {
                 gemTargets = pipeline.gemTargets.all()
                 Log.i(TAG, "debug: gem targets cleared")
             }
+            // The Load targets button: true arms a load, false cancels one.
+            if (intent.hasExtra("gemload")) {
+                pipeline.setGemTargetLoad(intent.getBooleanExtra("gemload", true))
+            }
             if (intent.getBooleanExtra("dump", false)) {
                 val f = java.io.File(getExternalFilesDir(null), "canvas-dump.png")
                 pipeline.requestMirrorDump(f)
@@ -489,6 +493,8 @@ class MainActivity : ComponentActivity() {
                                     if (pattern.isBlank) "-" else pattern.toString(),
                             )
                         },
+                        onLoadGemTargets = { pipeline.toggleGemTargetLoad() },
+                        onGemSlit = { pipeline.setGemSlit(it) },
                         onNudgeExposure = { pipeline.nudgeExposure(it) },
                         onSetCameraManual = {
                             pipeline.setCameraMode(
@@ -574,6 +580,10 @@ class MainActivity : ComponentActivity() {
         glView.postDelayed(object : Runnable {
             override fun run() {
                 uiState = pipeline.state.get()
+                // The slots change behind the UI's back when a load off the wall lands.
+                // The same list comes back until they do, so this recomposes nothing
+                // the rest of the time.
+                gemTargets = pipeline.gemTargets.all()
                 arSource?.let { recording = it.isRecording }
                 // The two live-camera modes get the log started for them the moment the
                 // mode becomes active, for the same reason Gems gets the LED-wall preset:

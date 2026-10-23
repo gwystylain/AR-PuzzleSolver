@@ -103,21 +103,26 @@ object GemPalette {
      * No channel loses more than this fraction of its own value to the subtraction.
      *
      * The guard for rings that share a channel with the glow over them. Red under green
-     * unmixes cleanly because their channels are disjoint; this wall's blue is cyan and
-     * shares B with purple, and taking a full measure of purple out of it tips it green.
-     * Capping the loss at half keeps any colour's own channels dominant however strong
-     * the spill. On the bloomier reference clip it costs one ring in thirty-one against
+     * unmixes cleanly because their channels are disjoint. A colour that shares a channel
+     * with the glow over it does not -- this wall's blue is cyan and shares G with green,
+     * yellow shares R with red -- and an uncapped subtraction can take that channel down
+     * past the ring's own share of it. Capping the loss at half keeps any colour's own
+     * channels dominant however strong the spill. On the bloomier reference clip it costs one ring in thirty-one against
      * no subtraction at all; at the operating exposure it is worth twenty-six in 168.
      */
     const val WASH_CAP = 0.5f
 
     /**
-     * Measured hue centroids, in degrees.
+     * Measured hue centroids, in degrees, in [GemColour.ALL] order.
      *
-     * Note how far two of them are from their names: the wall's "blue" measures 198
-     * degrees, which is cyan, and its "purple" measures 326, which is magenta. Using
-     * textbook 240 and 280 instead would put every blue reading nearer green than
+     * Note how far blue is from its name: the wall's "blue" measures 198 degrees, which
+     * is cyan. Using textbook 240 instead would put every blue reading nearer green than
      * blue. These come from 50 hand-labelled rings.
+     *
+     * There is no purple. The arc it used to own, 262 to 339 degrees, is magenta, and on
+     * this wall magenta is a red ring with a cyan glow over it -- so the part of that arc
+     * nearer red now votes red, and the boundary with blue sits at 275, halfway between
+     * the two centroids. See [GemColour].
      */
     @JvmField
     val HUES = floatArrayOf(
@@ -125,7 +130,6 @@ object GemPalette {
         66f,    // yellow
         146f,   // green
         198f,   // blue
-        326f,   // purple
     )
 
     /** Below this on the brightest channel, a texel is unlit panel rather than gem. */

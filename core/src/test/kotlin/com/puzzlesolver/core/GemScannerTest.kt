@@ -26,7 +26,6 @@ class GemScannerTest {
         "yellow" -> GemColour.YELLOW
         "green" -> GemColour.GREEN
         "blue" -> GemColour.BLUE
-        "purple" -> GemColour.PURPLE
         else -> GemColour.UNKNOWN
     }
 
@@ -109,9 +108,9 @@ class GemScannerTest {
         // to do rather than reporting a failed search.
         val idle = scanner.scan(view)
         assertEquals(0, idle.matchCount)
-        assertTrue(idle.status, idle.status.contains("tap a target"))
+        assertTrue(idle.status, idle.status.contains("load or tap the targets"))
 
-        // Two gems in this crop are blue outer, blue middle: one has a purple centre,
+        // Two gems in this crop are blue outer, blue middle: one has a red centre,
         // one was not labelled at the centre. Asking for the outer ring alone must find
         // every blue-outer gem.
         targets.set(0, GemPattern(outer = GemColour.BLUE))
@@ -124,7 +123,7 @@ class GemScannerTest {
 
         // Narrowing to all three rings must be a strict subset, and every match must
         // agree on all three -- this is the property a wrong highlight would break.
-        val exact = GemPattern(GemColour.BLUE, GemColour.BLUE, GemColour.PURPLE)
+        val exact = GemPattern(GemColour.BLUE, GemColour.BLUE, GemColour.RED)
         targets.set(0, exact)
         val narrow = scanner.scan(view)
         assertTrue(
@@ -139,7 +138,7 @@ class GemScannerTest {
         val view = GemFixture.load()
         val targets = GemTargets()
         val scanner = GemScanner(targets)
-        targets.set(0, GemPattern(GemColour.BLUE, GemColour.BLUE, GemColour.PURPLE))
+        targets.set(0, GemPattern(GemColour.BLUE, GemColour.BLUE, GemColour.RED))
         val result = scanner.scan(view)
         for (gem in result.matches) {
             assertTrue("matched a gem with an unread ring: ${gem.pattern}", gem.pattern.isReadable)

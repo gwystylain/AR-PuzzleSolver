@@ -2,12 +2,14 @@
 
 A curved wall of round buttons, seven rows deep, each one a "gem": three concentric
 rings of RGB LEDs — an **outer ring**, a **middle ring** and a **centre dot** — each
-independently red, yellow, green, blue or purple. Four target gems are shown above the
-wall. The game is to find the gems on the wall that match them, against a clock.
+independently red, yellow, green or blue. Four target buttons sit in a row above the
+wall, one to four of them lit. The game is to find the gems on the wall that match them,
+against a clock.
 
-The app does not read the targets off the wall. The user taps them in — four slots
-across the top of the screen, three taps each — and every gem that matches is ringed on
-screen as they pan.
+The targets go into four slots across the top of the screen. **Load targets** reads them
+off the wall: it opens a slit under the slots, the user lines the target row up in it,
+and the lit buttons inside are loaded left to right. They can also be tapped in, three
+taps each. Either way, every gem that matches is ringed on screen as the user pans.
 
 **Gems does not use the AR pipeline.** It has its own camera and no world tracking at
 all. That is a deliberate reversal, and the reason is exposure: ARCore will not pass a
@@ -88,16 +90,52 @@ Mines still runs on ARCore, unchanged. Its classifier reads the glow around a bu
 that has clipped its own face to white, so it *wants* the exposure the camera picks, and
 it needs the pose because a mine plan is about the whole board at once.
 
-## Why the targets are typed in rather than scanned
+## Loading the targets off the wall
 
-The four target buttons sit above the gem grid, outside it, and change between rounds.
-Reading them would mean detecting a second, differently-shaped lattice, deciding which
-of the two any given button belongs to, and re-reading it every time the round turns
-over — all to save three taps, and all of it able to fail silently in a way that puts
-confident wrong highlights on the wall.
+For a long time the targets were typed in, on the argument that reading them would mean
+detecting a second lattice and deciding which of the two every button belonged to. The
+run of 2026-10-22 showed the argument was aimed at the wrong problem. Typing three
+targets took the user eight to twelve seconds a round, against the clock — and the
+scanner was already reading the target buttons perfectly. A target button is a gem like
+any other on the wall, the same size with the same rings; in every captured frame they
+were in, all three lit targets read correctly, and were highlighted as matches of
+themselves.
 
-Typing them in cannot be wrong in a way the user does not immediately see: the target
-they entered is drawn on screen next to the wall they are looking at.
+So nothing needed to read them. What was missing was knowing *which* gems in a frame
+are targets, and **the user's aim supplies that** for free: they are looking at the
+target row anyway. **Load targets** draws a slit under the four slots; the user tilts
+the phone until the lit target buttons sit in it; and `GemTargetStrip` takes the gems
+whose centres land inside, orders them left to right on screen, and fills the slots.
+A dark button is not detected at all, so three lit buttons load slots 1 to 3 and the
+fourth is cleared. The wall below the slit is what gives the scan its pitch, so it has
+to stay in frame, and with the slit near the top of the screen it does.
+
+What it had to be careful about is the failure the typed version could not have:
+loading the wrong targets with confidence. So it refuses, and says why, whenever the
+slit holds something that is not plainly the target row:
+
+| check | what it catches |
+| --- | --- |
+| more than four gems | the slit over the wall's top row |
+| heights differ by more than half a pitch | a slit straddling the target row and the wall |
+| neighbours closer than 1.3 pitches | the end of a wall row, three or four gems in one row — targets sit 1.8–2.0 pitches apart, wall gems about 1.0 |
+| any ring unread | a target loaded with a wildcard nobody asked for |
+
+And it only loads once **three scans in a row** agree, a third of a second, so one frame
+misreading a ring cannot load it.
+
+Against the capture of 2026-10-22 — the round where the user had typed `red/green/red`,
+`green/blue/red`, `green/red/green` and found every gem — a slit on the target row loads
+exactly those three, in those slots, in each of the five frames the whole row is in. In
+the six frames that show only wall it refuses every time; in the one with the row half
+out of frame it loads the two lit targets still in it, and the slots show two. Put on the
+scoreboard's hearts above the targets instead, it refuses those on spacing.
+`GemTargetStripTest` holds a crop of that frame to the typed targets.
+
+The slit is 56 dp tall. The wall's top row sat 1.3 pitches below the targets, about
+70 dp at the distance the room is played from; a slit that does reach it holds too many
+gems and is refused rather than read. Typing is still there for a round where the slit
+will not settle.
 
 ## What a match means
 
@@ -180,12 +218,14 @@ So a texel with two channels at or above `CLIP_LEVEL` is discarded before it vot
 counted as washed out instead. **This does not make those gems readable** — the
 information was destroyed in the sensor and no code recovers it. What it does is stop the
 reader claiming otherwise, which is the part that matters: the frame then measures as
-over-exposed, the HUD says so, and the auto-exposure loop has a reason to darken the
-camera to where the rings are actually in the image.
+over-exposed, the scanner's status line says so, and the auto-exposure loop has a reason
+to darken the camera to where the rings are actually in the image. (That status line is
+in the heartbeat log rather than on screen: the card that showed it came off the Gems HUD
+as clutter over the wall.)
 
 The old measure could not see any of this. It counted *desaturated* texels, and a
 double-clipped texel is the most saturated thing in the frame, so the worst frame of that
-run scored 0.19 — under the 0.35 the HUD acts on and under the 0.25 the loop aims for.
+run scored 0.19 — under the 0.35 the status line warns at and under the 0.25 the loop aims for.
 `GemClippingTest` holds a crop of that frame and requires it to read as over-exposed.
 
 ### The bands are fractions of pitch, not of apparent size
@@ -224,15 +264,20 @@ on the centre dot.
 | colour | hue | note |
 | --- | --- | --- |
 | red | 352° | |
-| yellow | 66° | a bright yellow ring desaturates toward white; there is no sixth colour |
+| yellow | 66° | a bright yellow ring desaturates toward white; there is no fifth colour |
 | green | 146° | |
 | blue | 198° | measures **cyan**, not blue |
-| purple | 326° | measures **magenta** |
 
-From 50 hand-labelled rings. Using textbook blue at 240° and purple at 280° instead
-would put every blue reading nearer green than blue. Red and purple are the closest
-pair at 26° apart, and they are where a reader that mishandles clipping goes wrong
-first — there is a test guarding that margin.
+From 50 hand-labelled rings. Using textbook blue at 240° instead would put every blue
+reading nearer green than blue.
+
+**There is no purple.** The palette had one, centred at 326°, from rings labelled purple
+on the early clips. Looked at again, every one of them is a red ring under the glow of a
+cyan one — red light plus cyan light is magenta — and the user confirmed the game has no
+purple gem. It was a fifth bucket for red to leak into,
+26° from red, the closest pair on the palette. Its arc now splits between its
+neighbours at 275°, the old fixtures' purple labels are red, and the closest pair is
+green and cyan at 52°.
 
 ### Light adds, so a ring is read through the glow of the ring outside it
 
@@ -262,8 +307,9 @@ centre 95%. The fraction is 0.45, fitted on that frame: anything from 0.30 to 0.
 
 Two things bound it. **No channel gives up more than half of itself.** Red under green
 unmixes cleanly because their channels are disjoint, but this wall's blue is cyan and
-shares B with purple, and taking a full measure of purple out of it tips it green; the
-cap keeps a colour's own channels dominant whatever the spill. And **the outer ring is
+shares G with green, and yellow shares R with red, and an uncapped subtraction can take
+a shared channel down past the ring's own share of it; the cap keeps a colour's own
+channels dominant whatever the spill. And **the outer ring is
 never touched** — it has nothing outside it, and it is the one reading that was always
 right.
 
@@ -271,8 +317,9 @@ What it costs: on the bloomier reference clip, where the glow is heavier, it giv
 one ring in thirty-one (87% to 83%). That clip is at an exposure the app no longer uses,
 and the trade is twenty-six rings in 168 at the one it does. What it does not fix: LEDs
 bright enough to clip to white — the yellow ring above — have no hue to recover, and
-read as whatever surrounds them. And blue and purple have not been seen at the preset at
-all; the cap is the argument that they will survive it, not a measurement.
+read as whatever surrounds them. When this was written blue had not been seen at the
+preset, and the cap was the argument that it would survive; the run of 2026-10-22 had
+blue rings in every frame and found every target with one.
 
 ### Accuracy
 
@@ -284,7 +331,8 @@ green under red, red dot under green ring — as its own assertion.
 
 On the older reference clip it originally read 90% over 29 hand-labelled gems. The
 eleven of those that are in the test fixture — 31 rings — read 87% before the glow was
-subtracted and **83%** after, for the reason given above. `RealGemFrameTest` holds the
+subtracted and **83%** after, for the reason given above. With purple gone and its five
+labels corrected to red it reads 26 of 31, the same count. `RealGemFrameTest` holds the
 outer ring there to exact agreement and the whole gem to 80%.
 
 ## The exposure problem
@@ -343,7 +391,9 @@ adb shell am broadcast -a com.puzzlesolver.app.DEBUG --ei gemslot 1 --es gem red
 
 Trailing rings may be left off or given as `-` to leave them unset, which is the same
 partial target the dialog produces after one or two taps.
-`--ez gemclear true` empties all four slots.
+`--ez gemclear true` empties all four slots. `--ez gemload true` is the **Load targets**
+button, and `--ez gemload false` cancels it; the slit has to be on screen for it to read,
+so this arms a load rather than performing one.
 
 ## Getting evidence out of the room
 
@@ -466,7 +516,12 @@ auto-exposure loop directly, so the interface had no implementations left.
   deferred -- it was a real limitation of the canvas version, where a mosaic accumulated
   across a pan went stale the moment the round turned over. There is no **Rescan** button
   in Gems because there is nothing for it to restart.
-- **Reading the four targets off the wall.** See above; deliberate.
+- **Reading the targets without the user's aim.** The slit says which gems are the
+  targets; nothing finds the target row by itself. See "Loading the targets off the
+  wall".
+- **The target buttons highlighted as matches of themselves.** They are gems that match
+  the targets, so they ring like any other. Harmless, and visible as such: they sit
+  apart from the wall.
 - **Exposure on a device that refuses to share its camera.** The app falls back to
   ARCore's own session, which has no dial. It says so rather than pretending.
 - **Anything on a real device.** Every word above comes from recordings and unit tests.

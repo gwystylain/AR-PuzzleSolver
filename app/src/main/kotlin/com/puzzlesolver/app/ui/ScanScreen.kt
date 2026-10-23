@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import com.puzzlesolver.app.frame.FrameSource
 import com.puzzlesolver.app.pipeline.ScanPipeline
 import com.puzzlesolver.core.puzzle.gems.GemPattern
+import com.puzzlesolver.core.puzzle.gems.GemTargetStrip
 
 /**
  * The scanning HUD.
@@ -52,6 +53,10 @@ fun ScanScreen(
     replayName: String?,
     gemTargets: List<GemPattern>,
     onSetGemTarget: (Int, GemPattern) -> Unit,
+    /** Arms a load of the targets off the wall, or cancels the armed one. */
+    onLoadGemTargets: () -> Unit,
+    /** Where the load slit is on screen, in root pixels; null once it is gone. */
+    onGemSlit: (GemTargetStrip.Box?) -> Unit,
     onNudgeExposure: (Boolean) -> Unit,
     onSetCameraManual: (Boolean) -> Unit,
     onSetCameraLocks: (Boolean, Boolean) -> Unit,
@@ -112,13 +117,19 @@ fun ScanScreen(
             // screen is the only part of it their thumb is nowhere near.
             if (state.isGemsMode) {
                 GemTargetBar(targets = gemTargets, onSetTarget = onSetGemTarget)
+                if (state.gemLoadArmed) GemTargetSlit(state.gemLoadStatus, onGemSlit)
             }
             // Not on the terminal wall. The answer there is the two rectangles and the
             // number written on each; the card only restated it with a count of what was
             // in view, and it did so full width across the top of a landscape screen,
             // which is where the wall's top row is -- so it sat over the very displays it
             // was pointing at. The heartbeat still logs the same line.
-            if (!state.isTerminalMode) StatusCard(state, replayName)
+            //
+            // Nor on the gem wall, for the same reason: the answer is the rings on the
+            // wall, and a count of gems in view across the top of the screen was clutter
+            // over the part of the wall being panned. The over-exposure warning went with
+            // it; the auto-exposure loop acts on that by itself, and the heartbeat logs it.
+            if (!state.isTerminalMode && !state.isGemsMode) StatusCard(state, replayName)
             if (showDebug) {
                 DebugCard(state, onForceFlatWall, onExpectCells)
             }
@@ -166,6 +177,23 @@ fun ScanScreen(
                     }
                     Button(onClick = onCapture) {
                         Text(if (left > 0) "Capturing $left" else "Capture")
+                    }
+                }
+                // Down here with Capture rather than up with the slots, because it is
+                // pressed while aiming: the thumb is at the bottom and the slit it opens
+                // is at the top, where the target buttons are.
+                if (state.liveGems) {
+                    Button(
+                        onClick = onLoadGemTargets,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (state.gemLoadArmed) {
+                                Color(0xFFB3261E)
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            },
+                        ),
+                    ) {
+                        Text(if (state.gemLoadArmed) "Cancel load" else "Load targets")
                     }
                 }
             }

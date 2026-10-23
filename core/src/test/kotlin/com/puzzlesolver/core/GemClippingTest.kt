@@ -96,7 +96,7 @@ class GemClippingTest {
         assertEquals(GemColour.UNKNOWN, read.pattern.middle)
         assertEquals(GemColour.UNKNOWN, read.pattern.centre)
         // The outer ring is outside the bloom and still reads, which is what the run on
-        // the wall showed too: outer rings kept a plausible spread of all five colours
+        // the wall showed too: outer rings kept a plausible spread of every colour
         // while the inner two collapsed onto the two blend hues.
         assertEquals(GemColour.GREEN, read.pattern.outer)
     }

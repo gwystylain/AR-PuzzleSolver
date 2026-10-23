@@ -64,9 +64,9 @@ class GemEndToEndTest {
         val palette = GemColour.ALL
         return Array(cols * rows) { i ->
             GemPattern(
-                outer = palette[i % 5],
-                middle = palette[(i / 5 + 1) % 5],
-                centre = palette[(i / 7 + 3) % 5],
+                outer = palette[i % palette.size],
+                middle = palette[(i / palette.size + 1) % palette.size],
+                centre = palette[(i / 7 + 3) % palette.size],
             )
         }
     }
@@ -75,17 +75,17 @@ class GemEndToEndTest {
      * Linear RGB a ring's LEDs emit, before clipping.
      *
      * These are the mean channel ratios of 27 hand-labelled rings in the reference
-     * clip, not textbook colour names. It matters most for red against purple, which
-     * on this wall are 26 degrees apart on the hue circle and are where a reader that
-     * mishandles clipping goes wrong first. Inventing the two would have quietly set
-     * the difficulty of the test to whatever the author guessed.
+     * clip, not textbook colour names. It matters most for green against the wall's
+     * cyan "blue", which are the closest pair on the hue circle and share a channel, so
+     * they are where a reader that mishandles clipping goes wrong first. Inventing the
+     * two would have quietly set the difficulty of the test to whatever the author
+     * guessed.
      */
     private fun emission(colour: Int): FloatArray = when (colour) {
         GemColour.RED -> floatArrayOf(1.000f, 0.089f, 0.201f)
         GemColour.YELLOW -> floatArrayOf(1.000f, 0.889f, 0.401f)
         GemColour.GREEN -> floatArrayOf(0.194f, 1.000f, 0.522f)
-        GemColour.BLUE -> floatArrayOf(0.179f, 0.601f, 1.000f)
-        else -> floatArrayOf(1.000f, 0.148f, 0.822f)
+        else -> floatArrayOf(0.179f, 0.601f, 1.000f)
     }
 
     /** Radial position of each ring, as a fraction of the pitch. */
@@ -195,7 +195,7 @@ class GemEndToEndTest {
         // 3. With no target set there is nothing to answer, and it says so rather than
         //    reporting a search that found nothing.
         assertEquals(0, idle.matchCount)
-        assertTrue(idle.status, idle.status.contains("tap a target"))
+        assertTrue(idle.status, idle.status.contains("load or tap the targets"))
 
         // 4. With a target set, exactly the gems that match are marked.
         val wanted = truth[3 * cols + 4]

@@ -30,7 +30,7 @@ import org.junit.Test
  * no LEDs in it, so its colour is the spill, and subtracting a measured fraction of it
  * from the ring inside lifts the same frame to 97%. The subtraction is capped so no
  * channel can lose more than half of itself, which is what keeps a colour that shares a
- * channel with the glow over it -- this wall's cyan under purple -- from being unmixed
+ * channel with the glow over it -- this wall's cyan under green -- from being unmixed
  * into something else.
  */
 class GemWashTest {
@@ -40,7 +40,6 @@ class GemWashTest {
         "yellow" -> GemColour.YELLOW
         "green" -> GemColour.GREEN
         "blue" -> GemColour.BLUE
-        "purple" -> GemColour.PURPLE
         else -> GemColour.UNKNOWN
     }
 

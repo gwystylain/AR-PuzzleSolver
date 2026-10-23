@@ -27,7 +27,7 @@ class GemMatchingTest {
         assertTrue(redYellowBlue.matches(redYellowBlue))
         assertFalse(redYellowBlue.matches(redYellowBlue.copy(centre = GemColour.GREEN)))
         assertFalse(redYellowBlue.matches(redYellowBlue.copy(middle = GemColour.RED)))
-        assertFalse(redYellowBlue.matches(redYellowBlue.copy(outer = GemColour.PURPLE)))
+        assertFalse(redYellowBlue.matches(redYellowBlue.copy(outer = GemColour.GREEN)))
     }
 
     @Test
@@ -63,7 +63,7 @@ class GemMatchingTest {
     fun `packing round-trips every combination`() {
         val values = intArrayOf(
             GemColour.UNKNOWN, GemColour.RED, GemColour.YELLOW,
-            GemColour.GREEN, GemColour.BLUE, GemColour.PURPLE,
+            GemColour.GREEN, GemColour.BLUE,
         )
         val seen = HashSet<Int>()
         for (o in values) for (m in values) for (c in values) {
@@ -74,7 +74,7 @@ class GemMatchingTest {
             assertTrue("packed values must be unique", seen.add(packed))
             assertEquals(p, GemPattern.unpack(packed))
         }
-        assertEquals(216, seen.size)
+        assertEquals(125, seen.size)
     }
 
     @Test
@@ -97,9 +97,26 @@ class GemMatchingTest {
     }
 
     @Test
+    fun `loading targets replaces every slot in one edit`() {
+        val targets = GemTargets()
+        val greenGreenRed = GemPattern(GemColour.GREEN, GemColour.GREEN, GemColour.RED)
+        targets.set(3, greenGreenRed)
+        val before = targets.generation
+
+        // Three loaded: slots 1 to 3, and the fourth -- last round's -- cleared.
+        targets.replaceAll(listOf(redYellowBlue, greenGreenRed, redYellowBlue))
+        assertEquals(
+            listOf(redYellowBlue, greenGreenRed, redYellowBlue, GemPattern.BLANK),
+            targets.all(),
+        )
+        assertEquals("one edit, not four", before + 1, targets.generation)
+    }
+
+    @Test
     fun `the reference hues stay far enough apart to be told apart`() {
-        // Red and purple are the closest pair on this wall and the pair a clipping bug
-        // collapses first, so this guards the margin rather than the values.
+        // Green and the wall's cyan "blue" are the closest pair now that purple is gone,
+        // and the one a clipping bug collapses first, so this guards the margin rather
+        // than the values.
         var closest = 360f
         for (i in GemPalette.HUES.indices) {
             for (j in i + 1 until GemPalette.HUES.size) {
@@ -118,7 +135,10 @@ class GemMatchingTest {
         assertEquals(1, GemPalette.nearestColour(60f))      // yellow
         assertEquals(2, GemPalette.nearestColour(140f))     // green
         assertEquals(3, GemPalette.nearestColour(200f))     // blue, which measures cyan
-        assertEquals(4, GemPalette.nearestColour(325f))     // purple, which measures magenta
+        // Magenta is a red ring under a cyan glow, not a colour of its own: the arc
+        // purple used to own splits between its neighbours at 275 degrees.
+        assertEquals(0, GemPalette.nearestColour(325f))     // magenta reads red
+        assertEquals(3, GemPalette.nearestColour(265f))     // violet reads blue
     }
 
 }

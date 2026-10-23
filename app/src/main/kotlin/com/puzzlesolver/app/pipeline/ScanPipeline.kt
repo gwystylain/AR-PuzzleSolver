@@ -30,6 +30,7 @@ import com.puzzlesolver.core.puzzle.bombs.BombAdapter
 import com.puzzlesolver.core.puzzle.gems.GemAdapter
 import com.puzzlesolver.core.puzzle.gems.GemPattern
 import com.puzzlesolver.core.puzzle.gems.GemScanner
+import com.puzzlesolver.core.puzzle.gems.GemTargetStrip
 import com.puzzlesolver.core.puzzle.gems.GemTargets
 import com.puzzlesolver.core.puzzle.spot.ScreenLocator
 import com.puzzlesolver.core.puzzle.spot.ScreenMeter
@@ -131,6 +132,34 @@ class ScanPipeline(
      * frame is the one ARCore is not holding. See docs/CAMERA_CONTROL.md.
      */
     private val gemScanner = GemScanner(gemTargets)
+
+    /**
+     * Reads the target buttons out of the slit at the top of the screen, while a load is
+     * armed. Solver thread only, fed one scan at a time. See [GemTargetStrip].
+     */
+    private val gemTargetStrip = GemTargetStrip()
+
+    /** True from the Load button until the targets are loaded or the load is cancelled. */
+    @Volatile
+    private var gemLoadArmed = false
+
+    /**
+     * Bumped on every arm, so the solver thread forgets agreement carried over from a
+     * load that was cancelled half way. Written on the UI thread only.
+     */
+    @Volatile
+    private var gemLoadGeneration = 0
+
+    /** The generation [gemTargetStrip] was last fed under. Solver thread only. */
+    private var gemLoadSeen = -1
+
+    /** Where the HUD drew the slit, in viewport pixels, or null while it is not drawn. */
+    @Volatile
+    private var gemSlit: GemTargetStrip.Box? = null
+
+    /** What an armed load is waiting for, for the HUD. */
+    @Volatile
+    private var gemLoadStatus: String? = null
 
     /**
      * Reads the terminal wall straight off the camera frame, on the same terms.
@@ -510,6 +539,10 @@ class ScanPipeline(
         val gemCaptureRemaining: Int = 0,
         /** What the last gem capture wrote, so the room gets a confirmation. */
         val gemCaptureMessage: String? = null,
+        /** True while a load of the targets off the wall is waiting on the slit. */
+        val gemLoadArmed: Boolean = false,
+        /** What that load is waiting for: the slit's contents, or what to do about them. */
+        val gemLoadStatus: String? = null,
         /** Frames left in an armed terminal capture, zero when idle. */
         val terminalCaptureRemaining: Int = 0,
         /** What the last terminal capture wrote, so the room gets a confirmation. */
@@ -1053,7 +1086,8 @@ class ScanPipeline(
                 "dropped=${source.droppedFrames} " +
                 "targets=${gemTargets.active().size}/${gemTargets.size} " +
                 "scan=${"%.1f".format(liveScanMillis)}ms " +
-                "cap=${gemRecorder?.remaining ?: 0} status='${r.status}']"
+                "cap=${gemRecorder?.remaining ?: 0} " +
+                "load=${if (gemLoadArmed) "'$gemLoadStatus'" else "-"} status='${r.status}']"
         } ?: ""
         // The same argument as for the gems line above: in this mode two thirds of the
         // heartbeat is dashes, and without a line of its own a whole run leaves no
@@ -1329,10 +1363,50 @@ class ScanPipeline(
                     profile = gemScanner.describeProfile(),
                 )
             )
+            if (gemLoadArmed) considerTargetStrip(source, result)
         } finally {
             source.releaseView()
         }
     }
+
+    /**
+     * Offers one scan to the target strip, and loads what it agrees on.
+     *
+     * Here rather than in [publishLive] because the strip counts agreeing *scans*, and the
+     * frame clock publishes each scan's result three times over -- counted there, one
+     * frame's reading would agree with itself and load on the spot.
+     */
+    private fun considerTargetStrip(source: Camera2FrameSource, result: GemScanner.Result) {
+        val generation = gemLoadGeneration
+        if (generation != gemLoadSeen) {
+            gemTargetStrip.reset()
+            gemLoadSeen = generation
+        }
+        val slit = gemSlit
+        val geometry = source.geometry
+        if (slit == null || geometry == null) return
+        // Into the slit's space. The preview is a quarter turn and a uniform scale of the
+        // image, so the pitch scales with it and every ratio the strip judges by holds.
+        val point = FloatArray(2)
+        val spots = result.gems.map { gem ->
+            geometry.imageToView(gem.x, gem.y, point)
+            GemTargetStrip.Spot(point[0], point[1], gem.pattern)
+        }
+        val pitch = if (result.pitch > 0f) geometry.scaleLength(result.pitch) else -1f
+        val verdict = gemTargetStrip.offer(spots, slit, pitch)
+        gemLoadStatus = verdict.status
+        val loaded = verdict.targets ?: return
+        if (!gemLoadArmed) return
+        gemTargets.replaceAll(loaded)
+        gemLoadArmed = false
+        engine.reconfigureSolver()
+        Log.i(TAG, "gem targets loaded: " + describeGemTargets())
+    }
+
+    private fun describeGemTargets(): String =
+        gemTargets.all().withIndex().joinToString(" ") { (i, p) ->
+            "${i + 1}:" + if (p.isBlank) "-" else p.toString()
+        }
 
     /**
      * Average brightness of the frame the scanner actually got, on a coarse lattice.
@@ -1590,6 +1664,8 @@ class ScanPipeline(
                 terminalOverlay = emptyList(),
                 gemCaptureRemaining = gemRecorder?.remaining ?: 0,
                 gemCaptureMessage = gemRecorder?.lastMessage,
+                gemLoadArmed = gemLoadArmed,
+                gemLoadStatus = gemLoadStatus,
                 wallDescription = "live camera, no wall fitting",
                 wallConverged = true,
                 wallIssue = null,
@@ -1866,6 +1942,7 @@ class ScanPipeline(
         }
         liveTerminalResult = TerminalScanner.Result.EMPTY
         liveSpotScreen = null
+        gemLoadArmed = false
         // A photo still waiting belongs to the mode being left.
         spotShot.getAndSet(null)?.invoke(null)
         // Posted rather than called here: the scanner belongs to the solver thread, and
@@ -1972,6 +2049,37 @@ class ScanPipeline(
     fun clearGemTargets() {
         gemTargets.clearAll()
         solverThread.post { engine.reconfigureSolver() }
+    }
+
+    /**
+     * Arms a load of the targets off the wall, or cancels one that is armed.
+     *
+     * Armed, the HUD draws a slit under the target slots, and once a few scans in a row
+     * agree on the lit gems inside it they replace all four slots, left to right, and the
+     * load disarms itself. See [GemTargetStrip].
+     *
+     * @return whether a load is now armed.
+     */
+    fun toggleGemTargetLoad(): Boolean = setGemTargetLoad(!gemLoadArmed)
+
+    /** [toggleGemTargetLoad], said outright, for the debug broadcast. */
+    fun setGemTargetLoad(armed: Boolean): Boolean {
+        if (armed == gemLoadArmed) return armed
+        if (!armed) {
+            gemLoadArmed = false
+            Log.i(TAG, "gem target load cancelled")
+            return false
+        }
+        gemLoadStatus = "line the lit target buttons up inside the box"
+        gemLoadGeneration++
+        gemLoadArmed = true
+        Log.i(TAG, "gem target load armed")
+        return true
+    }
+
+    /** Where the HUD drew the slit, in viewport pixels; null when it is not on screen. */
+    fun setGemSlit(box: GemTargetStrip.Box?) {
+        gemSlit = box
     }
 
     /**

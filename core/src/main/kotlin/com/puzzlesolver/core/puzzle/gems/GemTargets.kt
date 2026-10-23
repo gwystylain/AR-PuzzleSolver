@@ -49,6 +49,22 @@ class GemTargets(slots: Int = DEFAULT_SLOTS) {
 
     fun clear(slot: Int) = set(slot, GemPattern.BLANK)
 
+    /**
+     * Replaces every slot at once: [patterns] in order from slot 1, the rest left blank.
+     *
+     * One swap rather than four [set]s, for the reason this class exists: a scan landing
+     * between the second and third of four writes would match against two new targets
+     * and two left over from the last round.
+     */
+    fun replaceAll(patterns: List<GemPattern>) {
+        while (true) {
+            val current = state.get()
+            val next = List(current.patterns.size) { patterns.getOrElse(it) { GemPattern.BLANK } }
+            if (current.patterns == next) return
+            if (state.compareAndSet(current, State(next, current.generation + 1))) return
+        }
+    }
+
     fun clearAll() {
         while (true) {
             val current = state.get()

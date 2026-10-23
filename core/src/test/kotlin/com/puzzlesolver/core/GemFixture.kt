@@ -26,16 +26,16 @@ object GemFixture {
      */
     val LABELLED = listOf(
         Labelled(85.7f, 92.0f, "red", "yellow", "red"),
-        Labelled(264.5f, 102.7f, "purple", "blue", "blue"),
+        Labelled(264.5f, 102.7f, "red", "blue", "blue"),
         Labelled(85.8f, 272.5f, "red", "yellow", null),
         Labelled(261.4f, 281.2f, "red", "green", "green"),
         Labelled(430.5f, 287.0f, "yellow", "blue", "blue"),
         Labelled(85.6f, 445.6f, "yellow", "blue", "blue"),
         Labelled(257.6f, 451.8f, "blue", "blue", null),
         Labelled(422.7f, 458.9f, "red", "green", "green"),
-        Labelled(85.0f, 612.4f, "blue", "purple", "purple"),
+        Labelled(85.0f, 612.4f, "blue", "red", "red"),
         Labelled(253.9f, 617.4f, "blue", "yellow", "red"),
-        Labelled(415.3f, 624.9f, "blue", "blue", "purple"),
+        Labelled(415.3f, 624.9f, "blue", "blue", "red"),
     )
 
     /**
@@ -172,7 +172,30 @@ object GemFixture {
         Labelled(766.8f, 971.5f, "green", "green", "green"),
     )
 
+    /**
+     * The target row above the wall, from the capture of 2026-10-22 at the preset.
+     *
+     * Frame 1 of that burst, cropped to the column of target buttons and the three wall
+     * columns beside it. The camera was held portrait, so the raw frame is on its side:
+     * the target row runs down the left of the image, and the top of the screen is the
+     * image's left edge. Three target buttons are lit and the fourth is dark.
+     *
+     * The user typed these targets in by hand that round and every one of them was found,
+     * which makes them ground truth: slots 1 to 3, left to right on screen, which is
+     * bottom to top in the image.
+     */
+    val TARGETS_TYPED = listOf("red/green/red", "green/blue/red", "green/red/green")
+
+    /** Column of the target row in the crop, in image pixels. */
+    const val TARGETS_ROW_X = 84f
+
+    /** Column of the first wall row below it on screen. */
+    const val TARGETS_WALL_X = 236f
+
     fun load(): CanvasView = load("gems-wall.ppm")
+
+    /** The 2026-10-22 target row. See [TARGETS_TYPED]. */
+    fun loadTargets(): CanvasView = load("gems-targets.ppm.gz")
 
     /** The 2026-08-20 frame. See [BLOWN_PITCH]. */
     fun loadBlown(): CanvasView = load("gems-wall-blown.ppm")
@@ -183,7 +206,8 @@ object GemFixture {
     private fun load(resource: String): CanvasView {
         val stream = GemFixture::class.java.classLoader!!.getResourceAsStream(resource)
             ?: error("fixture missing: " + resource)
-        stream.use { input ->
+        val unpacked = if (resource.endsWith(".gz")) java.util.zip.GZIPInputStream(stream) else stream
+        java.io.BufferedInputStream(unpacked).use { input ->
             fun token(): String {
                 val sb = StringBuilder()
                 var c = input.read()

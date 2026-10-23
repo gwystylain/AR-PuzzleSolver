@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -28,6 +29,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
@@ -38,6 +41,7 @@ import androidx.compose.ui.window.Dialog
 import com.puzzlesolver.app.pipeline.ScanPipeline
 import com.puzzlesolver.core.puzzle.gems.GemColour
 import com.puzzlesolver.core.puzzle.gems.GemPattern
+import com.puzzlesolver.core.puzzle.gems.GemTargetStrip
 
 /**
  * The Gems mode controls: four target slots across the top of the screen, and the
@@ -211,10 +215,10 @@ private fun GemInputDialog(
             )
             Spacer(Modifier.height(20.dp))
 
-            // 46 dp and 8 dp of gap, measured on a 411 dp-wide phone: five chips at
-            // 52 dp overflowed the dialog and clipped the last colour off the right
-            // edge, which on a five-colour palette is not a cosmetic problem.
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // 56 dp and 10 dp of gap. Five chips at 52 dp once overflowed the dialog on a
+            // 411 dp-wide phone and clipped the last colour off the right edge; four is
+            // 254 dp, which leaves room to make them easier to hit in a dark room.
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 for (colour in GemColour.ALL) {
                     ColourChip(colour) {
                         val next = pattern.withZone(zone, colour)
@@ -268,13 +272,67 @@ private fun LaunchedDismiss(onDismiss: () -> Unit) {
 private fun ColourChip(colour: Int, onClick: () -> Unit) {
     Box(
         Modifier
-            .size(46.dp)
-            .clip(RoundedCornerShape(23.dp))
+            .size(56.dp)
+            .clip(RoundedCornerShape(28.dp))
             .background(Color(GemColour.displayRgb(colour) or 0xFF000000.toInt()))
-            .border(2.dp, Color(0x55FFFFFF), RoundedCornerShape(23.dp))
+            .border(2.dp, Color(0x55FFFFFF), RoundedCornerShape(28.dp))
             .clickable(onClick = onClick),
     )
 }
+
+/**
+ * The slit the target buttons are lined up in while a load is armed.
+ *
+ * Directly under the slots it fills, so the eye runs from the buttons in the room through
+ * the slit to the slots in one line, and the wall it needs for its scale is naturally in
+ * frame below it. Its bounds go to the pipeline in the root's pixels, which are the
+ * viewport pixels the gem rings are drawn in, and the gems whose centres land inside it
+ * are the ones loaded. See [com.puzzlesolver.core.puzzle.gems.GemTargetStrip].
+ *
+ * An outline and nothing more: the buttons are what has to be seen through it.
+ */
+@Composable
+fun GemTargetSlit(
+    status: String?,
+    onBounds: (GemTargetStrip.Box?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // Withdrawn when the slit leaves the screen, so a load armed later cannot read
+    // against a rectangle nobody can see.
+    DisposableEffect(Unit) { onDispose { onBounds(null) } }
+    Column(modifier.fillMaxWidth()) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(SLIT_HEIGHT)
+                .border(2.dp, SLIT_COLOUR, RoundedCornerShape(8.dp))
+                .onGloballyPositioned {
+                    val r = it.boundsInRoot()
+                    onBounds(GemTargetStrip.Box(r.left, r.top, r.right, r.bottom))
+                },
+        )
+        status?.let {
+            Text(
+                it,
+                color = Color.White,
+                fontSize = 12.sp,
+                modifier = Modifier
+                    .padding(top = 4.dp)
+                    .background(Color(0x99000000), RoundedCornerShape(6.dp))
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+            )
+        }
+    }
+}
+
+/**
+ * Tall enough to hold the target row with room to aim, short enough to keep out the
+ * wall's top row. In the captures of 2026-10-22 that row sat 1.3 pitches below the
+ * targets -- about 70 dp at the distance the room is played from -- and a slit that does
+ * catch it is refused for holding too many gems rather than read.
+ */
+private val SLIT_HEIGHT = 56.dp
+private val SLIT_COLOUR = Color(0xFFFF5252)
 
 private val UNSET = Color(0xFF39424C)
 private val SLOT_EMPTY = Color(0x55101418)

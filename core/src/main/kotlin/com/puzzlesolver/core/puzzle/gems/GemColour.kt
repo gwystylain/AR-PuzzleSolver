@@ -1,12 +1,18 @@
 package com.puzzlesolver.core.puzzle.gems
 
 /**
- * The five colours a gem's rings can take.
+ * The four colours a gem's rings can take.
  *
- * Five and not six: the room's LEDs are RGB, and the wall only ever drives them to
- * red, yellow, green, blue and magenta. A ring that reads as *white* is not a sixth
- * colour, it is a yellow ring bright enough to desaturate -- see [GemPalette] for why
- * that is a measurement rather than an assumption.
+ * Four and not five: the room's LEDs are RGB, and the wall only ever drives them to
+ * red, yellow, green and blue. A ring that reads as *white* is not a fifth colour, it
+ * is a yellow ring bright enough to desaturate -- see [GemPalette] for why that is a
+ * measurement rather than an assumption.
+ *
+ * There used to be a purple, and it never existed. What was labelled purple on the early
+ * clips was a red ring under the glow of a cyan one -- red light plus cyan light is
+ * magenta -- and the user confirmed the game has no purple gem. Keeping it cost twice:
+ * it was a fifth bucket for red to leak into, and it sat 26 degrees from red, the closest
+ * pair on the palette.
  *
  * [UNKNOWN] is load-bearing in two different places and means the same thing in both:
  * *nothing is asserted here*. On an observation it means the ring could not be named
@@ -20,18 +26,16 @@ object GemColour {
     const val YELLOW = 2
     const val GREEN = 3
     const val BLUE = 4
-    const val PURPLE = 5
 
     /** Every nameable colour, in palette order. */
     @JvmField
-    val ALL = intArrayOf(RED, YELLOW, GREEN, BLUE, PURPLE)
+    val ALL = intArrayOf(RED, YELLOW, GREEN, BLUE)
 
     fun name(colour: Int): String = when (colour) {
         RED -> "red"
         YELLOW -> "yellow"
         GREEN -> "green"
         BLUE -> "blue"
-        PURPLE -> "purple"
         else -> "?"
     }
 
@@ -39,17 +43,15 @@ object GemColour {
      * Roughly what each colour looks like on screen, as 0xRRGGBB.
      *
      * For drawing the palette and the target swatches only. Deliberately *not* the
-     * measured wall hues: the wall's "blue" measures cyan and its "purple" measures
-     * magenta, and a palette painted in those would leave the user picking between two
-     * shades that both look like the same thing on a phone. Recognisable beats faithful
-     * for a button you tap.
+     * measured wall hues: the wall's "blue" measures cyan, and a swatch painted in that
+     * would sit closer to the green one than a user glancing at a phone can comfortably
+     * tell apart. Recognisable beats faithful for a button you tap.
      */
     fun displayRgb(colour: Int): Int = when (colour) {
         RED -> 0xE53935
         YELLOW -> 0xFDD835
         GREEN -> 0x43D96B
         BLUE -> 0x2196F3
-        PURPLE -> 0xAB47BC
         else -> 0x555F6A
     }
 }

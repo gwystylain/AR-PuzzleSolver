@@ -65,7 +65,7 @@ class GemRecorderTest {
             ),
             GemScanner.Gem(
                 56.5f, 78.5f, 8f,
-                GemPattern(GemColour.BLUE, GemColour.UNKNOWN, GemColour.PURPLE),
+                GemPattern(GemColour.BLUE, GemColour.UNKNOWN, GemColour.GREEN),
                 0.22f, 0,
             ),
         ),
@@ -180,7 +180,7 @@ class GemRecorderTest {
         assertTrue("the targets in play at the time", log.contains("1:red/yellow/blue"))
         assertTrue("an empty slot reads as empty", log.contains("2:-"))
         assertTrue("a read ring", log.contains("red     yellow  blue"))
-        assertTrue("a ring the reader would not name", log.contains("blue    ?       purple"))
+        assertTrue("a ring the reader would not name", log.contains("blue    ?       green"))
     }
 
     @Test

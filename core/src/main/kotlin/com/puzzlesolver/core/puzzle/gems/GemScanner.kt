@@ -202,7 +202,7 @@ class GemScanner(
         washed > OVEREXPOSED && seen >= 4 ->
             "over-exposed: ${(washed * 100).toInt()}% of the gems has no colour -- darken the camera"
         seen == 0 -> "no gems in view"
-        activeTargets == 0 -> "$seen gems in view -- tap a target above to start matching"
+        activeTargets == 0 -> "$seen gems in view -- load or tap the targets to start matching"
         matches == 0 -> "no match in view  ·  $readable of $seen gems read"
         matches == 1 -> "1 match  ·  $readable of $seen gems read"
         else -> "$matches matches  ·  $readable of $seen gems read"

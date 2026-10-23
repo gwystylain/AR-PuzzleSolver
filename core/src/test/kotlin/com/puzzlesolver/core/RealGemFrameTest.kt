@@ -42,16 +42,16 @@ class RealGemFrameTest {
      */
     private val labelled = listOf(
         Gem(85.7f, 92.0f, GemColour.RED, GemColour.YELLOW, GemColour.RED),
-        Gem(264.5f, 102.7f, GemColour.PURPLE, GemColour.BLUE, GemColour.BLUE),
+        Gem(264.5f, 102.7f, GemColour.RED, GemColour.BLUE, GemColour.BLUE),
         Gem(85.8f, 272.5f, GemColour.RED, GemColour.YELLOW, null),
         Gem(261.4f, 281.2f, GemColour.RED, GemColour.GREEN, GemColour.GREEN),
         Gem(430.5f, 287.0f, GemColour.YELLOW, GemColour.BLUE, GemColour.BLUE),
         Gem(85.6f, 445.6f, GemColour.YELLOW, GemColour.BLUE, GemColour.BLUE),
         Gem(257.6f, 451.8f, GemColour.BLUE, GemColour.BLUE, null),
         Gem(422.7f, 458.9f, GemColour.RED, GemColour.GREEN, GemColour.GREEN),
-        Gem(85.0f, 612.4f, GemColour.BLUE, GemColour.PURPLE, GemColour.PURPLE),
+        Gem(85.0f, 612.4f, GemColour.BLUE, GemColour.RED, GemColour.RED),
         Gem(253.9f, 617.4f, GemColour.BLUE, GemColour.YELLOW, GemColour.RED),
-        Gem(415.3f, 624.9f, GemColour.BLUE, GemColour.BLUE, GemColour.PURPLE),
+        Gem(415.3f, 624.9f, GemColour.BLUE, GemColour.BLUE, GemColour.RED),
     )
 
     private class Gem(
