@@ -117,7 +117,11 @@ class ScanPipeline(
      */
     val terminalExposure = TerminalExposure()
 
-    /** Set once a mode's camera preset has been applied, so it happens once. */
+    /**
+     * Set once a mode's camera preset has been applied, so it happens once per entry into
+     * the mode. Cleared by a source swap and by every mode pick, on the UI thread.
+     */
+    @Volatile
     private var cameraPresetApplied = false
 
     /** Exposure changes made this session, for the HUD and the heartbeat. */
@@ -1052,7 +1056,7 @@ class ScanPipeline(
     }
 
     /**
-     * Sets the camera up for the gem wall, once.
+     * Sets the camera up for the gem wall, once each time Gems is picked.
      *
      * Gems wants *less light*: its rings clip to white at the exposure the camera picks
      * for itself and no amount of care downstream recovers them. So the preset darkens
@@ -2114,6 +2118,17 @@ class ScanPipeline(
         }
         // Set up afresh on the way in: Terminal and Spot meter the camera for themselves,
         // and coming from either leaves it wherever they put it.
+        //
+        // Gems too, which only ever got this on a source swap -- and Gems, Spot and
+        // Terminal share one camera source, so moving between them never swaps it. On
+        // 2026-10-27 Gems came back from Spot at Spot's 1/250 s iso800 with white balance
+        // free: three stops over, a third of every gem washed out, blue rings blown to flat
+        // cyan discs, and the targets loaded wrong or not at all. The auto-exposure loop
+        // could not step in either, because it had settled in the first game and settled
+        // is terminal. So both start again: the loop first, so the preset's darkening is
+        // noted against a fresh one.
+        autoExposure.reset()
+        cameraPresetApplied = false
         minesCameraApplied = false
         liveTerminalResult = TerminalScanner.Result.EMPTY
         liveSpotScreen = null
