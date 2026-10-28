@@ -5,6 +5,8 @@ import com.puzzlesolver.spell.LetterMask
 import com.puzzlesolver.spell.Lexicon
 import com.puzzlesolver.spell.Protocol
 import com.puzzlesolver.spell.Rules
+import com.puzzlesolver.spell.client.JumbleSession
+import com.puzzlesolver.spell.client.JumbleState
 import com.puzzlesolver.spell.client.Link
 import com.puzzlesolver.spell.client.SessionStore
 import com.puzzlesolver.spell.client.SpellSession
@@ -507,6 +509,58 @@ class EndToEndTest {
         assertEquals(1008, l.code.get())
         val replies = generateSequence { l.messages.poll() }.toList()
         assertTrue(replies.any { "rate_limited" in it }, "no rate limiting in ${replies.size} replies")
+    }
+
+    // --- Jumble -------------------------------------------------------------
+
+    private fun jumble(port: Int): JumbleSession =
+        JumbleSession("ws://127.0.0.1:$port", http, timing).also {
+            cleanup += { it.close() }
+            it.start()
+        }
+
+    private fun JumbleSession.await(what: String, timeoutMillis: Long = 5_000, predicate: (JumbleState) -> Boolean): JumbleState =
+        runBlocking { withTimeoutOrNull(timeoutMillis) { state.first(predicate) } }
+            ?: fail("timed out waiting for $what; last state: ${state.value}")
+
+    @Test
+    fun `jumble - every word using all the letters comes back, and a backspace is answered at once`() {
+        val s = server()
+        val j = jumble(s.port)
+        j.await("connected") { it.link is Link.Online }
+        "PTO".forEach { j.type(it) }
+        assertEquals(listOf("OPT", "POT", "TOP"), j.await("OPT, POT, TOP") { it.letters == "PTO" && it.current }.words)
+
+        j.type('S')
+        assertEquals(listOf("STOP"), j.await("STOP") { it.letters == "PTOS" && it.current }.words)
+        j.type('S')
+        val none = j.await("nothing from PTOSS") { it.letters == "PTOSS" && it.current }
+        assertEquals(0, none.total)
+
+        // PTOS was answered already, so the server need not be asked again.
+        s.stop()
+        j.backspace()
+        val back = j.await("PTOS from the phone's own copy") { it.letters == "PTOS" }
+        assertTrue(back.current)
+        assertEquals(listOf("STOP"), back.words)
+    }
+
+    @Test
+    fun `jumble - letters typed while the link is down are answered when it is back`() {
+        val s = server()
+        val proxy = proxy(s)
+        val j = jumble(proxy.port)
+        j.await("connected") { it.link is Link.Online }
+
+        proxy.target = 1
+        proxy.sever()
+        j.await("offline") { it.link is Link.Offline }
+        "TOOT".forEach { j.type(it) }
+        val waiting = j.await("typed while down") { it.letters == "TOOT" }
+        assertFalse(waiting.current)
+
+        proxy.target = s.port
+        assertEquals(listOf("TOOT"), j.await("TOOT once back") { it.letters == "TOOT" && it.current }.words)
     }
 
     @Test

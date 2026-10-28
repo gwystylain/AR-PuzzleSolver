@@ -7,6 +7,8 @@ import android.net.Network
 import android.util.Log
 import com.puzzlesolver.app.BuildConfig
 import com.puzzlesolver.spell.GameMode
+import com.puzzlesolver.spell.client.JumbleSession
+import com.puzzlesolver.spell.client.JumbleState
 import com.puzzlesolver.spell.client.ServerAddress
 import com.puzzlesolver.spell.client.SessionStore
 import com.puzzlesolver.spell.client.SpellSession
@@ -23,8 +25,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
- * Spellinator's hold on the network, for the activity: which server, the [SpellSession]
- * talking to it, and the two things only Android can tell it.
+ * Spellinator's and Jumble's hold on the network, for the activity: which server, the
+ * [SpellSession] and [JumbleSession] talking to it, and the two things only Android can
+ * tell them. The two rooms share the server, so setting it in either sets it for both.
  *
  * - **When the network changes.** Walking from the venue's Wi-Fi onto cellular kills the
  *   socket without closing it. Rather than wait for the session to notice the silence, the
@@ -37,7 +40,8 @@ import kotlinx.coroutines.launch
  *
  * Opened when the Spellinator screen is picked and closed when another mode is: closing
  * keeps the seat on the server for its grace period, so a quick look at another room and
- * back loses nothing.
+ * back loses nothing. Jumble is opened and closed the same way, on its own
+ * ([openJumble]); it has no seat to keep, only its letters, which stay on the phone.
  */
 class SpellController(context: Context) {
     private val app = context.applicationContext
@@ -48,6 +52,9 @@ class SpellController(context: Context) {
 
     private val _state = MutableStateFlow(SpellState())
     val state: StateFlow<SpellState> = _state.asStateFlow()
+
+    private val _jumble = MutableStateFlow(JumbleState())
+    val jumble: StateFlow<JumbleState> = _jumble.asStateFlow()
 
     /** The server in use: the one set in the app, else the one built in, else none. */
     private val _server = MutableStateFlow(prefs.getString(KEY_SERVER, null) ?: builtIn())
@@ -69,6 +76,10 @@ class SpellController(context: Context) {
     private var mirror: Job? = null
     private var open = false
 
+    private var jumbleSession: JumbleSession? = null
+    private var jumbleMirror: Job? = null
+    private var jumbleOpen = false
+
     fun open() {
         if (open) return
         open = true
@@ -80,12 +91,28 @@ class SpellController(context: Context) {
         if (!open) return
         open = false
         session?.stop()
-        watchNetwork(false)
+        watchNetwork(jumbleOpen)
+    }
+
+    fun openJumble() {
+        if (jumbleOpen) return
+        jumbleOpen = true
+        jumbleFor(_server.value)?.start()
+        watchNetwork(true)
+    }
+
+    fun closeJumble() {
+        if (!jumbleOpen) return
+        jumbleOpen = false
+        jumbleSession?.stop()
+        watchNetwork(open)
     }
 
     fun release() {
         close()
+        closeJumble()
         session?.close()
+        jumbleSession?.close()
         scope.cancel()
     }
 
@@ -116,6 +143,12 @@ class SpellController(context: Context) {
             _state.value = SpellState()
             val next = sessionFor(base)
             if (open) next?.start()
+            jumbleSession?.close()
+            jumbleSession = null
+            jumbleMirror?.cancel()
+            _jumble.value = JumbleState()
+            val nextJumble = jumbleFor(base)
+            if (jumbleOpen) nextJumble?.start()
         }
         return null
     }
@@ -132,6 +165,10 @@ class SpellController(context: Context) {
     fun undoSaved() = session?.undoSaved()
     fun newRound() = session?.newRound()
 
+    fun typeJumble(letter: Char) = jumbleSession?.type(letter)
+    fun backspaceJumble() = jumbleSession?.backspace()
+    fun clearJumble() = jumbleSession?.clear()
+
     private fun builtIn(): String? = ServerAddress.parse(BuildConfig.SPELL_SERVER, BuildConfig.DEBUG)
 
     private fun sessionFor(base: String?): SpellSession? {
@@ -141,6 +178,16 @@ class SpellController(context: Context) {
         session = created
         mirror?.cancel()
         mirror = scope.launch { created.state.collect { _state.value = it } }
+        return created
+    }
+
+    private fun jumbleFor(base: String?): JumbleSession? {
+        if (base == null) return null
+        jumbleSession?.let { if (it.server == base) return it }
+        val created = JumbleSession(base, http, log = { Log.i(TAG, it) })
+        jumbleSession = created
+        jumbleMirror?.cancel()
+        jumbleMirror = scope.launch { created.state.collect { _jumble.value = it } }
         return created
     }
 
@@ -159,6 +206,7 @@ class SpellController(context: Context) {
             if ((previous != null && previous != network) || hadNone) {
                 hadNone = false
                 session?.reconnectNow()
+                jumbleSession?.reconnectNow()
             }
         }
 
@@ -167,6 +215,7 @@ class SpellController(context: Context) {
             current = null
             hadNone = true
             session?.networkLost()
+            jumbleSession?.networkLost()
         }
     }
 

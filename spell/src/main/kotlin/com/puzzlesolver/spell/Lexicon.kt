@@ -10,7 +10,7 @@ import java.util.Locale
  *
  * Letters may be reused, so a word can be spelt from the players' letters exactly when
  * every letter in it is one of theirs -- one AND against a 26-bit mask per word. Even the
- * longest bucket, eight letters, is about 42,000 words, so a lookup is a straight scan of
+ * largest bucket, nine letters, is about 43,000 words, so a lookup is a straight scan of
  * well under a millisecond and needs no index.
  *
  * The matches come best first ([find] says what best is). The ranking is a handful of
@@ -109,7 +109,7 @@ class Lexicon private constructor(private val buckets: Map<Int, Bucket>) {
 
         // One key per candidate, packed so a plain sort orders them: cost, then players
         // left out, then position in the bucket, which is alphabetical. The bucket index
-        // fits 16 bits (the largest has 42,341 words) and players left out 3.
+        // fits 16 bits (the largest has 43,180 words) and players left out 3.
         val outside = usable.inv()
         var keys = LongArray(256)
         var n = 0
@@ -130,6 +130,38 @@ class Lexicon private constructor(private val buckets: Map<Int, Bucket>) {
         if (n == 0) return Matches.NONE
         keys.sort(0, n)
         return Matches(List(minOf(limit, n)) { bucket.words[(keys[it] and 0xFFFF).toInt()] }, n)
+    }
+
+    /**
+     * For Jumble: every word that uses exactly [letters] -- each of them once, in any order,
+     * so a word as long as they are -- alphabetical. Unlike [find], repeats count: E, E, L,
+     * R, T and T give LETTER, and one T fewer gives nothing.
+     *
+     * Only a word with exactly the same set of letters can qualify, so one compare against
+     * its mask rules out nearly all of a bucket, and only the handful left are counted
+     * letter by letter. At most [limit] are listed; [Matches.total] counts them all.
+     */
+    fun anagrams(letters: String, limit: Int = Rules.MAX_WORDS): Matches {
+        val bucket = buckets[letters.length] ?: return Matches.NONE
+        val mask = LetterMask.of(letters)
+        val wanted = IntArray(26)
+        for (c in letters) {
+            if (c !in 'A'..'Z') return Matches.NONE
+            wanted[c - 'A']++
+        }
+        val found = ArrayList<String>()
+        var total = 0
+        for (i in bucket.masks.indices) {
+            if (bucket.masks[i] != mask) continue
+            val word = bucket.words[i]
+            val left = wanted.copyOf()
+            // As long as the letters and drawn from the same ones, so a word that runs out of
+            // any letter has more of another and is not a match.
+            if (word.any { --left[it - 'A'] < 0 }) continue
+            total++
+            if (found.size < limit) found += word
+        }
+        return if (total == 0) Matches.NONE else Matches(found, total)
     }
 
     /** Whether [word] is in the list (at a length it holds). */
@@ -157,7 +189,7 @@ class Lexicon private constructor(private val buckets: Map<Int, Bucket>) {
          * Lines that are not plain A-Z words of a length in [lengths] are skipped, and
          * duplicates are dropped.
          */
-        fun read(reader: Reader, lengths: IntRange = Rules.LENGTHS): Lexicon {
+        fun read(reader: Reader, lengths: IntRange = Rules.WORD_LENGTHS): Lexicon {
             val byLength = HashMap<Int, MutableList<String>>()
             reader.buffered().useLines { lines ->
                 for (line in lines) {
@@ -174,7 +206,7 @@ class Lexicon private constructor(private val buckets: Map<Int, Bucket>) {
             )
         }
 
-        fun load(path: Path, lengths: IntRange = Rules.LENGTHS): Lexicon =
+        fun load(path: Path, lengths: IntRange = Rules.WORD_LENGTHS): Lexicon =
             Files.newBufferedReader(path, Charsets.UTF_8).use { read(it, lengths) }
 
         fun of(vararg words: String): Lexicon = read(words.joinToString("\n").reader())

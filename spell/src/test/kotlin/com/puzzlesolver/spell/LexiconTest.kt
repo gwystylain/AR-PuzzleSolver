@@ -13,7 +13,8 @@ class LexiconTest {
     private val small = Lexicon.of(
         "TOP", "POT", "OPT", "OOP", "TOO", "TOT", "POP", "TOOT", "POOP", "OTTO",
         "TAP", "PAT", "STOP", "POTS", "TOPS",
-        // Outside 3..8, so never held.
+        // Outside 3..8, so never found for Spellinator: two letters are not held at all, and
+        // nine are only for Jumble.
         "TO", "OP", "TOPOTYPES",
     )
 
@@ -102,10 +103,14 @@ class LexiconTest {
     }
 
     @Test
-    fun `lengths outside 3 to 8 are not held at all`() {
+    fun `lengths outside 3 to 15 are not held at all`() {
         assertEquals(0, small.count(2))
-        assertEquals(0, small.count(9))
         assertEquals(Matches.NONE, small.find(LetterMask.of("TOP"), 2))
+        // Nine letters are held, for Jumble, and found if asked for.
+        assertEquals(1, small.count(9))
+        val sixteen = Lexicon.of("ABCDEFGHIJKLMNO", "ABCDEFGHIJKLMNOP")
+        assertEquals(1, sixteen.count(15))
+        assertEquals(0, sixteen.count(16))
     }
 
     @Test
@@ -130,6 +135,57 @@ class LexiconTest {
         assertEquals(3, lex.size)
         assertEquals(listOf("AAH"), lex.find(LetterMask.of("AH"), 3).words)
         assertEquals(listOf("AAHS"), lex.find(LetterMask.of("AHS"), 4).words)
+    }
+
+    // --- Jumble -----------------------------------------------------------------
+
+    private val jumbles = Lexicon.of(
+        "LISTEN", "SILENT", "TINSEL", "INLETS", "ENLIST", "LITTEN",
+        "LETTER", "TETTER", "RETTLE", "TOPOTYPES",
+    )
+
+    @Test
+    fun `every word that uses all the letters, alphabetical, in whatever order they were typed`() {
+        val m = jumbles.anagrams("NTLSIE")
+        assertEquals(listOf("ENLIST", "INLETS", "LISTEN", "SILENT", "TINSEL"), m.words)
+        assertEquals(5, m.total)
+        assertEquals(m, jumbles.anagrams("SILENT"))
+    }
+
+    @Test
+    fun `repeats count - every letter typed is used exactly once`() {
+        assertEquals(listOf("LETTER", "RETTLE"), jumbles.anagrams("TTEELR").words)
+        // One T fewer and one E more: the same set of letters, but not LETTER's counts.
+        assertEquals(Matches.NONE, jumbles.anagrams("TEEELR"))
+        // LITTEN has the T twice; the letters of LISTEN with a T for the S do not make it.
+        assertEquals(listOf("LITTEN"), jumbles.anagrams("NETTIL").words)
+        assertFalse("LITTEN" in jumbles.anagrams("NETSIL").words)
+    }
+
+    @Test
+    fun `a letter short or a letter over is no word at all`() {
+        assertEquals(Matches.NONE, jumbles.anagrams("LISTE"))
+        assertEquals(Matches.NONE, jumbles.anagrams("LISTENS"))
+        assertEquals(Matches.NONE, jumbles.anagrams(""))
+        assertEquals(Matches.NONE, jumbles.anagrams("TO"))
+    }
+
+    @Test
+    fun `jumbles longer than Spellinator's words are answered`() {
+        assertEquals(listOf("TOPOTYPES"), jumbles.anagrams("SEPYTOPOT").words)
+    }
+
+    @Test
+    fun `anything but A to Z answers nothing`() {
+        assertEquals(Matches.NONE, jumbles.anagrams("listen"))
+        assertEquals(Matches.NONE, jumbles.anagrams("LIST N"))
+    }
+
+    @Test
+    fun `the anagrams are capped but the total is not`() {
+        val m = jumbles.anagrams("LISTEN", limit = 2)
+        assertEquals(listOf("ENLIST", "INLETS"), m.words)
+        assertEquals(5, m.total)
     }
 
     // --- One and Done 2.0 ------------------------------------------------------
@@ -188,11 +244,22 @@ class LexiconTest {
         val started = System.nanoTime()
         val lex = Lexicon.load(path!!)
         val loadMillis = (System.nanoTime() - started) / 1_000_000
-        // CSW24 has 280,887 words; these are its 3- to 8-letter ones.
-        assertEquals(120_018, lex.size)
+        // CSW24 has 280,887 words; these are all but its 127 of two letters.
+        assertEquals(280_760, lex.size)
         assertEquals(1_351, lex.count(3))
         assertEquals(42_341, lex.count(8))
+        assertEquals(5_956, lex.count(15))
         assertTrue("TOP" in lex.find(LetterMask.of("TOP"), 3).words)
+        assertTrue(lex.anagrams("LISTEN").words.containsAll(listOf("ENLIST", "INLETS", "LISTEN", "SILENT", "TINSEL")))
+        assertTrue("LETTER" in lex.anagrams("TTEELR").words)
+
+        // Jumble's worst case is the largest bucket, nine letters, against the commonest
+        // letters; the mask rules out nearly all of it before any letter is counted.
+        repeat(20) { lex.anagrams("AEINRSTLO") }
+        val tj = System.nanoTime()
+        repeat(200) { lex.anagrams("AEINRSTLO") }
+        val jumbleMicros = (System.nanoTime() - tj) / 1000 / 200
+        println("CSW24: jumble lookup ${jumbleMicros}us; AEINRSTLO makes ${lex.anagrams("AEINRSTLO").words}")
 
         // The worst case for a lookup: the longest bucket against a mask that excludes
         // nothing, so every word is ranked, against five players' letters.

@@ -827,7 +827,7 @@ private fun Keypad(room: Room, onType: (Char) -> Unit, onBackspace: () -> Unit) 
 }
 
 @Composable
-private fun KeyRow(content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
+internal fun KeyRow(content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp), content = content)
 }
 
@@ -866,15 +866,19 @@ private fun androidx.compose.foundation.layout.RowScope.LetterKey(
     )
 }
 
-/** Fires on touch-down, with a tick, and darkens while held. */
+/**
+ * Fires on touch-down, with a tick, and darkens while held. [badge], when there is one, sits
+ * small in the top corner -- Jumble's count of a letter typed more than once.
+ */
 @Composable
-private fun androidx.compose.foundation.layout.RowScope.Key(
+internal fun androidx.compose.foundation.layout.RowScope.Key(
     label: String,
     background: Color,
     textColour: Color,
     enabled: Boolean,
     weight: Float,
     struck: Boolean = false,
+    badge: String? = null,
     onPress: () -> Unit,
 ) {
     val haptics = LocalHapticFeedback.current
@@ -907,13 +911,22 @@ private fun androidx.compose.foundation.layout.RowScope.Key(
             fontSize = 20.sp,
             textDecoration = if (struck) TextDecoration.LineThrough else null,
         )
+        if (badge != null) {
+            Text(
+                badge,
+                color = textColour,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                modifier = Modifier.align(Alignment.TopEnd).padding(top = 2.dp, end = 4.dp),
+            )
+        }
     }
 }
 
 // --- Shared pieces ---------------------------------------------------------
 
 @Composable
-private fun LinkPill(link: Link) {
+internal fun LinkPill(link: Link) {
     val (colour, text) = when (link) {
         is Link.Online -> {
             val ms = link.rttMillis
@@ -984,10 +997,11 @@ private fun NoticeBanner(notice: Notice?, onDismiss: (Long) -> Unit, modifier: M
 
 /**
  * The one place the phone's own keyboard appears: an address is a word, and typed once.
- * Autocorrect is still off, since "duckdns" is not in anyone's dictionary.
+ * Autocorrect is still off, since "duckdns" is not in anyone's dictionary. Jumble asks the
+ * same server, and sets it here too.
  */
 @Composable
-private fun ServerDialog(server: String?, onSetServer: (String) -> String?, onDone: () -> Unit) {
+internal fun ServerDialog(server: String?, onSetServer: (String) -> String?, onDone: () -> Unit) {
     var text by remember { mutableStateOf(server?.let { ServerAddress.describe(it) } ?: "") }
     var problem by remember { mutableStateOf<String?>(null) }
     AlertDialog(

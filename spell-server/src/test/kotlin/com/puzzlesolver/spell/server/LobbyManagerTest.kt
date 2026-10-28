@@ -37,7 +37,11 @@ class LobbyManagerTest {
 
     private var now = 1_000_000L
     private val config = ServerConfig(graceMillis = 120_000, offlineAfterMillis = 3_000, maxLobbies = 3)
-    private val lexicon = Lexicon.of("TOP", "POT", "OPT", "OOP", "TOO", "TOT", "POP", "TOOT", "STOP", "TAPS")
+    private val lexicon = Lexicon.of(
+        "TOP", "POT", "OPT", "OOP", "TOO", "TOT", "POP", "TOOT", "STOP", "TAPS",
+        // Only for Jumble: Spellinator never asks for nine letters.
+        "TOPOTYPES",
+    )
     private val lobbies = LobbyManager(lexicon, config, clock = { now })
 
     private fun FakePeer.say(m: ClientMessage) = lobbies.onMessage(this, m)
@@ -86,6 +90,29 @@ class LobbyManagerTest {
             assertEquals(listOf("OOP", "POP", "TOO", "TOT", "OPT", "POT", "TOP"), s.words)
             assertEquals(listOf("T", "O", "P"), s.players.map { it.letters })
         }
+    }
+
+    @Test
+    fun `a jumble is answered to the asker alone, without a lobby`() {
+        val solo = FakePeer()
+        solo.say(ClientMessage.Jumble("PTO"))
+        assertEquals(ServerMessage.Jumbled("PTO", listOf("OPT", "POT", "TOP"), 3), solo.received.single())
+        solo.say(ClientMessage.Jumble("SEPYTOPOT"))
+        assertEquals(listOf("TOPOTYPES"), (solo.received.last() as ServerMessage.Jumbled).words)
+        solo.say(ClientMessage.Jumble("PPT"))
+        assertEquals(ServerMessage.Jumbled("PPT", emptyList(), 0), solo.received.last())
+        assertEquals(0, lobbies.lobbyCount)
+    }
+
+    @Test
+    fun `a jumble from a seated player touches nothing in their lobby`() {
+        val (p1, id) = hosted()
+        val p2 = joining(id)
+        val before = p2.received.size
+        p1.say(ClientMessage.Jumble("OTT"))
+        assertEquals(listOf("TOT"), (p1.received.last() as ServerMessage.Jumbled).words)
+        assertEquals(before, p2.received.size)
+        assertEquals(listOf("", ""), p1.state().players.map { it.letters })
     }
 
     @Test

@@ -95,6 +95,7 @@ fun LandingScreen(
     onSelectMode: (String) -> Unit,
     onSelectGuide: (StrategyRoom) -> Unit,
     onSelectSpell: () -> Unit,
+    onSelectJumble: () -> Unit,
     onSelectSpot: () -> Unit,
     /** Whether the HUD shows the debug panel, switched at the foot of the page. */
     debug: Boolean,
@@ -123,6 +124,8 @@ fun LandingScreen(
                 Entry(r.id, r.displayName, camera = false, LOOKS[r.id] ?: PLAIN, null) { onSelectGuide(r) }
             } + Entry(SPELLINATOR_ID, "Spellinator", camera = false, LOOKS.getValue(SPELLINATOR_ID), "online -- phones join one lobby") {
                 onSelectSpell()
+            } + Entry(JUMBLE_ID, "Jumble", camera = false, LOOKS.getValue(JUMBLE_ID), "online -- asks Spellinator's server") {
+                onSelectJumble()
             }
         }
 
@@ -236,6 +239,7 @@ private val LOOKS: Map<String, Look> = mapOf(
     StrategyRoom.STRATEGY.id to Look(Color(0xFFFF9F1C), "Every wave's pressing order, split between players", 2400) { p, c -> strategyGlyph(p, c) },
     StrategyRoom.GRIDLOCK.id to Look(Color(0xFFB388FF), "Two boards, one plan, split between players", 2000) { p, c -> gridlockGlyph(p, c) },
     SPELLINATOR_ID to Look(SPELL_ACCENT, "One word from everyone's letters, in their colours", 2400) { p, c -> spellGlyph(p, c) },
+    JUMBLE_ID to Look(JUMBLE_ACCENT, "Every word that uses all your letters", 2600) { p, c -> jumbleGlyph(p, c) },
     SpotFinder.ID to Look(Color(0xFFFF3DCB), "Six photos of the screen, every difference boxed", 2600) { p, c -> spotGlyph(p, c) },
 )
 
@@ -565,6 +569,35 @@ private fun DrawScope.spellGlyph(phase: Float, accent: Color) {
         val ink = Color(0xFF06121F)
         drawLine(ink, Offset(x, top - drop + h * 0.25f), Offset(x, top - drop + h * 0.75f), w * 0.14f)
         drawLine(ink, Offset(x - w * 0.22f, top - drop + h * 0.25f), Offset(x + w * 0.22f, top - drop + h * 0.25f), w * 0.14f)
+    }
+}
+
+/**
+ * Four tiles in a jumble sliding past one another into order, then lit as a word. Each
+ * carries a bar at its own height, so in order they read as a staircase.
+ */
+private fun DrawScope.jumbleGlyph(phase: Float, accent: Color) {
+    val s = size.minDimension
+    val n = 4
+    val gap = s * 0.06f
+    val w = (s - gap * (n - 1)) / n
+    val h = w * 1.25f
+    val top = (s - h) / 2f
+    // Where each tile starts; it ends at its own index.
+    val from = intArrayOf(2, 0, 3, 1)
+    // Held jumbled, a slide into place, then lit for the rest of the cycle.
+    val t = ((phase - 0.2f) / 0.4f).coerceIn(0f, 1f)
+    val ease = t * t * (3f - 2f * t)
+    val lit = phase >= 0.65f
+    val ink = Color(0xFF06121F)
+    for (i in 0 until n) {
+        val x = (from[i] + (i - from[i]) * ease) * (w + gap)
+        // Alternate tiles rise and dip as they move, so they pass rather than collide.
+        val lift = sin(ease * PI.toFloat()) * h * 0.22f * (if (i % 2 == 0) 1f else -1f)
+        val y = top - lift
+        drawRoundRect(if (lit) accent else Color(0xFF3A4654), Offset(x, y), Size(w, h), CornerRadius(w * 0.18f))
+        val bar = y + h * (0.25f + 0.5f * i / (n - 1))
+        drawLine(if (lit) ink else Color(0xFFDDE5EC), Offset(x + w * 0.25f, bar), Offset(x + w * 0.75f, bar), w * 0.14f)
     }
 }
 

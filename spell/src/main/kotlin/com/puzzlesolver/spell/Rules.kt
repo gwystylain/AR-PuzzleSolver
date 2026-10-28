@@ -21,6 +21,16 @@ object Rules {
     const val MAX_LETTERS = 16
 
     /**
+     * Jumble: every letter typed is in the word, so the word is as long as the letters --
+     * up to the longest words in Collins, which have fifteen.
+     */
+    const val MAX_JUMBLE_LETTERS = 15
+    val JUMBLE_LENGTHS: IntRange = MIN_LENGTH..MAX_JUMBLE_LETTERS
+
+    /** Every word length either game asks for -- Spellinator's are among Jumble's -- so the lengths the word list is read at. */
+    val WORD_LENGTHS: IntRange = JUMBLE_LENGTHS
+
+    /**
      * Words sent with each update; the total is always sent. A handful of common letters
      * can match thousands of eight-letter words, and nobody reads past the first few
      * hundred, but every update carries the list -- so it is what keeps an update small.

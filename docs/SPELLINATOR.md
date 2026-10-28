@@ -6,9 +6,9 @@ front of them on their own phone, anyone picks the word length, and every phone 
 word of that length the team's letters spell, each letter in the colour of the player who
 has it, as each letter is typed.
 
-It is the one mode that is **online**. The phones meet in a lobby on a small server you
-run yourself, on the NAS. Nothing else in the app touches the network, and this mode
-talks only to that server.
+It is **online**. The phones meet in a lobby on a small server you run yourself, on the
+NAS. Nothing else in the app touches the network except [Jumble](#jumble), the same word
+list played alone, and both talk only to that server.
 
 ## Playing
 
@@ -96,6 +96,35 @@ in `Lexicon.kt`.)
 The server keeps the round, so a phone that reconnects gets the saved words back. A server
 restart ends it, like any lobby.
 
+## Jumble
+
+A third word room, and the one played alone: **Jumble**, its own card on the landing page.
+One player types the jumbled letters in front of them, and the phone shows every word that
+uses **all of them, each exactly once**. There is no word length to pick: the word is as
+long as the letters typed, three to fifteen. Unlike Spellinator, repeats count -- E, E, L,
+R, T and T give LETTER (and LETTRE, which Collins also has), and one T fewer gives nothing
+-- so a letter that is there twice is typed twice, and its key shows the count. When no
+word uses them all, the phone says so, which usually means a letter missed or typed twice.
+
+The answers are alphabetical, the first in big tiles and any others under it. Most jumbles
+have one; some letters make several (LISTEN also gives ENLIST, INLETS, SILENT, TINSEL and
+more), and the phone cannot know which one the room wants, so it shows them all.
+
+It needs no lobby and keeps nothing on the server. The word list cannot be on the phone
+(see *The word list*), so the phone asks the Spellinator server, over a connection of its
+own: `jumble {letters}` every time the letters change, answered with `jumbled` to that phone
+alone. An answer depends only on which letters were asked, so the phone keeps the last 64
+by their letters sorted: a backspace, or the same letters typed in another order, is
+answered at once without asking again. A dropped link loses nothing -- once it is back,
+letters without an answer are asked about again -- and is kept up as Spellinator's is (see
+*When a phone drops*). The lookup is `Lexicon.anagrams`: one compare against each word's
+letter mask rules out nearly all of a length's words before any letter is counted, so even
+nine letters, the largest bucket, takes about 60 µs against the whole list.
+
+A server from before Jumble does not know the question and answers it with an error; the
+phone then says the server needs updating, rather than waiting for ever. Jumble uses
+whatever server Spellinator does, and setting it from either room sets it for both.
+
 ## Why the server is on the NAS and not a phone
 
 The obvious design is for the host's phone to be the server. It cannot work here: phones on
@@ -107,11 +136,12 @@ live (see below).
 
 ## The word list
 
-Collins Scrabble Words 2024 (CSW24): 280,887 words, of which the server loads the 120,018
-of 3 to 8 letters. A lookup is a scan of one length's words against a 26-bit mask of the
-team's letters, and a second scan to rank them (see *Playing*). Even the longest, eight
-letters at 42,341 words, all matching and all ranked against five players, takes about
-0.3 ms, so the word list adds nothing measurable to an update.
+Collins Scrabble Words 2024 (CSW24): 280,887 words, of which the server loads the 280,760
+of 3 to 15 letters -- all but the two-letter ones: Spellinator asks for 3 to 8, and Jumble
+for as many as are typed. A lookup is a scan of one length's words against a 26-bit mask of
+the team's letters, and a second scan to rank them (see *Playing*). Even Spellinator's
+longest, eight letters at 42,341 words, all matching and all ranked against five players,
+takes about 0.3 ms, so the word list adds nothing measurable to an update.
 
 **It is not in this repository, the APK or the server image, and must not be.** The list
 is HarperCollins' copyright, licensed for private, non-commercial use, and the repository,
@@ -141,11 +171,11 @@ Three modules, all plain Kotlin on the JVM:
 | Module | What it is |
 | --- | --- |
 | `spell/` | What both ends agree on: the messages (`Protocol.kt`), the limits (`Rules.kt`), and the word finder (`Lexicon.kt`). |
-| `spell-client/` | The phone's connection: `SpellSession`. Plain JVM rather than Android, so it is tested against the real server. |
+| `spell-client/` | The phone's connection: `SpellSession`, and `JumbleSession` for Jumble. Plain JVM rather than Android, so it is tested against the real server. |
 | `spell-server/` | The lobby server: Ktor on Netty, one WebSocket endpoint, lobbies in memory (`LobbyManager`). |
 
-The app adds only `SpellController` (the network callback and where the seat is saved) and
-`SpellScreen`.
+The app adds only `SpellController` (the network callback and where the seat is saved),
+`SpellScreen` and `JumbleScreen`.
 
 ### The protocol
 
@@ -160,6 +190,7 @@ a future protocol can be served alongside this one.
 | `letters {seq, letters}` | My letters are now these |
 | `length {seq, length}` | Everyone's word length is now this |
 | `saved {seq, words}` | One and Done 2.0, host only: the round's saved words are now these |
+| `jumble {letters}` | Jumble: which words use exactly these letters? Needs no lobby |
 | `leave`, `ping {at}` | |
 
 | Server sends | Meaning |
@@ -167,6 +198,7 @@ a future protocol can be served alongside this one.
 | `lobbies` | The open lobbies, newest first |
 | `joined {lobby, player, token, ack}` | You are seated; `token` takes the seat back later |
 | `state` | The whole lobby: length, every player's letters, online and `ack`, the held `word`, the ranked words, and the `mode`, `host` and `saved` words |
+| `jumbled {letters, words, total}` | Jumble: the words that use exactly `letters`, alphabetical, to the asker alone |
 | `error {code}`, `left`, `pong {at}` | |
 
 Two choices carry most of the weight:
@@ -300,7 +332,7 @@ has happened, `sudo rmdir` the directory, copy the file in, and start the app ag
 Then Apps → Discover Apps → Custom App → Install via YAML, and paste
 [`spell-server/truenas.yaml`](../spell-server/truenas.yaml). It publishes port 8422, mounts
 only the word list, read-only, and runs as the apps user with a read-only filesystem and
-no capabilities. Its log should open with `120018 words from csw24.txt`.
+no capabilities. Its log should open with `280760 words from csw24.txt`.
 
 ### 3. A hostname, and TLS
 
@@ -365,13 +397,13 @@ Environment variables on the container; the defaults are what the YAML relies on
 ./gradlew :spell:test :spell-client:test :spell-server:test
 ```
 
-- `LexiconTest`: the word finder, including the brief's example, and against the real
-  CSW24 list when it is present (skipped in CI, where it is not).
+- `LexiconTest`: the word finder, including the brief's example, Jumble's anagrams, and
+  against the real CSW24 list when it is present (skipped in CI, where it is not).
 - `ProtocolTest`: every message round-trips; junk and out-of-range values are refused.
 - `LobbyManagerTest`: seats, the grace period, resuming and taking over, the caps, against
   a fake clock and no sockets.
-- `EndToEndTest`: everything above, for real, through `FlakyProxy`; plus the server's
-  defences tried from a raw socket.
+- `EndToEndTest`: everything above, for real, through `FlakyProxy`, Jumble's session
+  included; plus the server's defences tried from a raw socket.
 - `LiveServerTest`: the deployed server, when pointed at one.
 
 To run the server locally, from the repo:

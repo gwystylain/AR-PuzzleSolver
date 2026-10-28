@@ -350,6 +350,8 @@ class SpellSession(
             is ServerMessage.Joined -> joined(message)
             is ServerMessage.State -> if (message.lobby == lobby) state(message)
             ServerMessage.Left -> Unit
+            // Jumble's, and never asked for on this connection.
+            is ServerMessage.Jumbled -> Unit
             is ServerMessage.Error -> failed(message)
             is ServerMessage.Pong -> {
                 val sample = (lastHeard / 1000 - message.at) / 1000.0

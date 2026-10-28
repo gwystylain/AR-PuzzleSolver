@@ -6,7 +6,7 @@ the instant the solution becomes determined, which for some puzzle types is well
 before you have finished scanning.
 
 Native Kotlin + ARCore. Every solver is fully local: no network calls, no cloud anchors,
-no model downloads. The one online mode, Spellinator, talks only to a lobby server you run
+no model downloads. The two online modes, Spellinator and Jumble, talk only to a lobby server you run
 yourself. Optimised for throughput; power consumption is deliberately not a
 consideration.
 
@@ -29,9 +29,9 @@ AR][arcore] installed — an x86 emulator will not run it, since ARCore ships ar
 ABIs only. Because the APK does not come from the Play Store, Android will ask
 you to allow installing unknown apps for whichever app opened the file.
 
-Nothing leaves the device except in Spellinator, which connects to your own lobby server
+Nothing leaves the device except in Spellinator and Jumble, which connect to your own lobby server
 and nothing else (see [docs/SPELLINATOR.md](docs/SPELLINATOR.md)). The camera permission is
-the only one that prompts; network access, for Spellinator, is granted at install.
+the only one that prompts; network access, for Spellinator and Jumble, is granted at install.
 
 Building it yourself, or cutting a new release, is covered in
 [docs/RELEASING.md](docs/RELEASING.md).
@@ -105,7 +105,7 @@ Their stages are fixed, so the app carries a transcription of every level, works
 pressing order for each stage, and splits it between the players so that independent
 parts are pressed at the same time. See [docs/STRATEGY_PUZZLE.md](docs/STRATEGY_PUZZLE.md).
 
-**Spellinator** has no camera either, and is the one mode that is online. Each player types
+**Spellinator** has no camera either, and is online. Each player types
 the letters they can see on their own phone, the phones meet in a lobby on a server run in
 Docker on the NAS, and every phone shows a word of the chosen length, from the Collins
 word list, that the team's letters spell together, each letter in the colour of the player
@@ -115,6 +115,12 @@ twice, the suggestions spending the rarest letters first. Lobbies need no
 accounts: host, and the others tap to join. The design is built around phones on cellular
 dropping their connection, and around latency: a keypress reaches the other phones in one
 round trip. See [docs/SPELLINATOR.md](docs/SPELLINATOR.md).
+
+**Jumble** is the same word list played alone. One player types the jumbled letters, every
+one of them, and the phone shows each word that uses all of them exactly once -- no length
+to pick, since the word is as long as the letters, and repeats count. It asks Spellinator's
+server, since that is where the word list lives, and needs no lobby. See
+[docs/SPELLINATOR.md](docs/SPELLINATOR.md#jumble).
 
 Gems, Terminal and Spot do **not** use the AR pipeline. All three own the camera directly
 and read each frame in image space with no pose, wall fit or canvas. Gems does because
@@ -243,7 +249,8 @@ core/                      pure JVM, no Android -- unit-testable in milliseconds
   PuzzleEngine.kt          detect -> read -> solve, platform-free
 spell/                     Spellinator's protocol, limits and word finder, shared by both
                            ends -- see docs/SPELLINATOR.md
-spell-client/              the phone's connection to the lobby server: reconnects, resumes
+spell-client/              the phone's connection to the lobby server: reconnects, resumes;
+                           and Jumble's, which asks it for anagrams
 spell-server/              the lobby server (Ktor), its Dockerfile and TrueNAS app YAML
 app/
   frame/                   FrameSource: live ARCore, AR dataset replay, plain video,
@@ -255,9 +262,9 @@ app/
                            AutoExposure -- solver-driven exposure search
   ui/                      Compose: the landing page the rooms are picked from, the
                            scanning HUD with the Gems target controls, the
-                           Strategy guide screen and the Spellinator lobby
+                           Strategy guide screen, the Spellinator lobby and Jumble
   record/                  where recordings live
-  spell/                   Spellinator's network callback and saved seat
+  spell/                   Spellinator's and Jumble's network callback, and the saved seat
 tools/
   strategy/                the room transcriptions and the script that turns them into
                            core's bundled stage file

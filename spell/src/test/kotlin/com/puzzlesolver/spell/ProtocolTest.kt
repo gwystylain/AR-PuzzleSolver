@@ -23,6 +23,7 @@ class ProtocolTest {
             ClientMessage.SetLetters(7, "TOP"),
             ClientMessage.SetLength(8, 6),
             ClientMessage.Ping(123456789L),
+            ClientMessage.Jumble("TTEELR"),
         )
         for (m in messages) assertEquals(m, Protocol.decodeClient(Protocol.encode(m)))
     }
@@ -44,6 +45,8 @@ class ProtocolTest {
             ServerMessage.Left,
             ServerMessage.Error(ErrorCode.LOBBY_FULL, "full"),
             ServerMessage.Pong(5),
+            ServerMessage.Jumbled("TTEELR", listOf("LETTER"), 1),
+            ServerMessage.Jumbled("XQ", emptyList(), 0),
         )
         for (m in messages) assertEquals(m, Protocol.decodeServer(Protocol.encode(m)))
     }
@@ -119,6 +122,9 @@ class ProtocolTest {
             ClientMessage.SetLetters(-1, "TOP"),
             ClientMessage.SetLength(1, 2),
             ClientMessage.SetLength(1, 9),
+            ClientMessage.Jumble("listen"),
+            ClientMessage.Jumble("LIST N"),
+            ClientMessage.Jumble("A".repeat(Rules.MAX_LETTERS + 1)),
         )
         for (m in bad) assertNotNull(m.problem(), m.toString())
 
@@ -128,6 +134,8 @@ class ProtocolTest {
             ClientMessage.SetLetters(1, "A".repeat(Rules.MAX_LETTERS)),
             ClientMessage.SetLength(1, 3),
             ClientMessage.SetLength(1, 8),
+            ClientMessage.Jumble(""),
+            ClientMessage.Jumble("A".repeat(Rules.MAX_LETTERS)),
         )
         for (m in good) assertNull(m.problem(), m.toString())
     }

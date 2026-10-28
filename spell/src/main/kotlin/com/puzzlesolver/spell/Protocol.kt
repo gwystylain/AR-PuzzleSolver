@@ -97,9 +97,20 @@ sealed interface ClientMessage {
     @SerialName("ping")
     data class Ping(val at: Long) : ClientMessage
 
+    /**
+     * Jumble: which words use exactly [letters], every one of them once? Answered with
+     * [ServerMessage.Jumbled], to this phone alone. Needs no lobby and changes nothing on the
+     * server, so it is sent whole each time the letters change, and sending one twice is
+     * harmless.
+     */
+    @Serializable
+    @SerialName("jumble")
+    data class Jumble(val letters: String) : ClientMessage
+
     /** Why the server should refuse this message, or null if it is well formed. */
     fun problem(): String? = when (this) {
         Browse, Leave, is Host, is Ping -> null
+        is Jumble -> if (Rules.isValidLetters(letters)) null else "letters must be at most ${Rules.MAX_LETTERS} of A-Z"
         is Join -> if (LobbyCode.isValid(lobby)) null else "bad lobby code"
         is Resume -> when {
             !LobbyCode.isValid(lobby) -> "bad lobby code"
@@ -183,6 +194,15 @@ sealed interface ServerMessage {
     @Serializable
     @SerialName("pong")
     data class Pong(val at: Long) : ServerMessage
+
+    /**
+     * The answer to a [ClientMessage.Jumble]: [words] are the first of [total] words that use
+     * exactly [letters], alphabetical, as [Lexicon.anagrams] finds them. [letters] are
+     * echoed as they were asked, so the phone can tell which of its questions this answers.
+     */
+    @Serializable
+    @SerialName("jumbled")
+    data class Jumbled(val letters: String, val words: List<String>, val total: Int) : ServerMessage
 }
 
 @Serializable

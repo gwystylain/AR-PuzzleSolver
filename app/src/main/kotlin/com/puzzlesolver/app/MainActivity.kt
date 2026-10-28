@@ -50,6 +50,7 @@ import com.puzzlesolver.app.mines.MinesController
 import com.puzzlesolver.app.ui.LandingScreen
 import com.puzzlesolver.app.ui.PuzzleSolverTheme
 import com.puzzlesolver.app.ui.ScanScreen
+import com.puzzlesolver.app.ui.JumbleScreen
 import com.puzzlesolver.app.ui.SpellScreen
 import com.puzzlesolver.app.ui.SpotScreen
 import com.puzzlesolver.app.ui.MinesScreen
@@ -126,6 +127,13 @@ class MainActivity : ComponentActivity() {
     private lateinit var spell: SpellController
 
     /**
+     * Whether Jumble is on screen. The camera is off for it as for Spellinator, whose
+     * server and [SpellController] it shares, and the landing page going up over it does
+     * not close it either: the letters typed are still there after a stray Back.
+     */
+    private var jumbleOpen by mutableStateOf(false)
+
+    /**
      * Spot's round: the photos taken so far and, once there are six, what differs in each.
      * Kept across a trip to another room and back, like Spellinator's seat; Reset is how a
      * round is thrown away.
@@ -139,8 +147,8 @@ class MainActivity : ComponentActivity() {
      */
     private lateinit var mines: MinesController
 
-    /** A guide or Spellinator is up, so the camera is off. */
-    private val cameraFree: Boolean get() = guideRoom != null || spellOpen
+    /** A guide, Spellinator or Jumble is up, so the camera is off. */
+    private val cameraFree: Boolean get() = guideRoom != null || spellOpen || jumbleOpen
 
     /**
      * Whether the landing page is up. True at launch, cleared by any mode choice --
@@ -475,6 +483,7 @@ class MainActivity : ComponentActivity() {
                 val spellState by spell.state.collectAsState()
                 val spellServer by spell.server.collectAsState()
                 val spellOneAndDone by spell.oneAndDone.collectAsState()
+                val jumbleState by spell.jumble.collectAsState()
                 val spotState by spot.state.collectAsState()
                 val minesState by mines.state.collectAsState()
                 // Back from the HUD or a guide goes to the landing page, which is the
@@ -555,6 +564,17 @@ class MainActivity : ComponentActivity() {
                                     onNewRound = { spell.newRound() },
                                 )
                             }
+                        } else if (jumbleOpen) {
+                            {
+                                JumbleScreen(
+                                    state = jumbleState,
+                                    server = spellServer,
+                                    onType = { spell.typeJumble(it) },
+                                    onBackspace = { spell.backspaceJumble() },
+                                    onClear = { spell.clearJumble() },
+                                    onSetServer = { spell.setServer(it) },
+                                )
+                            }
                         } else guideRoom?.let { room -> {
                             val levels = guideLevels.getValue(room)
                             StrategyScreen(
@@ -605,6 +625,7 @@ class MainActivity : ComponentActivity() {
                         onSelectMode = { selectPuzzleMode(it) },
                         onSelectGuide = { enterGuide(it) },
                         onSelectSpell = { enterSpell() },
+                        onSelectJumble = { enterJumble() },
                         onSelectSpot = { selectPuzzleMode(SpotFinder.ID) },
                         debug = showDebugPanel,
                         onToggleDebug = { showDebugPanel = !showDebugPanel },
@@ -667,8 +688,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // A guide or Spellinator keeps the camera off across a background trip as well as
-        // within one.
+        // A guide, Spellinator or Jumble keeps the camera off across a background trip as
+        // well as within one.
         if (!cameraFree) resumeScanning()
         ContextCompat.registerReceiver(
             this,
@@ -719,6 +740,7 @@ class MainActivity : ComponentActivity() {
         showLanding = false
         val wasScanning = !cameraFree
         closeSpell()
+        closeJumble()
         guideRoom = room
         if (wasScanning) pauseScanning()
         loadStrategyGuides()
@@ -729,6 +751,7 @@ class MainActivity : ComponentActivity() {
         showLanding = false
         val wasScanning = !cameraFree
         guideRoom = null
+        closeJumble()
         spellOpen = true
         if (wasScanning) pauseScanning()
         spell.open()
@@ -740,11 +763,29 @@ class MainActivity : ComponentActivity() {
         spell.close()
     }
 
-    /** Back to a camera mode from a guide or Spellinator. */
+    private fun enterJumble() {
+        Log.i(TAG, "mode selected: jumble")
+        showLanding = false
+        val wasScanning = !cameraFree
+        guideRoom = null
+        closeSpell()
+        jumbleOpen = true
+        if (wasScanning) pauseScanning()
+        spell.openJumble()
+    }
+
+    private fun closeJumble() {
+        if (!jumbleOpen) return
+        jumbleOpen = false
+        spell.closeJumble()
+    }
+
+    /** Back to a camera mode from a guide, Spellinator or Jumble. */
     private fun leaveCameraFree() {
         if (!cameraFree) return
         guideRoom = null
         closeSpell()
+        closeJumble()
         resumeScanning()
     }
 

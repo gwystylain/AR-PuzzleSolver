@@ -108,6 +108,13 @@ class LobbyManager(
             peer.send(Protocol.encode(ServerMessage.Pong(message.at)))
             return
         }
+        if (message is ClientMessage.Jumble) {
+            // Jumble is played alone: no lobby, nothing kept, and the word list never changes,
+            // so the answer needs no lock and goes to the asker only, seated or not.
+            val found = lexicon.anagrams(message.letters)
+            peer.send(Protocol.encode(ServerMessage.Jumbled(message.letters, found.words, found.total)))
+            return
+        }
         synchronized(lock) {
             when (message) {
                 ClientMessage.Browse -> browse(peer)
@@ -126,7 +133,7 @@ class LobbyManager(
                     lobby.length = message.length
                 }
                 is ClientMessage.SetSaved -> save(peer, message)
-                is ClientMessage.Ping -> Unit
+                is ClientMessage.Ping, is ClientMessage.Jumble -> Unit
             }
         }
     }

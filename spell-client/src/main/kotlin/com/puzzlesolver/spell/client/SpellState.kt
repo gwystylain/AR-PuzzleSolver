@@ -70,6 +70,23 @@ data class Room(
     val done: Boolean get() = mode == GameMode.ONE_AND_DONE && saved.size >= Rules.ONE_AND_DONE_WORDS
 }
 
+/** Everything the Jumble screen draws, published by [JumbleSession]. */
+data class JumbleState(
+    val link: Link = Link.Idle,
+    /** The letters as typed, in the order typed. */
+    val letters: String = "",
+    /** The first of [total] words that use exactly [letters], each once; alphabetical. */
+    val words: List<String> = emptyList(),
+    val total: Int = 0,
+    /**
+     * Whether [words] are the answer for [letters]. False while the server is being asked;
+     * true with no words for too few letters to be a word, since there is nothing to ask.
+     */
+    val current: Boolean = true,
+    /** The server is older than Jumble and cannot answer it. */
+    val unsupported: Boolean = false,
+)
+
 /** Something to tell the player once, e.g. that their lobby has closed. */
 data class Notice(val id: Long, val text: String)
 
