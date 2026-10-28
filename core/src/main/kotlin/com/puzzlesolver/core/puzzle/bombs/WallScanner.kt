@@ -283,10 +283,12 @@ class WallScanner(
         var sum = 0L
         for (v in luma.data) sum += v.toInt() and 0xFF
         frameBrightness = sum.toFloat() / luma.data.size
+        val lift = liftDim(luma)
+        val lifted = if (lift > 1f) " lift=%.1f".format(lift) else ""
         val lattice = findLattice(luma)
         if (lattice == null) {
             wallInView = false
-            log("lattice t=${ms(t)} none: $lastFailure")
+            log("lattice t=${ms(t)} none: $lastFailure$lifted")
             return
         }
         wallInView = true
@@ -364,7 +366,7 @@ class WallScanner(
         }
 
         log(
-            "lattice t=${ms(t)} $how off=$offset discs=${lattice.discs} cols=${lattice.columns} " +
+            "lattice t=${ms(t)} $how$lifted off=$offset discs=${lattice.discs} cols=${lattice.columns} " +
                 "pitch=%.1f roll=%.1f v=%.0f,%.0f lit=$litHere cols=%d..%d end=${lattice.endInView}".format(
                     lattice.pitch, Math.toDegrees(lattice.roll.toDouble()), vx, vy,
                     cells.minOf { it.col } - (green ?: 0), cells.maxOf { it.col } - (green ?: 0),
@@ -877,6 +879,48 @@ class WallScanner(
         a[slot] = my - slope * mx
     }
 
+    /**
+     * Brightens a dim lattice frame in place, before the buttons are looked for in it.
+     *
+     * The button finder keeps a pixel only if it clears its local background by a fixed
+     * twelve levels -- right for a well-exposed frame, where an unlit button sits far above
+     * the panel, and the whole reason a dim one fails. In the room on 2026-10-27, with the
+     * lattice frames at the brightest the camera was then allowed, the unlit buttons sat at
+     * 15-30 on a panel of 5, half of them under that line, and not one frame in 147 found
+     * the wall. The same frames scaled by two found it in 145, and lifted by this in 146.
+     * Scaling only stretches what the sensor recorded -- noise comes up with the buttons --
+     * so it worked because the fixed line, not the noise, was what stood in the way.
+     *
+     * Lifts the 99th percentile toward [LIFT_TARGET], at most [MAX_LIFT] times. Nothing
+     * below [MIN_LIFT_P99]: a frame that dark is the floor or a pocket, and stretching it
+     * would only hand the finder its noise. Only the copy the finder reads is changed;
+     * every button's face and colour still come off the frame as it arrived, and so does
+     * the brightness the camera is steered by -- the camera should still be asked for the
+     * real light, which is better than any stretch of it.
+     *
+     * @return the factor applied, 1 when the frame was left alone.
+     */
+    private fun liftDim(luma: GrayImage): Float {
+        val histogram = IntArray(256)
+        for (v in luma.data) histogram[v.toInt() and 0xFF]++
+        val wanted = (luma.data.size * 0.99).toLong()
+        var seen = 0L
+        var p99 = 255
+        for (level in 0 until 256) {
+            seen += histogram[level]
+            if (seen >= wanted) {
+                p99 = level
+                break
+            }
+        }
+        if (p99 < MIN_LIFT_P99 || p99 >= LIFT_TARGET) return 1f
+        val gain = (LIFT_TARGET / p99.toFloat()).coerceAtMost(MAX_LIFT)
+        val scale = IntArray(256) { (it * gain).roundToInt().coerceAtMost(255) }
+        val data = luma.data
+        for (i in data.indices) data[i] = scale[data[i].toInt() and 0xFF].toByte()
+        return gain
+    }
+
     // --- Small things --------------------------------------------------------------
 
     private fun lumaFor(image: RgbImage): GrayImage {
@@ -987,5 +1031,15 @@ class WallScanner(
         private const val MIN_MARGIN = 0.15f
 
         private const val MAX_ROLL = 0.35f
+
+        /**
+         * See [liftDim]. Swept on the pan of 2026-10-27 replayed at one to four times its
+         * light: a target of 55 found the wall in 85% of its frames as shot, 75 in 98%, and
+         * 95 in all but one at every brightness. A well-exposed frame sits far above it --
+         * the reference pan's unlit buttons are near 190 -- and is left alone.
+         */
+        private const val LIFT_TARGET = 95f
+        private const val MAX_LIFT = 3f
+        private const val MIN_LIFT_P99 = 10
     }
 }

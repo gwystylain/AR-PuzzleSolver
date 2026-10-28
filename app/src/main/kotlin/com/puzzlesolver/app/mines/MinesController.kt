@@ -85,6 +85,8 @@ class MinesController(
     private var lastSnapshotNanos = 0L
     private var lastCameraChangeNanos = 0L
     private var latticeSteps = 0
+    private var steeredTo: CameraTuning.Lattice? = null
+    private var limitLogged = false
     private var aimingSinceNanos = 0L
 
     @Volatile
@@ -257,15 +259,26 @@ class MinesController(
      * Keeps the lattice frames bright enough to see the unlit buttons, while aiming only.
      *
      * One stop at a time, a second and a half apart so each change is measured before
-     * the next, and never more than two stops either way: the default is set off the
-     * reference footage, and a room that needs more than that is one to look at rather
-     * than chase. Never during a scan, because a retune stops the camera for a moment
-     * and the count cannot afford a gap.
+     * the next. Up to three stops brighter and two darker than the default, which was set
+     * off reference footage of a brighter room than the one on 2026-10-27: there, two
+     * stops up (1/125 s at ISO 6400) left the unlit buttons at 15-30 and the wall unseen,
+     * and replaying that pan at twice the light found it in 145 frames of 147. The third
+     * stop is that doubling -- 1/62 s at ISO 6400, as long as a lattice frame may run
+     * before a pan smears it -- and the scanner lifts a dim frame for the rest (see
+     * WallScanner.liftDim). Never during a scan, because a retune stops the camera for a
+     * moment and the count cannot afford a gap.
      */
     private fun steerLattice(progress: WallScanner.Progress, now: Long) {
         if (!autoLattice) return
         val t = tuning() ?: return
-        if (t.settings.lattice == null) return
+        val current = t.settings.lattice ?: return
+        // Counted from wherever the lattice frames last started. Leaving Mines turns them
+        // off and coming back starts them at the default again; a count carried across
+        // that would hold a second visit at the default, already "three stops up".
+        if (current != steeredTo) {
+            latticeSteps = 0
+            limitLogged = false
+        }
         if (now - lastCameraChangeNanos < STEER_INTERVAL_NANOS) return
         val brighter = when {
             progress.wallInView && progress.buttonBrightness in 0f..DIM_BUTTONS -> true
@@ -278,10 +291,27 @@ class MinesController(
                 progress.litInView >= MIN_LIT_FOR_DARK -> true
             else -> return
         }
-        if (brighter && latticeSteps >= MAX_LATTICE_STEPS) return
-        if (!brighter && latticeSteps <= -MAX_LATTICE_STEPS) return
+        val atLimit = if (brighter) latticeSteps >= MAX_BRIGHTER_STEPS else latticeSteps <= -MAX_DARKER_STEPS
+        if (atLimit) {
+            // Said once per stretch at the limit. Without it a room too dark even here
+            // leaves nothing in the log but the last change -- which is how 2026-10-27
+            // had to be worked out from the camera's retunes.
+            if (!limitLogged) {
+                limitLogged = true
+                Log.w(
+                    TAG,
+                    "lattice wants ${if (brighter) "brighter" else "darker"} but is at its limit: " +
+                        "buttons=%.0f frame=%.0f wall=${progress.wallInView} lit=${progress.litInView} at %s".format(
+                            progress.buttonBrightness, progress.frameBrightness, current.describe(),
+                        ),
+                )
+            }
+            return
+        }
         if (t.nudgeLattice(brighter)) {
             latticeSteps += if (brighter) 1 else -1
+            steeredTo = t.settings.lattice
+            limitLogged = false
             lastCameraChangeNanos = now
             Log.i(
                 TAG,
@@ -439,7 +469,8 @@ class MinesController(
         const val BRIGHT_BUTTONS = 205f
         const val BLACK_FRAME = 12f
         const val MIN_LIT_FOR_DARK = 2
-        const val MAX_LATTICE_STEPS = 2
+        const val MAX_BRIGHTER_STEPS = 3
+        const val MAX_DARKER_STEPS = 2
 
         /** A minute at twenty frames a second, both kinds together. */
         const val MAX_SAVED_FRAMES = 1200

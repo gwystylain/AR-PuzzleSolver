@@ -49,9 +49,11 @@ The preview shows only the lattice frames, because a preview strobing between th
 is unwatchable. Each frame is tagged with its request and read back by sensor timestamp;
 the two kinds get a ready slot each in the hand-off, because one slot refilled at the
 preview's rate would only ever hold one kind. While aiming, the lattice exposure steers
-itself a stop at a time (at most two either way) to keep the unlit buttons between 45 and
-205; during a scan it is left alone, because a retune stops the camera for a moment and
-the count cannot afford a gap. A camera without manual control sends one exposure, every
+itself a stop at a time (up to three brighter, two darker) to keep the unlit buttons
+between 45 and 205; during a scan it is left alone, because a retune stops the camera for
+a moment and the count cannot afford a gap. A lattice frame still too dim is lifted by
+the scanner before the buttons are looked for in it (`WallScanner.liftDim`), and the
+steer logs when it wants more light than it may take. A camera without manual control sends one exposure, every
 frame is a lattice frame, and colour falls back to the glow (below).
 
 ### Counting the columns
@@ -162,13 +164,42 @@ Run on the CPH2655 on 2026-10-23, pointed at a desk and a monitor rather than th
 - Some seconds after a scan ends, the phone's own clocks drop and both costs roughly
   triple; the rate stays above 20 frames a second.
 
+### In the room, 2026-10-27
+
+The first scan of the wall itself found nothing. The colour frames were right -- the
+LED-wall preset, only the lit buttons showing -- but the room was far darker than the
+reference video the lattice default was set from. The steer took both of its stops in
+five seconds (1/250 s at ISO 3200 to 1/125 s at ISO 6400) and stopped at its limit, with
+the unlit buttons at 15-30 on a panel of 5. The button finder keeps a pixel only if it
+clears its local background by a fixed twelve levels, and half the buttons sat under that
+line: not one lattice frame in 147 found a column of seven, and the green was never seen.
+
+Replaying that pan at a desk (`MinesReplay`) with the lattice frames scaled up settles
+what it needed: at 1.5 times the light the wall was found in 78 frames of 147, at twice
+the light in 145. So the steer may now take a third stop -- 1/62 s at ISO 6400, as long
+as a lattice frame may run before a pan smears it, and that doubling exactly -- and the
+scanner lifts a dim lattice frame toward a 99th percentile of 95, at most threefold,
+before looking for buttons in it. Lifted, the pan as shot finds the wall in 146 frames of
+147 and the green on the first. Scaling only stretches what the sensor recorded, so this
+works because the fixed line and not the noise was in the way; the camera is still steered
+toward real light, measured on the frame as it arrived. `WallScannerTest` holds the pan's
+first 40 frames (`mines/dim-room`) to finding the wall in 18 of their 20 lattice frames.
+
+Two smaller things came out of it. The steer's step count was never reset, so a second
+visit to Mines in one session would have started at the default already counted three
+stops up, unable to brighten; it is now counted from wherever the lattice frames last
+started. And the steer logged under a tag the phone's log capture did not record, so the
+run left no trace of it; that tag is captured now.
+
 ### Not yet verified
 
-- **A scan of the wall itself**, and with it the scan's cost with buttons in view. Every
-  measurement above was of a view with no wall in it.
+- **A whole scan of the wall itself**, and with it the scan's cost with buttons in view.
+  The one attempt never found the wall (above); the fix is measured on its frames, not
+  on a new run.
 - **Face colours at the colour exposure on this wall**, above.
-- **The lattice exposure's default** is two stops under one auto-exposed video, not a
-  measurement at that setting. The aiming steer is there in case it is wrong.
+- **The lattice exposure's default** is still two stops under one auto-exposed video. The
+  room needed three stops more than that on 2026-10-27; the steer covers the gap in about
+  five seconds of aiming, and the lift covers it before then.
 
 ## How it used to work: the AR overlay
 

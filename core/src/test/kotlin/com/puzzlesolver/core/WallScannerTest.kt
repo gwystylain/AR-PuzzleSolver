@@ -80,6 +80,29 @@ class WallScannerTest {
         assertEquals(null, scanner.result())
     }
 
+    /**
+     * The first scan in the room itself, on 2026-10-27, where the lattice frames came out
+     * dark: the unlit buttons at 15-30 on a panel of 5, at the brightest the camera was
+     * then allowed. On the phone not one lattice frame in 147 found the wall, and the
+     * green was never seen. These are its first 40 frames, both kinds, as the app saved
+     * them.
+     */
+    @Test
+    fun `a dark room's lattice frames are lifted until the wall is found`() {
+        val lines = ArrayList<String>()
+        val scanner = WallScanner(log = { lines.add(it) })
+        for ((image, t, exposure) in MinesFixture.dimRoom()) scanner.offer(image, exposure, t)
+        lines.forEach { println("  $it") }
+
+        val lattice = lines.filter { it.startsWith("lattice ") }
+        val found = lattice.count { !it.contains(" none: ") }
+        assertEquals("lattice frames", 20, lattice.size)
+        assertTrue("the wall was found in $found of ${lattice.size} lattice frames", found >= 18)
+        assertTrue("every lattice frame here is dim enough to lift", lattice.all { it.contains(" lift=") })
+        assertTrue("the green was never found", lines.any { it.startsWith("green found") })
+        assertNotNull(scanner.result())
+    }
+
     @Test
     fun `an unread cell is planned around as a hazard`() {
         val wall = ScannedWall.parse(
@@ -129,6 +152,20 @@ object MinesFixture {
             val (name, t) = line.trim().split(' ')
             val image = SpotFixture.read(loader.getResourceAsStream("mines/pan/$name")!!)
             image to t.toLong()
+        }
+    }
+
+    /** The first 40 frames of the scan in the room on 2026-10-27, lattice and colour. */
+    fun dimRoom(): List<Triple<RgbImage, Long, WallScanner.Exposure>> {
+        val loader = MinesFixture::class.java.classLoader!!
+        val index = loader.getResourceAsStream("mines/dim-room/frames.txt")
+            ?.bufferedReader()?.readLines()
+            ?: error("mines/dim-room is missing from the test resources")
+        return index.filter { it.isNotBlank() }.map { line ->
+            val (name, t, kind) = line.trim().split(' ')
+            val image = SpotFixture.read(loader.getResourceAsStream("mines/dim-room/$name")!!)
+            val exposure = if (kind == "C") WallScanner.Exposure.COLOUR else WallScanner.Exposure.LATTICE
+            Triple(image, t.toLong(), exposure)
         }
     }
 }
