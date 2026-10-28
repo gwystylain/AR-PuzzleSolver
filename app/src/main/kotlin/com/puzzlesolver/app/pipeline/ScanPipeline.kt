@@ -193,6 +193,9 @@ class ScanPipeline(
      */
     val spotExposure = TerminalExposure()
 
+    /** Gives Spot's camera back to its own exposure when the screen is lost too long. */
+    private val spotCameraWatch = SpotCameraWatch()
+
     @Volatile
     private var liveSpotScreen: ScreenLocator.Screen? = null
 
@@ -864,6 +867,7 @@ class ScanPipeline(
                 terminalScanner.reset()
                 terminalExposure.reset()
                 spotExposure.reset()
+                spotCameraWatch.reset()
             }
             // Swapping *away* from the pose-free camera is the one moment that can end a
             // live mode, and it has to be done here rather than in a publisher. The AR
@@ -1083,6 +1087,21 @@ class ScanPipeline(
         if (!tuning.capabilities.available) return
         val pinned = state.get().pinnedPuzzleId
         val active = solverThread.latest?.adapterId
+
+        // Spot and Terminal meter the camera on what they read -- the screen, the displays
+        // -- and can only do that once they can see it. Picked straight after Gems or
+        // Mines they inherited the LED-wall preset, which on 2026-10-27 left the Spot
+        // screen too dark to find: every photo of the round refused with nothing bright
+        // in the middle, so the meter never had a reading to brighten it by. They start
+        // where a fresh launch starts instead, on the camera's own exposure, which in a
+        // dark room over-exposes a lit screen rather than losing it, and meter down.
+        if (pinned == SpotFinder.ID || pinned == TerminalAdapter.ID) {
+            cameraPresetApplied = true
+            if (tuning.update { CameraTuning.Settings() }) {
+                Log.i(TAG, "$pinned active; camera back on its own exposure to meter from")
+            }
+            return
+        }
 
         if (pinned == GemAdapter.ID || active == GemAdapter.ID) {
             cameraPresetApplied = true
@@ -1671,6 +1690,14 @@ class ScanPipeline(
             // rather than racing it. The comparison evens out exposure between photos, so
             // a change mid-round costs nothing there.
             spotExposure.consider(source.tuning, reading)
+            if (spotCameraWatch.consider(source.tuning, screen != null)) {
+                spotExposure.reset()
+                Log.i(
+                    TAG,
+                    "spot: no screen for ${SpotCameraWatch.BLIND_MILLIS / 1000}s or more at luma " +
+                        "$liveMeanLuma; camera back on its own exposure",
+                )
+            }
         } finally {
             source.releaseView()
         }
@@ -2142,6 +2169,7 @@ class ScanPipeline(
             terminalScanner.reset()
             terminalExposure.reset()
             spotExposure.reset()
+            spotCameraWatch.reset()
             // Spot has no adapter: it is not a wall the engine reads. Mines has one, but the
             // live scan reads the wall now, not the engine.
             when (id) {
