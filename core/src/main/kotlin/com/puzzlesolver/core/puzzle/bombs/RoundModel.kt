@@ -1,10 +1,20 @@
 package com.puzzlesolver.core.puzzle.bombs
 
 /**
- * Exact damage for a set of mines, maintained incrementally as mines go down and
- * come back up.
+ * Damage for a set of mines, maintained incrementally as mines go down and come back
+ * up -- the fast path the search runs on.
  *
- * The point of this class is that annihilation has a closed form. A mine's ray in
+ * **Under the practice game's rules** ([BombRules] defaults) every ray is live and is
+ * credited to the first button in its path. That is a guaranteed *under*-count: in
+ * the game a button that goes down partway through lets later rays on to whatever is
+ * behind it, so the real damage is everything counted here and possibly more (see
+ * `RoundModelAgreementTest`). The search can therefore trust "cleared" from this
+ * class. It cannot trust "safe", because a ray let through can reach a hazard this
+ * class never sees -- so every round the planner accepts goes through
+ * [Detonation.settled] first.
+ *
+ * **Under [BombRules.ROOM_AS_FIRST_ASSUMED]** it is exact, because annihilation has a
+ * closed form. A mine's ray in
  * direction `d` is lost **exactly when** another mine sits along `d` with no button
  * blocking the way between them -- and when that happens the neighbour loses its
  * ray back along `-d` as well. Nothing else in the tick-by-tick behaviour affects
@@ -60,6 +70,8 @@ class RoundModel(
 
     private val targets = board.liveTargets()
 
+    private val annihilate = board.rules.opposingRaysAnnihilate
+
     init {
         for (t in targets) shortfall += board.hp[t]
     }
@@ -104,7 +116,7 @@ class RoundModel(
         state[cell] = CHOSEN.toByte()
         chosen[chosenCount++] = cell
         for (d in 0 until Dir.COUNT) {
-            val neighbour = nearestMine(cell, d)
+            val neighbour = if (annihilate) nearestMine(cell, d) else -1
             if (neighbour < 0) {
                 rayLive[cell * Dir.COUNT + d] = true
                 addHit(los.blockerFrom(cell, d), +1)

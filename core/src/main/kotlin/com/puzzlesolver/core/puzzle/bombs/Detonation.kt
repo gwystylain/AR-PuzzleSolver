@@ -4,16 +4,22 @@ package com.puzzlesolver.core.puzzle.bombs
  * Fires every mine on a board and reports exactly what got hit.
  *
  * This is a tick-by-tick simulation rather than eight ray-casts per mine, and it has
- * to be. Rays interact: two mines on a common line send rays toward each other, the
- * rays meet in open space and vaporise, and neither reaches the far side. That is a
- * property of *when* rays arrive, not of what is standing in the way, so there is no
- * static line-of-sight table that captures it.
+ * to be, because what a ray hits depends on *when* it gets there. Under the practice
+ * game's rules (see [BombRules]) a button that goes down mid-detonation stops blocking
+ * at once, so a ray arriving at it a step later carries on to whatever is behind it --
+ * another button, or a red hazard. No static line-of-sight table captures that.
  *
- * One ordering decision inside the tick is load-bearing: damage resolves *before*
- * annihilation. Two opposing rays converging on the same white button both land on
- * it and both deal damage -- they never get the chance to meet. If it were the other
- * way round, a blue button flanked by two mines could never be cleared in a single
- * detonation, which would be wrong.
+ * Rays reaching one button on the same step are taken in ray order -- mine by mine, in
+ * the order given, then direction by direction -- and the first ones use up its hit
+ * points. That is how the practice game does it, and it means the outcome can depend on
+ * the order the bombs went down. [Result.contested] counts the rays it depended on, and
+ * `reverse` runs the same detonation with every such tie broken the other way, so a
+ * caller can check that a plan works however the room breaks them.
+ *
+ * The room as first assumed ([BombRules.ROOM_AS_FIRST_ASSUMED]) is still here: spent
+ * buttons blocking to the end, and opposing rays meeting in open space and vaporising,
+ * with damage resolved *before* the meeting so a blue flanked by two mines still
+ * takes both hits.
  *
  * Not thread-safe; the planner holds one per search thread and reuses it.
  */
@@ -39,6 +45,14 @@ class Detonation(private val maxRays: Int = 1024) {
          * damage elsewhere makes up for it.
          */
         @JvmField val hazardHits: Int,
+        /**
+         * Rays that carried on through a button only because another ray reached it
+         * first *on the same step*. Which ray that was is down to processing order, so
+         * any number above zero means the outcome is order-dependent.
+         */
+        @JvmField val contested: Int = 0,
+        /** The most rays to reach one button on one step where some of them carried on. */
+        @JvmField val maxContenders: Int = 0,
     ) {
         val losesGame: Boolean get() = hazardHits > 0
 
@@ -58,11 +72,22 @@ class Detonation(private val maxRays: Int = 1024) {
     private var headOccupy = IntArray(0)
     private var touched = IntArray(0)
 
+    // Per detonation, for buttons going down partway through: hit points left, the
+    // step each went down on, and how many rays reached it on the current step.
+    private var left = IntArray(0)
+    private var downAt = IntArray(0)
+    private var arrivalTick = IntArray(0)
+    private var arrivals = IntArray(0)
+
     private fun ensure(cellCount: Int) {
         if (headEnter.size < cellCount) {
             headEnter = IntArray(cellCount) { -1 }
             headOccupy = IntArray(cellCount) { -1 }
             touched = IntArray(cellCount * 2)
+            left = IntArray(cellCount)
+            downAt = IntArray(cellCount)
+            arrivalTick = IntArray(cellCount)
+            arrivals = IntArray(cellCount)
         }
     }
 
@@ -73,11 +98,22 @@ class Detonation(private val maxRays: Int = 1024) {
     /**
      * Fires [mines] on [board]. Mines already on the board are included automatically,
      * because pressing green fires everything that is red, not only what we just placed.
+     *
+     * [reverse] takes the rays in the opposite order wherever several reach one button
+     * on the same step, which breaks every such tie the other way.
      */
-    fun fire(board: BombBoard, mines: IntArray, tracePaths: Boolean = false): Result {
+    fun fire(board: BombBoard, mines: IntArray, tracePaths: Boolean = false, reverse: Boolean = false): Result {
         val all = mergeMines(board, mines)
         val cells = board.cellCount
         ensure(cells)
+        val passThrough = !board.rules.destroyedButtonsBlockUntilRoundEnd
+        if (passThrough) {
+            System.arraycopy(board.hp, 0, left, 0, cells)
+            java.util.Arrays.fill(downAt, 0, cells, 0)
+            java.util.Arrays.fill(arrivalTick, 0, cells, 0)
+        }
+        var contested = 0
+        var maxContenders = 0
 
         val rayCount = all.size * Dir.COUNT
         if (rayCount > cur.size) grow(rayCount)
@@ -126,12 +162,33 @@ class Detonation(private val maxRays: Int = 1024) {
 
             // 2. Rays arriving at a blocker land on it and stop. Several rays can land
             //    on the same button in one tick, and each one counts -- that is how a
-            //    blue button gets cleared without a second round.
-            for (i in 0 until rayCount) {
+            //    blue button gets cleared without a second round. Under pass-through,
+            //    a button with no hit points left lets the ray by instead.
+            for (k in 0 until rayCount) {
+                val i = if (reverse) rayCount - 1 - k else k
                 if (!alive[i]) continue
                 val target = nxt[i]
                 if (!board.blocksRays(target)) continue
-                if (board.isLiveTarget(target)) {
+                if (board.isLiveTarget(target) && passThrough) {
+                    if (arrivalTick[target] != tick) {
+                        arrivalTick[target] = tick
+                        arrivals[target] = 0
+                    }
+                    arrivals[target]++
+                    if (left[target] == 0) {
+                        // Already down: on through it. If it only went down this step,
+                        // which ray got through was a matter of order.
+                        if (downAt[target] == tick) {
+                            contested++
+                            if (arrivals[target] > maxContenders) maxContenders = arrivals[target]
+                        }
+                        continue
+                    }
+                    left[target]--
+                    if (left[target] == 0) downAt[target] = tick
+                    damage[target]++
+                    landed++
+                } else if (board.isLiveTarget(target)) {
                     damage[target]++
                     landed++
                 } else if (board.isHazard(target)) {
@@ -155,7 +212,27 @@ class Detonation(private val maxRays: Int = 1024) {
         }
 
         if (pathBuf != null) for (p in pathBuf) paths!!.add(p.toIntArray())
-        return Result(damage, paths ?: emptyList(), annihilated, landed, offBoard, hazardHits)
+        return Result(damage, paths ?: emptyList(), annihilated, landed, offBoard, hazardHits, contested, maxContenders)
+    }
+
+    /**
+     * Fires [mines] and returns the result only if it holds however the room breaks
+     * same-step ties: no ray on a hazard, and the same damage either way. Null if not.
+     *
+     * Every tie is broken one way by the forward order and the other way by the
+     * reverse, so for a single tie between two rays the two runs are every outcome
+     * there is. Anything more tangled than that is refused rather than enumerated: a
+     * plan that needs three rays to arrive in a particular order is not one to hand to
+     * someone pressing buttons.
+     */
+    fun settled(board: BombBoard, mines: IntArray): Result? {
+        val forward = fire(board, mines)
+        if (forward.losesGame) return null
+        if (forward.contested == 0) return forward
+        if (forward.contested > 1 || forward.maxContenders > 2) return null
+        val backward = fire(board, mines, reverse = true)
+        if (backward.losesGame || backward.contested > 1 || !backward.damage.contentEquals(forward.damage)) return null
+        return forward
     }
 
     /**

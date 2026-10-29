@@ -75,6 +75,14 @@ class BombPlanner(
 ) {
     private class OutOfBudget : RuntimeException(null, null, false, false)
 
+    /**
+     * The arbiter. The search runs on [RoundModel], which under the practice game's
+     * rules can under-count damage but can also miss a ray let through a fallen button
+     * onto a hazard; so no round leaves this class without [Detonation.settled]
+     * agreeing it is safe whichever way same-step ties go.
+     */
+    private val sim = Detonation()
+
     private var nodes = 0L
     private var deadline = Long.MAX_VALUE
     private var ranOut = false
@@ -129,7 +137,7 @@ class BombPlanner(
         try {
             for (k in floor..top) {
                 val mines = searchOneRound(board, k) ?: continue
-                bestRounds = listOf(roundOf(board, mines))
+                bestRounds = listOf(roundOf(board, mines) ?: continue)
                 bestMines = k
                 break
             }
@@ -161,9 +169,11 @@ class BombPlanner(
             // nothing at all -- so failing to find a plan must never be reported as
             // there being none. Pass 2 is exhaustive, but only over one detonation and
             // only when the budget stayed inside the range it actually searched.
-            refutedEverySingleRound && maxRounds == 1 -> PlanOutcome.Impossible(
-                "no arrangement of $budget mine(s) clears the board in one detonation"
-            )
+            // Only a proof where the search's model is exact. Under the practice game's
+            // rules a ray can carry on through a fallen button, and arrangements that
+            // need it are outside what the search enumerates.
+            refutedEverySingleRound && maxRounds == 1 && board.rules.destroyedButtonsBlockUntilRoundEnd ->
+                PlanOutcome.Impossible("no arrangement of $budget mine(s) clears the board in one detonation")
 
             ranOut -> PlanOutcome.Unfinished("search hit its time or node limit", null)
             else -> PlanOutcome.Unfinished("no plan found within the search limits", null)
@@ -264,7 +274,7 @@ class BombPlanner(
 
             val mines = model.mines()
             if (model.losesGame) return null
-            val round = roundOf(current, mines)
+            val round = roundOf(current, mines) ?: return null
             val next = current.afterDetonation(round.damage, mines)
             if (next.remainingHitPoints >= current.remainingHitPoints) return null
 
@@ -280,26 +290,33 @@ class BombPlanner(
      *
      * Placements that leave a ray sitting on a hazard are rejected outright rather than
      * scored down. Losing the room is not a cost to be traded against progress, and the
-     * greedy pass has no way to come back and fix it later.
+     * greedy pass has no way to come back and fix it later. The model sees only the
+     * hazards a ray runs straight into, so the best few are also fired for real, and
+     * the first that survives it is taken.
      */
     private fun bestPlacement(board: BombBoard, los: LineOfSight, model: RoundModel): Int? {
         if (++nodes > nodeCap || System.nanoTime() > deadline) throw OutOfBudget()
         val before = model.shortfall
         val hazardBefore = model.hazardHits
-        var bestCell = -1
-        var bestGain = 0
+        val scored = ArrayList<Long>()
         for (p in 0 until board.cellCount) {
             if (!model.isFree(p) || los.reachFrom(p).isEmpty()) continue
             val token = model.choose(p)
             val gain = before - model.shortfall
             val safe = model.hazardHits <= hazardBefore
             model.unchoose(p, token)
-            if (safe && gain > bestGain) {
-                bestGain = gain
-                bestCell = p
-            }
+            // Gain in the high half, cell in the low, so a sort ranks by gain and
+            // breaks ties towards the lower cell as the single pass used to.
+            if (safe && gain > 0) scored.add((gain.toLong() shl 32) or (Int.MAX_VALUE - p).toLong())
         }
-        return if (bestCell < 0) null else bestCell
+        scored.sortDescending()
+        val chosen = model.mines()
+        for ((n, key) in scored.withIndex()) {
+            if (n >= VERIFY_CANDIDATES) break
+            val p = Int.MAX_VALUE - (key and 0xFFFFFFFFL).toInt()
+            if (sim.settled(board, chosen + p) != null) return p
+        }
+        return null
     }
 
     // ---------------------------------------------------------------- one round
@@ -310,14 +327,16 @@ class BombPlanner(
      */
     private fun searchOneRound(board: BombBoard, limit: Int): IntArray? {
         val model = RoundModel(board, LineOfSight(board))
-        return if (dfs(model, limit)) model.mines() else null
+        return if (dfs(board, model, limit)) model.mines() else null
     }
 
-    private fun dfs(model: RoundModel, limit: Int): Boolean {
+    private fun dfs(board: BombBoard, model: RoundModel, limit: Int): Boolean {
         if (++nodes > nodeCap || (nodes and 0x3FF) == 0L && System.nanoTime() > deadline) {
             throw OutOfBudget()
         }
-        if (model.isCleared) return true
+        // Cleared by the model is cleared for real -- it can only under-count -- but
+        // safe by the model is not, so the tick simulation has the last word.
+        if (model.isCleared) return sim.settled(board, model.mines()) != null
 
         val remaining = limit - model.chosenCount
         if (remaining <= 0) return false
@@ -347,7 +366,7 @@ class BombPlanner(
         // sitting on a hazard. There is nothing left to branch on at that point --
         // branching is driven by unsatisfied buttons -- so this line fails the branch
         // rather than claiming it.
-        if (pivot < 0) return model.isCleared
+        if (pivot < 0) return model.isCleared && sim.settled(board, model.mines()) != null
         if ((totalNeed + Dir.COUNT - 1) / Dir.COUNT > remaining) return false
 
         val cands = model.los.candidatesFor(pivot)
@@ -364,7 +383,7 @@ class BombPlanner(
             if (freeCount - i < pivotNeed) break
             val c = free[i]
             val token = model.choose(c)
-            solved = dfs(model, limit)
+            solved = dfs(board, model, limit)
             if (solved) break
             model.unchoose(c, token)
             model.ban(c)
@@ -426,7 +445,7 @@ class BombPlanner(
         if (floor > left) return null
         for (k in floor..minOf(left, EXACT_MAX_MINES)) {
             val mines = searchOneRound(node.board, k) ?: continue
-            return listOf(roundOf(node.board, mines))
+            return listOf(roundOf(node.board, mines) ?: continue)
         }
         return greedyPlan(node.board, left)
     }
@@ -448,11 +467,11 @@ class BombPlanner(
                 if (++nodes > nodeCap || System.nanoTime() > deadline) throw OutOfBudget()
                 val mines = greedyRound(board, los, seed, size)
                 if (mines.size < size) break
-                if (firesOnHazard(board, mines)) {
+                val round = roundOf(board, mines)
+                if (round == null) {
                     size++
                     continue
                 }
-                val round = roundOf(board, mines)
                 val child = board.afterDetonation(round.damage, mines)
                 // A round that removes nothing leaves every line exactly as it was, so
                 // it cannot help a later round. Spending mines on it is pure loss.
@@ -489,16 +508,16 @@ class BombPlanner(
         return model.mines()
     }
 
-    /** Cross-check against the tick simulation: would this round lose the room? */
-    private fun firesOnHazard(board: BombBoard, mines: IntArray): Boolean =
-        Detonation().fire(board, mines).losesGame
-
-    private fun roundOf(board: BombBoard, mines: IntArray): PlannedRound {
-        val model = RoundModel(board, LineOfSight(board))
-        for (m in mines) model.choose(m)
+    /**
+     * What [mines] really do to [board], by the tick simulation -- including whatever a
+     * ray let through a fallen button goes on to hit -- or null if the round would lose
+     * the room, or would only work if the room broke a same-step tie one way.
+     */
+    private fun roundOf(board: BombBoard, mines: IntArray): PlannedRound? {
+        val result = sim.settled(board, mines) ?: return null
         val cleared = ArrayList<Int>()
-        for (t in model.allTargets()) if (model.hits[t] >= board.hp[t]) cleared.add(t)
-        return PlannedRound(mines, model.hits.copyOf(), cleared.toIntArray())
+        for (t in board.liveTargets()) if (result.damage[t] >= board.hp[t]) cleared.add(t)
+        return PlannedRound(mines, result.damage.copyOf(), cleared.toIntArray())
     }
 
     private companion object {
@@ -515,5 +534,12 @@ class BombPlanner(
          * finishing the job, and the beam pays for every size it explores.
          */
         const val MAX_PARTIAL_ROUND = 4
+
+        /**
+         * How many of the best-scoring placements are fired for real before greedy
+         * gives up on a step. Most steps take the first; the rest are the ones a ray
+         * let through a fallen button would carry onto a hazard.
+         */
+        const val VERIFY_CANDIDATES = 12
     }
 }

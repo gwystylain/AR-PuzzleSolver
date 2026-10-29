@@ -9,20 +9,24 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Pins the mechanics of the room down one rule at a time.
+ * Pins the mechanics down one rule at a time.
  *
  * Every case here is a board whose *geometry* forces the answer -- a ray either
  * reaches a button or it provably cannot -- rather than a number someone tuned.
  *
- * Three of them carry most of the weight. `two mines either side of a blue` fixes the
- * order of damage and annihilation inside a tick. The even- and odd-distance pair fix
- * annihilation itself, and each is built so that the no-annihilation model would give
- * a visibly different number. Get any of the three backwards and the solver emits
- * plans that look reasonable on screen and fail on the wall.
+ * The cases that hold under any rule set use the defaults, which are the practice
+ * game's; `WebGameRulesTest` has the boards that tell its rules apart. The rest pin
+ * the room as first assumed, [OLD] -- head-on rays vaporising, spent buttons blocking
+ * to the end -- which is still the simulator's other mode. There, three cases carry
+ * the weight. `two mines either side of a blue` fixes the order of damage and
+ * annihilation inside a tick. The even- and odd-distance pair fix annihilation itself,
+ * each built so that the no-annihilation model would give a different number.
  */
 class DetonationTest {
 
     private val sim = Detonation()
+
+    private val OLD = BombRules.ROOM_AS_FIRST_ASSUMED
 
     private fun fire(board: String, rules: BombRules = BombRules()): Pair<BombBoard, Detonation.Result> {
         val b = BombBoard.parse(board, rules)
@@ -89,28 +93,28 @@ class DetonationTest {
     }
 
     @Test
-    fun `mines an even distance apart meet on a cell and vaporise`() {
+    fun `old rules - mines an even distance apart meet on a cell and vaporise`() {
         // Mines at columns 0 and 6, white at column 8. The right mine reaches the
         // white. The left mine must not: its eastward ray dies at column 3. Without
         // annihilation it would sail on through the spent mine and the white would
         // take two hits, so the two models give different numbers here.
-        val (b, r) = fire("X.....X.W")
+        val (b, r) = fire("X.....X.W", OLD)
         assertEquals(1, r.damageAt(b.index(8, 0)))
         assertTrue("the facing pair should have died", r.annihilated >= 2)
     }
 
     @Test
-    fun `mines an odd distance apart trade cells and still vaporise`() {
+    fun `old rules - mines an odd distance apart trade cells and still vaporise`() {
         // Distance 5, so the rays never share a cell -- they swap. Handling only the
         // same-cell case would let them tunnel through each other and the white at
         // column 7 would take two hits instead of one.
-        val (b, r) = fire("X....X.W")
+        val (b, r) = fire("X....X.W", OLD)
         assertEquals(1, r.damageAt(b.index(7, 0)))
         assertTrue("the facing pair should have died", r.annihilated >= 2)
     }
 
     @Test
-    fun `annihilation applies on diagonals too`() {
+    fun `old rules - annihilation applies on diagonals too`() {
         // Mines at (0,0) and (3,3) face each other down the main diagonal. Only the
         // near mine should reach the white in the corner; the far one is cancelled.
         val (b, r) = fire(
@@ -120,23 +124,26 @@ class DetonationTest {
             .....
             ...X.
             ....W
-            """
+            """,
+            OLD,
         )
         assertEquals(1, r.damageAt(b.index(4, 4)))
         assertTrue(r.annihilated >= 2)
     }
 
     @Test
-    fun `a button between two facing mines is hit from both sides`() {
+    fun `old rules - a button between two facing mines is hit from both sides`() {
         // The white stops both rays, so nothing survives into open space to collide.
-        val (b, r) = fire("X..W..X")
+        // (In the practice game one ray takes it and the other carries on: see
+        // WebGameRulesTest.)
+        val (b, r) = fire("X..W..X", OLD)
         assertEquals(2, r.damageAt(b.index(3, 0)))
         assertEquals(0, r.annihilated)
     }
 
     @Test
-    fun `a white button flanked at unequal range takes two hits`() {
-        val (b, r) = fire("X.W...X")
+    fun `old rules - a white button flanked at unequal range takes two hits`() {
+        val (b, r) = fire("X.W...X", OLD)
         assertEquals(2, r.damageAt(b.index(2, 0)))
     }
 
@@ -148,16 +155,16 @@ class DetonationTest {
     }
 
     @Test
-    fun `three mines in a line eat both of the middle one's horizontal rays`() {
+    fun `old rules - three mines in a line eat both of the middle one's horizontal rays`() {
         // The strategic consequence of the rule: a row of mines shadows itself, so
         // spreading them out is worth more than lining them up.
-        val (b, r) = fire("X..X..X.W")
+        val (b, r) = fire("X..X..X.W", OLD)
         assertEquals("only the rightmost mine reaches the white", 1, r.damageAt(b.index(8, 0)))
         assertTrue("two facing pairs died", r.annihilated >= 4)
     }
 
     @Test
-    fun `three adjacent mines pair off with their neighbours, not across them`() {
+    fun `old rules - three adjacent mines pair off with their neighbours, not across them`() {
         // Regression. Mines at (3,2), (2,3) and (1,4) sit shoulder to shoulder down a
         // diagonal, with a blue in the corner at (0,5).
         //
@@ -175,7 +182,8 @@ class DetonationTest {
             W.X.
             .X..
             B...
-            """
+            """,
+            OLD,
         )
         assertEquals("only the nearest mine gets through", 1, r.damageAt(b.index(0, 5)))
     }

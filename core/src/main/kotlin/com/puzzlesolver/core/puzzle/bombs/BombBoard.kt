@@ -84,38 +84,54 @@ object Dir {
 /**
  * The rules of the room, made explicit rather than hard-coded.
  *
- * Some were confirmed by watching the game; the rest are the safe reading of a detail
- * nobody has checked yet, and say so. They are configuration because a wrong
- * assumption baked into the simulator is invisible, whereas a wrong flag is one line
- * to flip and one test to re-run.
+ * The defaults are the practice game the team trains on
+ * (`activate.ryflix.ca/mines.html`), read off its source and then played board by
+ * board on 2026-10-28 -- see `WebGameRulesTest`. Two of them overturned what this class
+ * used to assume, and both are flags rather than deletions, because a wrong assumption
+ * baked into the simulator is invisible, whereas a wrong flag is one line to flip and
+ * one test to re-run. [ROOM_AS_FIRST_ASSUMED] is the old set.
  */
 data class BombRules(
     val whiteHitPoints: Int = 1,
     val blueHitPoints: Int = 2,
 
     /**
-     * CONFIRMED. Two mines on a common line send rays toward each other; the rays
-     * meet and vaporise, so neither reaches the far side. Mines therefore shadow one
-     * another without ever acting as walls.
+     * Whether two mines on a common line send rays that meet and vaporise.
+     *
+     * **No**, in the practice game: a bomb leaves the board the moment it fires, and
+     * rays pass through each other and through other bombs' cells. So two mines stacked
+     * on the *same* side of a blue both reach it and clear it in one detonation -- the
+     * near one's ray at one step, the far one's a step later -- which is how the team
+     * describes the room as well. This was once recorded as confirmed the other way;
+     * a planner believing it refused exactly that move, and paid a mine or a round
+     * for it.
      */
-    val opposingRaysAnnihilate: Boolean = true,
+    val opposingRaysAnnihilate: Boolean = false,
 
     /**
-     * UNVERIFIED. Rays that cross at an angle rather than head-on -- an eastward ray
-     * and a northward ray arriving at one cell on the same tick. Modelled as
-     * independent, because "advance towards each other then collide" describes
-     * head-on motion, and because assuming extra annihilation would make the solver
-     * reject plans that in fact work.
+     * Rays that cross at an angle rather than head-on. Only consulted when
+     * [opposingRaysAnnihilate] is on; the practice game has neither.
      */
     val crossingRaysAnnihilate: Boolean = false,
 
     /**
-     * UNVERIFIED. Whether a button destroyed partway through a detonation still
-     * blocks rays arriving later in that same detonation. Defaults to true, the
-     * conservative reading: assuming rays punch through a dying button would credit
-     * a plan with damage it may never deal.
+     * Whether a button destroyed partway through a detonation still stops rays that
+     * arrive at it later in the same detonation.
+     *
+     * **No**, in the practice game: a ray reaching a button that is already down
+     * carries on to whatever is behind it. Two mines in a row before two whites clear
+     * both -- and with a red hazard behind the first white instead, the same two mines
+     * lose the game, because the second ray sails through into it. The second case is
+     * why this matters: the old reading, that a spent button kept blocking, called that
+     * board safe.
+     *
+     * Rays arriving at one button on the *same* step are settled by the order the
+     * practice game happens to process them in, which is the order the bombs were
+     * clicked: the first destroys it and the rest carry on. A plan may not depend on
+     * that, so [Detonation] counts those rays and the planner only accepts a round
+     * whose outcome is the same either way.
      */
-    val destroyedButtonsBlockUntilRoundEnd: Boolean = true,
+    val destroyedButtonsBlockUntilRoundEnd: Boolean = false,
 
     /**
      * UNVERIFIED but near-certain. A blue button hit once stays damaged into the next
@@ -129,6 +145,18 @@ data class BombRules(
         Button.WHITE -> whiteHitPoints
         Button.BLUE -> blueHitPoints
         else -> 0
+    }
+
+    companion object {
+        /**
+         * What this app assumed of the room before the practice game was read: rays
+         * meet head-on and vaporise, and a spent button blocks until the detonation is
+         * over. Kept so that model, and the tests pinning it, stay runnable.
+         */
+        val ROOM_AS_FIRST_ASSUMED = BombRules(
+            opposingRaysAnnihilate = true,
+            destroyedButtonsBlockUntilRoundEnd = true,
+        )
     }
 }
 

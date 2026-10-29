@@ -201,6 +201,69 @@ run left no trace of it; that tag is captured now.
   room needed three stops more than that on 2026-10-27; the steer covers the gap in about
   five seconds of aiming, and the lift covers it before then.
 
+## The rules, as the practice game plays them
+
+The team trains on a practice version of the game,
+[activate.ryflix.ca/mines.html](https://activate.ryflix.ca/mines.html): a 59x7 grid of
+mines (our whites), armored mines (blues) and kill squares (reds), a bomb budget, and a
+Detonate button. On 2026-10-28 its source was read and its own detonation was driven
+from the browser, board by board. It overturned two rules this app had recorded as
+settled, and the planner was planning against both:
+
+| Rule | The practice game | What this app had assumed |
+| --- | --- | --- |
+| Opposing rays | Pass straight through each other. A bomb leaves the board the moment it fires, so rays pass its cell too. **Two mines on the same side of a blue both reach it and clear it in one wave**, which is how the team describes the room. | Meet head-on and vaporise. The planner refused to stack two mines on one side of a blue, and a test pinned that refusal. |
+| A button going down mid-detonation | Stops blocking at once. A ray reaching it a step later carries on to whatever is behind it: another mine, or a **kill square**. | Kept blocking until the detonation ended. So two mines before a white with a red behind it read as safe, and lose. |
+| Two rays reaching one button on the same step | Taken in the order the bombs were **clicked**: the first destroys it, the other carries on. | Both landed. |
+
+Everything else agreed: eight directions, a ray stops at the first live button, a kill
+square loses the game, a blue takes two hits and stays damaged between detonations, and
+the budget is the total across detonations. The defaults in `BombRules` are now the
+practice game's; the old set is still there as `BombRules.ROOM_AS_FIRST_ASSUMED`, with
+its tests, because the room itself has not been watched for these exact cases.
+
+**Ties are refused rather than gambled on.** Same board, same two bombs: click one first
+and a ray carries on into a kill square; click the other first and it carries on
+harmlessly. A plan handed to someone pressing buttons in the dark cannot depend on
+that, so `Detonation.settled` runs every round with each same-step tie broken both ways
+and only passes it if neither loses and both deal the same damage.
+
+**How the planner copes.** The search still runs on `RoundModel`'s fast closed form,
+which under these rules credits every ray to the first button in its path. That is a
+guaranteed *under*-count -- a ray let through a fallen button can only add damage -- so
+what it calls cleared is cleared. What it calls safe is not, because the ray let
+through can reach a kill square it never sees; so every round the planner accepts,
+greedy, exact or beam, goes through `Detonation.settled` first.
+
+### How it was checked
+
+- **`WebGameRulesTest`**: each rule above as a board the game itself played, with what
+  it did -- stacked mines clearing a blue, a ray carrying on to a second white, the same
+  ray carrying on into a kill square, and the click-order tie in both orders.
+- **`WebGameCrossCheckTest`**: a thousand random boards (dense mines, kill squares on
+  half, one or two detonations of one to four bombs) built from the same integer RNG in
+  the browser and in the test. The game's real `detonate` against our simulator,
+  compared by hash: **an exact match on all thousand**, including 285 rays whose fate
+  turned on a tie and 1,588 hits that only landed through a fallen mine. Under the old
+  rules none of the twenty blocks of fifty match, and the old model loses 321 boards
+  where the game loses 331 -- the ten it calls safe are exactly the dangerous ones.
+  `tools/mines/web-game-crosscheck.js` re-runs the game's half.
+- **`WebGameLevelsTest`**: nine real levels the game generated, three each of levels 5,
+  6 and 8, with their budgets and hidden solutions.
+  - *The game's own hidden solutions fail in the game.* Its level generator checks a
+    solution bomb by bomb, every ray stopping at the first mine; its detonation lets
+    rays on through fallen mines. Played in the game, four of the nine lost and one left
+    a mine standing. The simulator reproduces all nine outcomes.
+  - *Every plan our planner made was played in the game, bomb by bomb, and won* -- nine
+    out of nine, and nine out of nine again with each detonation's clicks reversed.
+  - Where the game's own solution works, ours meets its budget exactly (3, 3, 5 and 5
+    bombs). On two levels ours beats a budget whose own solution loses (5 against 6).
+    On three it takes one bomb more (7/6, 4/3, 6/5), and those are levels whose own
+    solution fails. The smallest was settled by brute force: every arrangement of three
+    bombs, in one detonation or spread over two or three, 29 million of them, judged by
+    the simulator with ties both ways -- none wins. Four is the fewest that does, and
+    four is what the planner found. The other two are too big to enumerate.
+
 ## How it used to work: the AR overlay
 
 Everything from here down describes the AR pipeline's Mines -- `BombAdapter`, the mosaic
@@ -208,9 +271,13 @@ and the overlay -- which the scan above replaced. It is kept because the rules, 
 planner and the solver are shared, and the colour findings are what the glow reading
 grew from.
 
-## Rules, and how sure we are of each
+## Rules as first assumed
 
-Confirmed by watching the room:
+Superseded by [the practice game's rules](#the-rules-as-the-practice-game-plays-them):
+cancellation and spent buttons blocking are now off by default, and this and the next
+two sections describe the model behind `BombRules.ROOM_AS_FIRST_ASSUMED`.
+
+Recorded at the time as confirmed by watching the room:
 
 | Rule | Detail |
 | --- | --- |
@@ -244,7 +311,7 @@ the reasoning written at the field, so changing one is a line and a test re-run:
 - `damagePersistsBetweenRounds` — whether a blue hit once stays damaged. Assumed
   **yes**; if it were not, blue could only ever be cleared by two hits in one round.
 
-## Cancellation is the whole difficulty
+## Cancellation is the whole difficulty (old rules)
 
 Without it this is a covering problem: precompute which buttons each cell can reach,
 then pick a cheap set of cells. Cancellation breaks that, because whether a mine hits
@@ -265,7 +332,7 @@ tests that fail loudly if flipped:
    from the middle mine. Pair the outer two and the middle mine appears to fire freely
    in both directions, and the plan comes out a mine cheaper than the room allows.
 
-## The closed form, and why the search can trust it
+## The closed form, and why the search can trust it (old rules)
 
 Running the tick loop inside a search would be far too slow, so `RoundModel` uses a
 closed form instead:
@@ -290,11 +357,15 @@ identical damage, cell for cell. It is the test that found the ordering bug abov
 1. **Greedy, always.** Take the placement that removes the most hit points, repeat,
    detonate when nothing more helps. Its job is to guarantee there is an answer at all,
    and to hand the later passes an upper bound. A 7×100 board takes a few milliseconds.
-2. **One detonation, exact.** Iterative deepening with a hitting-set branch and bound
-   over `RoundModel`, which is exact, so the first plan found at size *k* really works
-   and no plan of size *k−1* exists. Only attempted while *k* is small — exhaustive
-   search at thirty mines does not finish, and pretending otherwise wastes the budget
-   that pass 1 already spent well.
+2. **One detonation, exhaustive over what it can see.** Iterative deepening with a
+   hitting-set branch and bound over `RoundModel`. Under the old rules that model is
+   exact, so the first plan found at size *k* really works and no plan of size *k−1*
+   exists. Under the practice game's it under-counts -- it cannot see a ray carrying on
+   through a fallen button -- so a plan that only works *because* of that is outside
+   what this pass enumerates, and a refutation is no longer a proof. Every plan it does
+   find is checked by `Detonation.settled` before it counts. Only attempted while *k* is
+   small — exhaustive search at thirty mines does not finish, and pretending otherwise
+   wastes the budget that pass 1 already spent well.
 3. **Several detonations, bounded.** A cleared button turns black and stops blocking,
    so two small rounds can beat one large one. Beam search; not a proof.
 
@@ -318,10 +389,10 @@ placements, so both survive re-mining a cell in a later round.
 
 **Impossibility has to be earned.** Greedy getting stuck and a beam coming back empty
 prove nothing, so neither reports `Impossible`. Only four things do: an unreachable
-button, no unlit button free, a budget below the bound above, or the exact pass
-refuting every single-round arrangement when that is the only kind allowed. Everything
-else is `Unfinished`, which says we stopped looking rather than that there is nothing
-to find.
+button, no unlit button free, a budget below the bound above, or -- under the old rules
+only -- the exact pass refuting every single-round arrangement when that is the only kind
+allowed. Everything else is `Unfinished`, which says we stopped looking rather than that
+there is nothing to find.
 
 One subtlety in the reachability test: "no mine can reach this button *now*" is the
 wrong question, because a button in the way is itself clearable and clearing it opens

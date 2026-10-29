@@ -3,6 +3,7 @@ package com.puzzlesolver.core
 import com.puzzlesolver.core.puzzle.bombs.BombBoard
 import com.puzzlesolver.core.puzzle.bombs.BombPlan
 import com.puzzlesolver.core.puzzle.bombs.BombPlanner
+import com.puzzlesolver.core.puzzle.bombs.BombRules
 import com.puzzlesolver.core.puzzle.bombs.Button
 import com.puzzlesolver.core.puzzle.bombs.Detonation
 import com.puzzlesolver.core.puzzle.bombs.PlanOutcome
@@ -29,18 +30,24 @@ class BombPlannerTest {
 
     private val sim = Detonation()
 
-    private fun solve(board: String, budget: Int, rounds: Int = 3): PlanOutcome =
-        BombPlanner(budget = budget, maxRounds = rounds).plan(BombBoard.parse(board))
+    private val OLD = BombRules.ROOM_AS_FIRST_ASSUMED
 
-    private fun found(board: String, budget: Int, rounds: Int = 3): BombPlan {
-        val outcome = solve(board, budget, rounds)
+    private fun solve(board: String, budget: Int, rounds: Int = 3, rules: BombRules = BombRules()): PlanOutcome =
+        BombPlanner(budget = budget, maxRounds = rounds).plan(BombBoard.parse(board, rules))
+
+    private fun found(board: String, budget: Int, rounds: Int = 3, rules: BombRules = BombRules()): BombPlan {
+        val outcome = solve(board, budget, rounds, rules)
         assertTrue("expected a plan, got $outcome", outcome is PlanOutcome.Found)
         val plan = (outcome as PlanOutcome.Found).plan
-        assertPlanClearsBoard(BombBoard.parse(board), plan)
+        assertPlanClearsBoard(BombBoard.parse(board, rules), plan)
         return plan
     }
 
-    /** Replays the plan against the mechanics, with no reference to how it was built. */
+    /**
+     * Replays the plan against the mechanics, with no reference to how it was built --
+     * twice per round, with every same-step tie broken each way, because the room
+     * breaks them by the order the buttons were pressed and nobody is told an order.
+     */
     private fun assertPlanClearsBoard(start: BombBoard, plan: BombPlan) {
         var board = start
         for ((i, round) in plan.rounds.withIndex()) {
@@ -49,6 +56,9 @@ class BombPlannerTest {
             }
             val result = sim.fire(board, round.mines)
             assertTrue("round $i fires a ray onto a red hazard -- that loses the room", !result.losesGame)
+            val other = sim.fire(board, round.mines, reverse = true)
+            assertTrue("round $i loses the room if a tie goes the other way", !other.losesGame)
+            assertTrue("round $i does different damage if a tie goes the other way", other.damage.contentEquals(result.damage))
             board = board.afterDetonation(result.damage, round.mines)
         }
         assertTrue("board still has ${board.remainingHitPoints} hit points left:\n$board", board.isCleared)
@@ -88,14 +98,26 @@ class BombPlannerTest {
     }
 
     @Test
-    fun `mines are not stacked on one side of a blue where they would cancel`() {
+    fun `two mines on the same side of a blue clear it in one detonation`() {
+        // The move the team uses in the room, and the one the practice game confirms:
+        // stack two mines in line with a blue, both on the same side, and both rays
+        // reach it -- rays pass through each other and through the other mine's cell.
+        // Here the left of the blue is the only place mines can go at all.
+        val plan = found("..B", budget = 2, rounds = 1)
+        assertEquals(2, plan.totalMines)
+        assertEquals(1, plan.roundCount)
+        assertTrue(plan.provenMinimal)
+    }
+
+    @Test
+    fun `old rules - mines are not stacked on one side of a blue where they would cancel`() {
         // Both mines have to reach the blue, and the two obvious cells on the left of
         // it cancel each other: adjacent, nothing in between. The only arrangements
         // that work put the blue itself between the two mines, so it absorbs both rays
         // before they can meet. A planner scoring placements optimistically would take
         // the cancelling pair and come up a hit short in the room.
         val board = "..B......"
-        val plan = found(board, budget = 4)
+        val plan = found(board, budget = 4, rules = OLD)
         assertEquals(2, plan.totalMines)
 
         val b = BombBoard.parse(board)
@@ -168,7 +190,31 @@ class BombPlannerTest {
     }
 
     @Test
-    fun `two rounds beat one when cancellation blocks the single-detonation answer`() {
+    fun `two mines between two blues clear both in one detonation`() {
+        // Columns 2 and 4 each sight both blues, through the other mine's cell: four
+        // rays, four hits, one detonation. Under the old rules this took two rounds.
+        val plan = found(".B...B.", budget = 6, rounds = 1)
+        assertEquals(2, plan.totalMines)
+        assertEquals(1, plan.roundCount)
+    }
+
+    @Test
+    fun `a pair that only works if a tie goes one way is not offered`() {
+        // Whites at 0, 2 and 4, a hazard at 6. Mines at 1 and 3 reach the white at 2 on
+        // the same step; whichever the room takes first destroys it, and the other ray
+        // carries on -- harmlessly west, or east through the white at 4 (already down)
+        // and onto the hazard. That is decided by the order the two were pressed, so the
+        // pair cannot be offered as one detonation. Two detonations of one mine each can.
+        val board = "W.W.W.R"
+        val plan = found(board, budget = 6)
+        assertEquals(2, plan.totalMines)
+        val b = BombBoard.parse(board)
+        val oneRound = plan.rounds.any { it.mines.toSet() == setOf(b.index(1, 0), b.index(3, 0)) }
+        assertTrue("1 and 3 in one detonation depends on press order", !oneRound)
+    }
+
+    @Test
+    fun `old rules - two rounds beat one when cancellation blocks the single-detonation answer`() {
         // Two blues. Every cell that sights both of them -- columns 2, 3 and 4 -- sees
         // every other such cell with clear air between, so any two of them cancel the
         // very rays that were meant to do the work. One detonation therefore needs
@@ -177,11 +223,11 @@ class BombPlannerTest {
         // Two detonations need two: one mine in the middle knocks both blues down to
         // white, and after they turn black-and-white the same middle ground can finish
         // them off. This is the case the multi-round pass exists for.
-        val single = BombPlanner(budget = 6, maxRounds = 1).plan(BombBoard.parse(".B...B."))
+        val single = BombPlanner(budget = 6, maxRounds = 1).plan(BombBoard.parse(".B...B.", OLD))
         assertTrue(single is PlanOutcome.Found)
         assertEquals(3, (single as PlanOutcome.Found).plan.totalMines)
 
-        val plan = found(".B...B.", budget = 6, rounds = 3)
+        val plan = found(".B...B.", budget = 6, rounds = 3, rules = OLD)
         assertEquals(2, plan.totalMines)
         assertEquals(2, plan.roundCount)
     }
@@ -204,13 +250,13 @@ class BombPlannerTest {
     }
 
     @Test
-    fun `the planner declines the greedy cell when it would fire on a hazard`() {
+    fun `old rules - the planner declines the greedy cell when it would fire on a hazard`() {
         // Whites at 0, 2 and 4; a hazard at 6. Column 5 sights the white at 4, and is
         // exactly the sort of cell a damage-hungry greedy pass reaches for -- but its
         // eastward ray runs straight into the hazard. Columns 1 and 3 do the whole job
         // safely, each shielded from the other by the white between them.
         val board = "W.W.W.R"
-        val plan = found(board, budget = 6)
+        val plan = found(board, budget = 6, rules = OLD)
         assertEquals(2, plan.totalMines)
 
         val b = BombBoard.parse(board)
