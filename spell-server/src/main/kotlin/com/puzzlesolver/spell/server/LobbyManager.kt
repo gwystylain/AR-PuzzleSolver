@@ -13,6 +13,7 @@ import com.puzzlesolver.spell.PlayerState
 import com.puzzlesolver.spell.Protocol
 import com.puzzlesolver.spell.Rules
 import com.puzzlesolver.spell.ServerMessage
+import com.puzzlesolver.spell.TicTacToe
 import com.puzzlesolver.spell.Token
 import org.slf4j.LoggerFactory
 import java.security.SecureRandom
@@ -340,6 +341,8 @@ class LobbyManager(
             lobby.words = when {
                 lobby.done -> Matches.NONE
                 lobby.mode == GameMode.ONE_AND_DONE -> lexicon.findOneAndDone(everyone, lobby.length, used, players = each)
+                lobby.mode == GameMode.TIC_TAC_TOE ->
+                    lexicon.find(everyone, lobby.length, players = each, oneOf = TicTacToe.LETTERS)
                 else -> lexicon.find(everyone, lobby.length, players = each)
             }
             lobby.wordsKey = key

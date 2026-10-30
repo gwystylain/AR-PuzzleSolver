@@ -226,6 +226,19 @@ enum class GameMode {
      */
     @SerialName("one_and_done")
     ONE_AND_DONE,
+
+    /**
+     * Classic, except that every word must have an O or an X in it -- the noughts and
+     * crosses. See [TicTacToe].
+     */
+    @SerialName("tic_tac_toe")
+    TIC_TAC_TOE,
+}
+
+/** The rule of a Tic-Tac-Toe lobby. */
+object TicTacToe {
+    /** A word must have at least one of these, as a [LetterMask]. */
+    val LETTERS: Int = LetterMask.of("OX")
 }
 
 /** The rule of a One and Done 2.0 round: every letter at most once, across all its words. */

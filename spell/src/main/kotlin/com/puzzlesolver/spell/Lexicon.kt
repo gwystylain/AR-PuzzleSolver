@@ -36,18 +36,28 @@ class Lexicon private constructor(private val buckets: Map<Int, Bucket>) {
      *    over more of the team;
      * 3. then alphabetical.
      *
+     * With [oneOf] (a [LetterMask]), only words with at least one of those letters count --
+     * Tic-Tac-Toe's O or X.
+     *
      * At most [limit] are listed; [Matches.total] counts them all.
      */
-    fun find(available: Int, length: Int, limit: Int = Rules.MAX_WORDS, players: IntArray = IntArray(0)): Matches {
+    fun find(
+        available: Int,
+        length: Int,
+        limit: Int = Rules.MAX_WORDS,
+        players: IntArray = IntArray(0),
+        oneOf: Int = 0,
+    ): Matches {
         val bucket = buckets[length] ?: return Matches.NONE
-        if (available == 0) return Matches.NONE
+        if (available == 0 || (oneOf != 0 && available and oneOf == 0)) return Matches.NONE
         val outside = available.inv()
         val masks = bucket.masks
+        fun fits(mask: Int) = mask and outside == 0 && (oneOf == 0 || mask and oneOf != 0)
 
         val perRank = IntArray(RANKS)
         var total = 0
         for (mask in masks) {
-            if (mask and outside != 0) continue
+            if (!fits(mask)) continue
             perRank[rank(mask, players)]++
             total++
         }
@@ -63,7 +73,7 @@ class Lexicon private constructor(private val buckets: Map<Int, Bucket>) {
         val kept = arrayOfNulls<String>(minOf(limit, total))
         for (i in masks.indices) {
             val mask = masks[i]
-            if (mask and outside != 0) continue
+            if (!fits(mask)) continue
             val at = next[rank(mask, players)]++
             if (at < kept.size) kept[at] = bucket.words[i]
         }

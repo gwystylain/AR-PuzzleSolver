@@ -67,6 +67,7 @@ import com.puzzlesolver.spell.GameMode
 import com.puzzlesolver.spell.LobbySummary
 import com.puzzlesolver.spell.PlayerState
 import com.puzzlesolver.spell.Rules
+import com.puzzlesolver.spell.TicTacToe
 import com.puzzlesolver.spell.client.Link
 import com.puzzlesolver.spell.client.Notice
 import com.puzzlesolver.spell.client.Room
@@ -107,9 +108,9 @@ fun SpellScreen(
     onDismissNotice: (Long) -> Unit,
     /** Returns what is wrong with the address, or null once it is set. */
     onSetServer: (String) -> String?,
-    /** Whether a lobby hosted from here plays One and Done 2.0. */
-    oneAndDone: Boolean,
-    onOneAndDone: (Boolean) -> Unit,
+    /** What a lobby hosted from here plays: classic, or a variant switched on at the foot of the list. */
+    variant: GameMode,
+    onVariant: (GameMode) -> Unit,
     onSaveWord: () -> Unit,
     onUndoSaved: () -> Unit,
     onNewRound: () -> Unit,
@@ -129,7 +130,7 @@ fun SpellScreen(
                 Round(onSaveWord, onUndoSaved, onNewRound),
             )
         } else {
-            LobbyView(state, server, onHost, onJoin, oneAndDone, onOneAndDone, onEditServer = { editingServer = true })
+            LobbyView(state, server, onHost, onJoin, variant, onVariant, onEditServer = { editingServer = true })
         }
         NoticeBanner(state.notice, onDismissNotice, Modifier.align(Alignment.TopCenter))
     }
@@ -146,8 +147,8 @@ private fun LobbyView(
     server: String?,
     onHost: () -> Unit,
     onJoin: (String) -> Unit,
-    oneAndDone: Boolean,
-    onOneAndDone: (Boolean) -> Unit,
+    variant: GameMode,
+    onVariant: (GameMode) -> Unit,
     onEditServer: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
@@ -172,7 +173,7 @@ private fun LobbyView(
         BigButton(
             text = when {
                 state.joining -> "Opening a lobby"
-                oneAndDone -> "Host One and Done 2.0"
+                variant != GameMode.CLASSIC -> "Host ${variant.title}"
                 else -> "Host a lobby"
             },
             colour = ACCENT,
@@ -208,7 +209,12 @@ private fun LobbyView(
             }
         }
         Spacer(Modifier.height(8.dp))
-        ModeSwitch(oneAndDone, onOneAndDone)
+        // One switch per variant, at most one on; with neither, a lobby plays classic.
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (mode in VARIANTS) {
+                VariantSwitch(mode, on = variant == mode) { onVariant(if (it) mode else GameMode.CLASSIC) }
+            }
+        }
         Text(
             "Server: ${ServerAddress.describe(server)}",
             color = TEXT_FAINT,
@@ -254,22 +260,50 @@ private fun LobbyRow(lobby: LobbySummary, enabled: Boolean, onJoin: () -> Unit) 
                 }
             }
             Spacer(Modifier.height(4.dp))
-            if (lobby.mode == GameMode.ONE_AND_DONE) {
-                Text("One and Done 2.0 · ${lobby.length} letters", color = ACCENT, fontSize = 12.sp)
-            } else {
-                Text("${lobby.length}-letter words", color = TEXT_DIM, fontSize = 12.sp)
+            if (lobby.mode != GameMode.CLASSIC) {
+                Text(lobby.mode.titleWithLevel, color = ACCENT, fontSize = 12.sp)
             }
+            Text("${lobby.length}-letter words", color = TEXT_DIM, fontSize = 12.sp)
         }
         Text(if (full) "Full" else "Join ›", color = ACCENT, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
+/** The variants, in the order their switches are listed. */
+private val VARIANTS = listOf(GameMode.ONE_AND_DONE, GameMode.TIC_TAC_TOE)
+
+private val GameMode.title: String
+    get() = when (this) {
+        GameMode.CLASSIC -> "Classic"
+        GameMode.ONE_AND_DONE -> "One and Done 2.0"
+        GameMode.TIC_TAC_TOE -> "Tic-Tac-Toe"
+    }
+
+/** The Spellinator level the variant is for, which the room itself does not show. */
+private val GameMode.level: Int?
+    get() = when (this) {
+        GameMode.CLASSIC -> null
+        GameMode.ONE_AND_DONE -> 4
+        GameMode.TIC_TAC_TOE -> 2
+    }
+
+private val GameMode.titleWithLevel: String
+    get() = level?.let { "$title · level $it" } ?: title
+
+private val GameMode.blurb: String
+    get() = when (this) {
+        GameMode.CLASSIC -> ""
+        GameMode.ONE_AND_DONE -> "Three words, no letter used twice. The host saves each one."
+        GameMode.TIC_TAC_TOE -> "Only words with an O or an X in them."
+    }
+
 /**
- * One and Done 2.0, for the lobbies this phone hosts. At the foot of the list because it is
- * set once and lived with, like the debug switch on the landing page.
+ * A variant, for the lobbies this phone hosts, with the level of the game it is for. At the
+ * foot of the list because it is set once and lived with, like the debug switch on the
+ * landing page.
  */
 @Composable
-private fun ModeSwitch(on: Boolean, onChange: (Boolean) -> Unit) {
+private fun VariantSwitch(mode: GameMode, on: Boolean, onChange: (Boolean) -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -279,12 +313,22 @@ private fun ModeSwitch(on: Boolean, onChange: (Boolean) -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text("One and Done 2.0", color = TEXT, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            Text(
-                "Three words, no letter used twice. The host saves each one.",
-                color = TEXT_DIM,
-                fontSize = 12.sp,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(mode.title, color = TEXT, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                mode.level?.let {
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Level $it",
+                        color = INK,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .background(ACCENT, RoundedCornerShape(6.dp))
+                            .padding(horizontal = 6.dp, vertical = 1.dp),
+                    )
+                }
+            }
+            Text(mode.blurb, color = TEXT_DIM, fontSize = 12.sp)
         }
         Spacer(Modifier.width(10.dp))
         Switch(
@@ -387,6 +431,20 @@ private fun ColumnScope.RoomTop(room: Room, link: Link, onLeave: () -> Unit, onL
     if (room.mode == GameMode.ONE_AND_DONE) {
         Spacer(Modifier.height(8.dp))
         RoundStrip(room, round)
+    }
+    if (room.mode == GameMode.TIC_TAC_TOE) {
+        Spacer(Modifier.height(8.dp))
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(CARD, RoundedCornerShape(12.dp))
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(GameMode.TIC_TAC_TOE.titleWithLevel, color = TEXT, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.weight(1f))
+            Text("Every word has an O or an X", color = ACCENT, fontSize = 12.sp)
+        }
     }
 }
 
@@ -562,6 +620,7 @@ private fun PlayerChip(player: PlayerState, isMe: Boolean) {
 private fun SuggestionPanel(room: Room, round: Round, modifier: Modifier) {
     val word = room.word
     val oneAndDone = room.mode == GameMode.ONE_AND_DONE
+    val ticTacToe = room.mode == GameMode.TIC_TAC_TOE
     val shape = RoundedCornerShape(14.dp)
     Box(
         modifier
@@ -576,6 +635,8 @@ private fun SuggestionPanel(room: Room, round: Round, modifier: Modifier) {
             room.everyone == 0 -> Hint(
                 if (oneAndDone) {
                     "Type the letters you can see. Each word uses a letter at most once, and no letter twice in the round."
+                } else if (ticTacToe) {
+                    "Type the letters you can see. Every word has an O or an X, and any letter can be used more than once."
                 } else {
                     "Type the letters you can see. Everyone's letters count, and any letter can be used more than once."
                 },
@@ -583,6 +644,10 @@ private fun SuggestionPanel(room: Room, round: Round, modifier: Modifier) {
             word == null && room.current -> Hint(
                 if (oneAndDone && room.used != 0) {
                     "No ${room.length}-letter word from these letters without one already used."
+                } else if (ticTacToe && room.everyone and TicTacToe.LETTERS == 0) {
+                    "No O or X yet, and every word needs one."
+                } else if (ticTacToe) {
+                    "No ${room.length}-letter word with an O or an X from these letters."
                 } else {
                     "No ${room.length}-letter word from these letters."
                 },
@@ -808,19 +873,20 @@ private fun Keypad(room: Room, onType: (Char) -> Unit, onBackspace: () -> Unit) 
     val colour = room.me?.let { PLAYER_COLOURS[it - 1] } ?: ACCENT
     val full = room.letters.length >= Rules.MAX_LETTERS
     val used = room.used
+    val marked = if (room.mode == GameMode.TIC_TAC_TOE) TicTacToe.LETTERS else 0
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         // Every row adds up to ten key-widths, so all the letter keys are the same size.
         KeyRow {
-            for (c in "QWERTYUIOP") LetterKey(c, mine, anyone, used, colour, full, onType)
+            for (c in "QWERTYUIOP") LetterKey(c, mine, anyone, used, marked, colour, full, onType)
         }
         KeyRow {
             Spacer(Modifier.weight(0.5f))
-            for (c in "ASDFGHJKL") LetterKey(c, mine, anyone, used, colour, full, onType)
+            for (c in "ASDFGHJKL") LetterKey(c, mine, anyone, used, marked, colour, full, onType)
             Spacer(Modifier.weight(0.5f))
         }
         KeyRow {
             Spacer(Modifier.weight(1.5f))
-            for (c in "ZXCVBNM") LetterKey(c, mine, anyone, used, colour, full, onType)
+            for (c in "ZXCVBNM") LetterKey(c, mine, anyone, used, marked, colour, full, onType)
             Key("⌫", KEY_DARK, TEXT, enabled = room.letters.isNotEmpty(), weight = 1.5f, onPress = onBackspace)
         }
     }
@@ -837,6 +903,8 @@ private fun androidx.compose.foundation.layout.RowScope.LetterKey(
     mine: Int,
     anyone: Int,
     used: Int,
+    /** Tic-Tac-Toe: the letters every word needs one of, outlined so they are found fast. */
+    marked: Int,
     colour: Color,
     full: Boolean,
     onType: (Char) -> Unit,
@@ -862,6 +930,7 @@ private fun androidx.compose.foundation.layout.RowScope.LetterKey(
         enabled = !full,
         weight = 1f,
         struck = isUsed,
+        outlined = LetterMask.contains(marked, c),
         onPress = { onType(c) },
     )
 }
@@ -879,6 +948,7 @@ internal fun androidx.compose.foundation.layout.RowScope.Key(
     weight: Float,
     struck: Boolean = false,
     badge: String? = null,
+    outlined: Boolean = false,
     onPress: () -> Unit,
 ) {
     val haptics = LocalHapticFeedback.current
@@ -890,6 +960,7 @@ internal fun androidx.compose.foundation.layout.RowScope.Key(
             .height(52.dp)
             .alpha(if (enabled) 1f else 0.4f)
             .background(if (held) background.copy(alpha = 0.6f) else background, RoundedCornerShape(8.dp))
+            .then(if (outlined) Modifier.border(2.dp, ACCENT, RoundedCornerShape(8.dp)) else Modifier)
             .pointerInput(enabled) {
                 if (!enabled) return@pointerInput
                 detectTapGestures(

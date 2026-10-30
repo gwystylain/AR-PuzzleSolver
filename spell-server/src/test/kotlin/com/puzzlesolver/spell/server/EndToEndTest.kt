@@ -175,6 +175,26 @@ class EndToEndTest {
     }
 
     @Test
+    fun `tic-tac-toe through the phones - every word has an O or an X`() {
+        val s = server()
+        val a = session(s.port)
+        val b = session(s.port)
+        a.await("connected") { it.link is Link.Online }
+        a.host(GameMode.TIC_TAC_TOE)
+        val id = a.await("hosting") { it.room?.seated == true && it.room!!.current }.room!!.lobby
+        b.await("listed as tic-tac-toe") { st -> st.lobbies.any { it.id == id && it.mode == GameMode.TIC_TAC_TOE } }
+        b.joinLobby(id)
+        assertEquals(GameMode.TIC_TAC_TOE, b.state.value.room!!.mode)
+
+        // XYST has an X; STOP an O. Neither player's letters alone make either.
+        a.setLength(4)
+        a.typeAll("XY")
+        b.typeAll("ST")
+        val room = b.await("XYST") { it.room?.word == "XYST" && it.room!!.current }.room!!
+        assertTrue(room.words.all { w -> 'O' in w || 'X' in w })
+    }
+
+    @Test
     fun `a keypress reaches the other phones in milliseconds`() {
         val s = server()
         val a = session(s.port)

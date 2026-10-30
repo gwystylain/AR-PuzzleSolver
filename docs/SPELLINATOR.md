@@ -62,11 +62,15 @@ raised, so a glance at it shows what the team has between you.
 the phone's keyboard tries to correct, predict and capitalise into a word. The keypad also
 fires on touch-down rather than on release.
 
-## One and Done 2.0
+## Variants
 
-A second way to play, chosen by whoever hosts: **One and Done 2.0** is the switch at the foot
-of the lobby list. With it on, **Host** opens a One and Done 2.0 lobby, tagged as such in
-everyone's list; the phones that join play whatever the lobby plays.
+Two other ways to play, each for one level of the room, are chosen by whoever hosts: each
+has a switch at the foot of the lobby list, marked with its level, and at most one is on.
+With one on, **Host** opens a lobby playing it, tagged with its name and level in everyone's
+list; the phones that join play whatever the lobby plays. With neither on, a lobby is
+classic.
+
+## One and Done 2.0 (level 4)
 
 The goal is three words, one per wave, with **no letter used twice** -- not inside a word,
 and not across the three. A round goes:
@@ -95,6 +99,14 @@ in `Lexicon.kt`.)
 
 The server keeps the round, so a phone that reconnects gets the saved words back. A server
 restart ends it, like any lobby.
+
+## Tic-Tac-Toe (level 2)
+
+Classic in every way -- letters reusable, the first word found held, the same ranking --
+except that **every word has an O or an X in it**: a word with neither is never suggested,
+however good. The O and X keys are outlined on the keypad so they are found fast, and until
+someone has typed one the lobby says that every word needs one. (`find` in `Lexicon.kt`,
+with `oneOf`.)
 
 ## Jumble
 
@@ -185,7 +197,7 @@ a future protocol can be served alongside this one.
 | Phone sends | Meaning |
 | --- | --- |
 | `browse` | Send me the lobby list, now and on every change |
-| `host {mode}` / `join {lobby}` | Seat me; `host` opens a lobby playing `classic` or `one_and_done` |
+| `host {mode}` / `join {lobby}` | Seat me; `host` opens a lobby playing `classic`, `one_and_done` or `tic_tac_toe` |
 | `resume {lobby, player, token}` | Give me back my seat after a dropped connection |
 | `letters {seq, letters}` | My letters are now these |
 | `length {seq, length}` | Everyone's word length is now this |

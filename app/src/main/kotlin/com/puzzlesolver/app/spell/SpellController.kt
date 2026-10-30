@@ -61,15 +61,20 @@ class SpellController(context: Context) {
     val server: StateFlow<String?> = _server.asStateFlow()
 
     /**
-     * Whether a lobby hosted from this phone plays One and Done 2.0. Switched at the foot of
-     * the lobby list and remembered, since a team that plays it tends to keep playing it.
+     * What a lobby hosted from this phone plays: classic, or one of the variants switched on at
+     * the foot of the lobby list. Remembered, since a team that plays one tends to keep playing
+     * it. A phone that had One and Done switched on before there was more than one variant
+     * keeps it.
      */
-    private val _oneAndDone = MutableStateFlow(prefs.getBoolean(KEY_ONE_AND_DONE, false))
-    val oneAndDone: StateFlow<Boolean> = _oneAndDone.asStateFlow()
+    private val _variant = MutableStateFlow(
+        prefs.getString(KEY_VARIANT, null)?.let { name -> GameMode.entries.firstOrNull { it.name == name } }
+            ?: if (prefs.getBoolean(KEY_ONE_AND_DONE, false)) GameMode.ONE_AND_DONE else GameMode.CLASSIC,
+    )
+    val variant: StateFlow<GameMode> = _variant.asStateFlow()
 
-    fun setOneAndDone(on: Boolean) {
-        _oneAndDone.value = on
-        prefs.edit().putBoolean(KEY_ONE_AND_DONE, on).apply()
+    fun setVariant(mode: GameMode) {
+        _variant.value = mode
+        prefs.edit().putString(KEY_VARIANT, mode.name).remove(KEY_ONE_AND_DONE).apply()
     }
 
     private var session: SpellSession? = null
@@ -153,7 +158,7 @@ class SpellController(context: Context) {
         return null
     }
 
-    fun host() = session?.host(if (_oneAndDone.value) GameMode.ONE_AND_DONE else GameMode.CLASSIC)
+    fun host() = session?.host(_variant.value)
     fun join(lobby: String) = session?.join(lobby)
     fun leave() = session?.leave()
     fun type(letter: Char) = session?.type(letter)
@@ -275,6 +280,8 @@ class SpellController(context: Context) {
     private companion object {
         const val TAG = "Spellinator"
         const val KEY_SERVER = "server"
+        const val KEY_VARIANT = "mode.variant"
+        /** Before Tic-Tac-Toe, when One and Done was the only variant; read once and dropped. */
         const val KEY_ONE_AND_DONE = "mode.oneAndDone"
         const val KEY_SEAT_SERVER = "seat.server"
         const val KEY_LOBBY = "seat.lobby"

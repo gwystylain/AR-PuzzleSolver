@@ -482,7 +482,7 @@ class MainActivity : ComponentActivity() {
             PuzzleSolverTheme {
                 val spellState by spell.state.collectAsState()
                 val spellServer by spell.server.collectAsState()
-                val spellOneAndDone by spell.oneAndDone.collectAsState()
+                val spellVariant by spell.variant.collectAsState()
                 val jumbleState by spell.jumble.collectAsState()
                 val spotState by spot.state.collectAsState()
                 val minesState by mines.state.collectAsState()
@@ -557,8 +557,8 @@ class MainActivity : ComponentActivity() {
                                     onLength = { spell.setLength(it) },
                                     onDismissNotice = { spell.dismissNotice(it) },
                                     onSetServer = { spell.setServer(it) },
-                                    oneAndDone = spellOneAndDone,
-                                    onOneAndDone = { spell.setOneAndDone(it) },
+                                    variant = spellVariant,
+                                    onVariant = { spell.setVariant(it) },
                                     onSaveWord = { spell.saveWord() },
                                     onUndoSaved = { spell.undoSaved() },
                                     onNewRound = { spell.newRound() },

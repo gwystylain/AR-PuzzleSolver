@@ -188,6 +188,25 @@ class LexiconTest {
         assertEquals(5, m.total)
     }
 
+    // --- Tic-Tac-Toe -----------------------------------------------------------
+
+    @Test
+    fun `tic-tac-toe keeps only words with an O or an X, ranked as usual`() {
+        val lex = Lexicon.of("TAP", "PAT", "APT", "TOP", "POT", "OPT", "TAX", "PAX", "APP")
+        val all = lex.find(LetterMask.of("TAPOX"), 3)
+        assertEquals(9, all.total)
+        val ox = lex.find(LetterMask.of("TAPOX"), 3, oneOf = TicTacToe.LETTERS)
+        // Every one has an O or an X; APP, with two different letters, would have led.
+        assertEquals(listOf("OPT", "PAX", "POT", "TAX", "TOP"), ox.words)
+        assertEquals("APP", all.words.first())
+    }
+
+    @Test
+    fun `tic-tac-toe with no O or X typed finds nothing`() {
+        val lex = Lexicon.of("TAP", "PAT", "TOP")
+        assertEquals(Matches.NONE, lex.find(LetterMask.of("TAP"), 3, oneOf = TicTacToe.LETTERS))
+    }
+
     // --- One and Done 2.0 ------------------------------------------------------
 
     private val waves = Lexicon.of("CAB", "COT", "CUT", "COP", "DAB", "DIG", "DYE", "TOO", "BOB")
