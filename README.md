@@ -91,9 +91,9 @@ drawn anywhere on it.
   See [docs/TERMINAL_PUZZLE.md](docs/TERMINAL_PUZZLE.md).
 
 **Spot** is a fourth camera room, and not a wall at all: a screen shows one picture after
-another, each with one thing changed. You take six photos, one per picture, and the app
-gives all six back straightened with the difference in each boxed. It never needs the
-original picture: each pixel of it is in five photos out of six, so the per-pixel median
+another, each with one thing changed. You take seven photos, one per picture, and the app
+gives all seven back straightened with the difference in each boxed. It never needs the
+original picture: each pixel of it is in six photos out of seven, so the per-pixel median
 of the photos is the original, and what a photo has that the median does not is its
 difference. Most of the work is lining the photos up on the picture itself, trusting the
 screen's outline only roughly, because on the phone it can come back round the neon.
@@ -164,9 +164,9 @@ there end to end** — 32 displays found, the two lowest numbers outlined on the
 panels, the ranking steady on every heartbeat — against the reference clip played back on
 a monitor. Nothing has yet been pointed at any of the three rooms themselves.
 
-- `./gradlew :core:test` — 198 tests, 198 passing, including a whole terminal wall read
-  off a real frame and three rounds of Spot
-- `./gradlew :app:testDebugUnitTest` — 55 tests, 55 passing (camera tuning, the
+- `./gradlew :core:test` — 234 tests, 234 passing, including a whole terminal wall read
+  off a real frame and five rounds of Spot
+- `./gradlew :app:testDebugUnitTest` — 60 tests, 60 passing (camera tuning, the
   auto-exposure loop and the preview geometry, all pure state machines and maths)
 - `./gradlew :spell:test :spell-client:test :spell-server:test` — 103 tests, 103 passing
   (one more skips unless pointed at a deployed server), including the phone's connection

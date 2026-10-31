@@ -26,12 +26,13 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * One round of Spot: six photos taken, then compared.
+ * One round of Spot: seven photos taken, then compared.
  *
- * Each photo is checked the moment it is taken -- is the screen in it -- because that is
- * the one moment it can still be retaken: the room moves on to the next picture a few
- * seconds later. A photo without the screen in it is not kept, and the user is told why
- * while the picture is still up.
+ * Each photo is checked the moment it is taken -- is the screen in it, and is there a
+ * picture on it -- because that is the one moment it can still be retaken: the room moves
+ * on to the next picture a few seconds later. A photo without the screen in it is not
+ * kept, nor one of the plain green screen the room shows between pictures, and the user
+ * is told why while the picture is still up.
  *
  * Every round is also written to the phone, under `files/spot/`, as the photos taken and
  * a line per photo of what was found. Not for the user: for the next time a round comes
@@ -53,6 +54,8 @@ class SpotController(
         /** The straightened screen; null when it was not found in this photo. */
         val image: ImageBitmap?,
         val differences: List<SpotFinder.Difference>,
+        /** Why the photo was left out of the comparison, when it was. */
+        val note: String? = null,
     )
 
     data class State(
@@ -119,7 +122,14 @@ class SpotController(
     private suspend fun keep(frame: RgbImage, gen: Int) {
         val checked = withContext(worker) {
             val screen = locator.locate(frame.luma())
-            Checked(screen, screen?.let { bitmap(finder.straighten(frame, it, THUMBNAIL_WIDTH)) }, locator.lastFailure)
+            val detail = screen?.let { finder.detail(frame, it) } ?: 0f
+            Checked(
+                screen,
+                screen?.let { bitmap(finder.straighten(frame, it, THUMBNAIL_WIDTH)) },
+                locator.lastFailure,
+                screen != null && finder.hasPicture(frame, screen),
+                detail,
+            )
         }
         if (gen != generation) return
         val screen = checked.screen
@@ -127,6 +137,13 @@ class SpotController(
             Log.i(TAG, "photo not kept: ${checked.failure}")
             _state.update {
                 it.copy(busy = false, message = "Couldn't find the whole screen in that one (${checked.failure}). Take it again.")
+            }
+            return
+        }
+        if (!checked.picture) {
+            Log.i(TAG, "photo not kept: no picture on the screen (detail %.1f)".format(Locale.US, checked.detail))
+            _state.update {
+                it.copy(busy = false, message = "There's no picture on the screen in that one. Take it when the picture is up.")
             }
             return
         }
@@ -139,7 +156,13 @@ class SpotController(
         if (number >= SpotFinder.PHOTOS) find(gen)
     }
 
-    private class Checked(val screen: ScreenLocator.Screen?, val thumbnail: ImageBitmap?, val failure: String)
+    private class Checked(
+        val screen: ScreenLocator.Screen?,
+        val thumbnail: ImageBitmap?,
+        val failure: String,
+        val picture: Boolean,
+        val detail: Float,
+    )
 
     private fun find(gen: Int) {
         _state.update { it.copy(phase = Phase.FINDING) }
@@ -151,7 +174,7 @@ class SpotController(
                 val result = finder.find(taken, found)
                 Log.i(TAG, "${result.status} in ${result.millis} ms")
                 dir?.let { writeReport(it, result) }
-                result to result.photos.map { p -> Shown(p.screen?.let { bitmap(it) }, p.differences) }
+                result to result.photos.map { p -> Shown(p.screen?.let { bitmap(it) }, p.differences, p.note) }
             }
             if (gen != generation) return@launch
             _state.update { it.copy(phase = Phase.DONE, results = shown.second, status = shown.first.status) }
@@ -202,6 +225,7 @@ class SpotController(
                         appendLine(
                             when {
                                 p.screen == null -> "screen not found"
+                                p.note != null -> "left out: ${p.note}"
                                 p.differences.isEmpty() -> "no difference"
                                 else -> p.differences.joinToString { d ->
                                     "[%.3f,%.3f - %.3f,%.3f] %.0f".format(Locale.US, d.left, d.top, d.right, d.bottom, d.score)

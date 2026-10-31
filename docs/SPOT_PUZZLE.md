@@ -4,8 +4,8 @@ A screen in a dark bezel, inside rings of neon, shows one picture after another.
 the same scene with one thing changed: something added, something taken away, something
 recoloured. The team has to find what changed in each.
 
-The app's part: **take six photos, one per picture, and get all six back with the
-difference in each boxed.** A Reset button, top right in every phase, throws the round
+The room shows seven. The app's part: **take seven photos, one per picture, and get all
+seven back with the difference in each boxed.** A Reset button, top right in every phase, throws the round
 away and starts again.
 
 ## Using it
@@ -13,17 +13,18 @@ away and starts again.
 Pick **Spot** on the landing page. The camera comes up with a green outline round the
 screen whenever the app can see all of it; if the outline is missing, step back or
 re-aim until it appears. Tap the shutter once for each picture. Each photo is checked as
-it is taken, and one without the whole screen in it is not kept, with a note saying so
-while the picture is still up and can be retaken. The six slots at the bottom fill in as
-photos are kept.
+it is taken. One without the whole screen in it is not kept, and nor is one of the plain
+green screen the room shows between pictures; either way a note says so while the picture
+is still up and can be retaken. The seven slots at the bottom fill in as photos are kept.
 
-After the sixth the photos are compared, which takes a second or two, and the answer
+After the seventh the photos are compared, which takes a second or two, and the answer
 replaces the camera: every photo, straightened, with a magenta box round what differs.
 Tap one to see it at full width. A photo with no box is the original picture, if the room
-showed it, though no round so far has had one.
+showed it, though no round so far has had one. A photo left out of the comparison says
+why on its card: no picture on the screen, or it could not be lined up with the others.
 
 Every round is kept on the phone under `files/spot/<date-time>/`: the photos as taken,
-`1.jpg` to `6.jpg`, and `found.txt` with what was found in each. See [Replaying a round](#replaying-a-round).
+`1.jpg` to `7.jpg`, and `found.txt` with what was found in each. See [Replaying a round](#replaying-a-round).
 
 ## How it works
 
@@ -57,7 +58,16 @@ would come up as a difference. In order (`core/.../puzzle/spot/`):
    places. In the first round taken with the app, two of six outlines went round the neon
    rather than the screen, through a thin bright bridge at one corner, and a third was 20
    pixels out along one side. Lining up on the outlines, that round found one difference,
-   and the wrong one. So, against the photo with the biggest view of the screen:
+   and the wrong one. So:
+   - **A photo with no picture on the screen is left out first.** The room shows a plain
+     green screen between pictures. Its detail -- the mean step in brightness between
+     neighbouring pixels, on the screen straightened to 320 wide -- is 1.5, against 7 to
+     20 for every picture so far; anything under 4 is not a picture.
+   - **The reference is the photo the others agree with best,** by a quick version of the
+     coarse search below between every pair. It used to be the photo with the biggest
+     screen, and in the first round in the room that was the blank green screen, then in
+     the next an outline round the neon: neither lines up with anything, so everything
+     was compared against nothing.
    - **A coarse search** over scale (0.7 to 1.4) and shift (15% each way) at an eighth of
      the resolution brings even an outline round the neon, 1.27 times too big, back into
      range.
@@ -69,7 +79,10 @@ would come up as a difference. In order (`core/.../puzzle/spot/`):
    - **The rectangle is decided by majority.** Every photo's own outline is carried into
      the reference's frame, and the median of them, corner by corner, becomes the rectangle.
      A wrong outline is outvoted, the reference's own included.
-   - The patches are matched once more against the median of all the photos.
+   - The patches are matched once more against the median of all the photos. A photo
+     where fewer than 12 patches agree at full resolution is left out, as long as three are
+     left to compare: misaligned, every edge in it is a difference, and it drags the
+     median for the others.
 4. **Even out the exposure,** per colour channel, as a gain and offset fitted to the
    median, again with outliers trimmed, because the outliers are the difference.
 5. **Compare** each photo with the median: the summed absolute difference of the three
@@ -98,7 +111,7 @@ target is the sample photos' own exposure: screen 98th percentile 230, median 15
 
 ## Tested against
 
-Three rounds, hand-held, each framed a little differently, in
+Five rounds, hand-held, each framed a little differently, in
 `core/src/test/resources/spot/`.
 
 - **Set 1**, seven photos of a harbour: a moon added, a cloud taken away, a row of windows
@@ -110,16 +123,26 @@ Three rounds, hand-held, each framed a little differently, in
   and photographed off it, in the order 7 to 2. These are the photos that broke the first
   version (see step 3 above). The browser's tab bar above the monitor's picture is
   blacked out.
+- **Set 4**, the first round in the room with the app, 2026-10-31: a beach. Two photos
+  are in the room's answer phase (green neon, its own ring round the difference), and the
+  last is the blank green screen between pictures, which on the phone became the
+  reference.
+- **Set 5**, a minute later: a desert town, with two outlines round the neon and one photo
+  from twice as far off, in the answer phase.
 
-Sets 1 and 2 were taken on the phone's camera app and are 720x960 here; Set 3 is the app's
-own 1080x1920, at 720x1280. `SpotFinderTest` runs all three, plus the two six-photo subsets
-of the first set: without the windows, and without the far photo. Every photo comes back
-with exactly one box, containing the place it was checked by eye to be. A whole round takes about a second on a desktop JVM. The weakest real
+Sets 1 and 2 were taken on the phone's camera app and are 720x960 here; Sets 3 to 5 are the
+app's own 1080x1920, at 720x1280. Sets 4 and 5 were taken when the app still took six.
+`SpotFinderTest` runs all five, plus the two six-photo subsets of the first set: without
+the windows, and without the far photo. Every photo with a picture comes back with exactly
+one box, containing the place it was checked by eye to be, and the blank screen is left
+out and says so. A whole round takes about a second on a desktop JVM. The weakest real
 difference, the missing windows in Set 1, scores 2,300 against a floor of 1,000; in the
 app's own photos it scores 9,000 to 10,000. The strongest stray that is neither on the
 edge nor beside a real difference scores about 700.
 
-Run on the phone at a desk, off a monitor, but not yet in the room.
+Run on the phone in the room on 2026-10-31. Both rounds that day came out wrong on the
+phone -- the blank screen and the neon outline as the reference -- and both come out right
+now, replayed.
 
 ## Replaying a round
 

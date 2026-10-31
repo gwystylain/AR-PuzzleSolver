@@ -73,9 +73,63 @@ class SpotFinderTest {
         0.258f to 0.172f,   // the cloud, taken away
     )
 
+    /**
+     * The first round in the room with the app, 2026-10-31: a beach. Photos 3 and 5 were
+     * taken in the room's answer phase, green neon and its own ring round the difference;
+     * photo 6 is the plain green screen the room shows between pictures. On the phone the
+     * blank one was the biggest screen, so it became the reference and nothing lined up.
+     */
+    private val set4 = listOf(
+        0.279f to 0.790f,   // the umbrella and sun lounger, taken away
+        0.650f to 0.520f,   // a swimmer, taken away
+        0.659f to 0.255f,   // a bird, added (ringed)
+        0.315f to 0.220f,   // a flag on the lighthouse, added
+        0.323f to 0.184f,   // a plane, added (ringed)
+        null,               // no picture
+    )
+
+    /**
+     * The second, a minute later: a desert town. Photo 1 is far off and in the answer phase;
+     * two outlines went round the neon, and on the phone one of them was the reference.
+     */
+    private val set5 = listOf(
+        0.542f to 0.695f,   // the walker on the path, taken away (ringed)
+        0.884f to 0.411f,   // the palm on the wall, taken away
+        0.458f to 0.212f,   // a moon, added
+        0.272f to 0.665f,   // something in the bushes, added
+        0.600f to 0.809f,   // a second walker, added
+        0.806f to 0.647f,   // a flower on a bush, taken away
+    )
+
     @Test
     fun `finds the difference in each photo of a round taken with the app`() {
         check(SpotFixture.set("set3"), set3)
+    }
+
+    @Test
+    fun `leaves out the blank screen between pictures and finds the rest`() {
+        check(SpotFixture.set("set4"), set4, blank = setOf(5))
+    }
+
+    @Test
+    fun `finds the differences in a round with outlines round the neon`() {
+        check(SpotFixture.set("set5"), set5)
+    }
+
+    @Test
+    fun `tells a picture from the blank screen between pictures`() {
+        val locator = ScreenLocator()
+        for (name in listOf("set1", "set2", "set3", "set4", "set5")) {
+            for ((i, photo) in SpotFixture.set(name).withIndex()) {
+                val screen = locator.locate(photo.luma())!!
+                val blank = name == "set4" && i == 5
+                assertEquals(
+                    "$name photo ${i + 1} detail ${finder.detail(photo, screen)}",
+                    !blank,
+                    finder.hasPicture(photo, screen),
+                )
+            }
+        }
     }
 
     @Test
@@ -106,7 +160,7 @@ class SpotFinderTest {
     @Test
     fun `finds the screen in every photo`() {
         val locator = ScreenLocator()
-        for (name in listOf("set1", "set2")) {
+        for (name in listOf("set1", "set2", "set3", "set4", "set5")) {
             for ((i, photo) in SpotFixture.set(name).withIndex()) {
                 val screen = locator.locate(photo.luma())
                 assertNotNull("$name photo ${i + 1}: ${locator.lastFailure}", screen)
@@ -144,7 +198,7 @@ class SpotFinderTest {
     fun `too few photos with the screen in them says so`() {
         val photos = SpotFixture.set("set2").take(2)
         val result = finder.find(photos)
-        assertTrue(result.status, result.status.startsWith("Need the screen"))
+        assertTrue(result.status, result.status.startsWith("Need at least"))
         assertTrue(result.photos.all { it.differences.isEmpty() })
     }
 
@@ -187,7 +241,7 @@ class SpotFinderTest {
         assertEquals(45.0, p[1], 1e-6)
     }
 
-    private fun check(photos: List<RgbImage>, expected: List<Pair<Float, Float>?>) {
+    private fun check(photos: List<RgbImage>, expected: List<Pair<Float, Float>?>, blank: Set<Int> = emptySet()) {
         val result = finder.find(photos)
         println("spot: ${result.status} in ${result.millis} ms")
         for ((k, photo) in result.photos.withIndex()) {
@@ -200,6 +254,12 @@ class SpotFinderTest {
         assertEquals(photos.size, result.photos.size)
         for ((k, photo) in result.photos.withIndex()) {
             assertNotNull("photo ${k + 1} lost its screen", photo.screen)
+            if (k in blank) {
+                assertEquals("photo ${k + 1} is blank", SpotFinder.NOTE_BLANK, photo.note)
+                assertTrue("photo ${k + 1} is blank and should have no box", photo.differences.isEmpty())
+                continue
+            }
+            assertNull("photo ${k + 1} was left out: ${photo.note}", photo.note)
             val want = expected[k]
             if (want == null) {
                 assertTrue("photo ${k + 1} has nothing changed and should have no box", photo.differences.isEmpty())

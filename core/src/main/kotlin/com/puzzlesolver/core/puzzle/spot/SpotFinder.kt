@@ -69,6 +69,8 @@ class SpotFinder(
         @JvmField val screen: RgbImage?,
         /** Strongest first. Empty when this photo is the original picture, or was not used. */
         @JvmField val differences: List<Difference>,
+        /** Why this photo was left out of the comparison, when it was; null when it was not. */
+        @JvmField val note: String? = null,
     )
 
     class Result(
@@ -90,7 +92,13 @@ class SpotFinder(
         val located = Array(count) { k -> screens?.getOrNull(k) ?: locator.locate(lumas[k]) }
         val used = (0 until count).filter { located[it] != null }
         for (k in 0 until count) {
-            log("photo ${k + 1}: " + (located[k]?.corners?.joinToString(" ") { "%.0f".format(it) }?.let { "screen at $it" } ?: "no screen"))
+            val screen = located[k]
+            log(
+                "photo ${k + 1}: " + if (screen == null) "no screen" else {
+                    "screen at " + screen.corners.joinToString(" ") { "%.0f".format(it) } +
+                        ", detail %.1f".format(detail(photos[k], screen))
+                }
+            )
         }
 
         val aspect = used.map { located[it]!!.aspect }.sorted()
@@ -104,21 +112,39 @@ class SpotFinder(
             val c = located[k]!!.corners
             homs[k] = Homography.fit(canon, DoubleArray(8) { c[it].toDouble() })
         }
-        val aligned = used.filter { homs[it] != null }
+        // A screen with no picture on it is not a photo of the picture. The room shows a
+        // plain green screen between pictures, and on 2026-10-31 one went into a round as
+        // its biggest screen -- which made it the reference everything else was lined up
+        // against, and there was nothing on it to line up with.
+        val blank = used.filter { k -> homs[k] != null && !hasPicture(photos[k], located[k]!!) }
+        for (k in blank) log("photo ${k + 1}: no picture on the screen (detail %.1f)".format(detail(photos[k], located[k]!!)))
+        val candidates = used.filter { homs[it] != null && it !in blank }
 
-        if (aligned.size < MIN_PHOTOS) {
-            val missing = (0 until count).filter { homs[it] == null }.map { it + 1 }
+        if (candidates.size < MIN_PHOTOS) {
             return Result(
-                photos = (0 until count).map { k -> Photo(k, homs[k]?.let { display(photos[k], it, w, h0) }, emptyList()) },
-                status = "Need the screen in at least $MIN_PHOTOS photos to compare them; " +
-                    "not found in photo${if (missing.size == 1) "" else "s"} ${missing.joinToString()}",
+                photos = (0 until count).map { k ->
+                    when {
+                        k in blank -> Photo(k, straighten(photos[k], located[k]!!, DISPLAY_WIDTH), emptyList(), NOTE_BLANK)
+                        else -> Photo(k, homs[k]?.let { display(photos[k], it, w, h0) }, emptyList())
+                    }
+                },
+                status = "Need at least $MIN_PHOTOS photos of the picture to compare them" +
+                    leftOut(count, homs, blank, emptyList()),
                 millis = (System.nanoTime() - started) / 1_000_000,
             )
         }
 
         // The rectangle the photos are compared in is settled by alignment, by majority: it
         // can come back a different shape from the one the outlines first suggested.
-        val h = align(aligned, lumas, located, homs, w, h0)
+        val alignment = align(candidates, lumas, located, homs, w, h0)
+        val h = alignment.height
+        // A photo that would not line up is left out rather than compared: misaligned, every
+        // edge in it is a difference, and it drags the median for the rest. Only while
+        // enough are left to compare; past that it is better to try than to refuse.
+        val lined = candidates.filter { (alignment.agreed[it] ?: 0) >= MIN_LINED_UP }
+        val aligned = if (lined.size >= MIN_PHOTOS) lined else candidates
+        val unlined = candidates - aligned.toSet()
+        for (k in unlined) log("photo ${k + 1}: would not line up (${alignment.agreed[k] ?: 0} patches agree); left out")
 
         // Final images, and the part of the rectangle that is screen in every photo, pulled
         // in from its edge: the bezel's parallax lives there.
@@ -132,7 +158,12 @@ class SpotFinder(
         erode(mask, w, h, (w * MARGIN_FRACTION).roundToInt())
         if (mask.count { it } < n * MIN_MASK_FRACTION) {
             return Result(
-                photos = (0 until count).map { k -> Photo(k, homs[k]?.let { display(photos[k], it, w, h) }, emptyList()) },
+                photos = (0 until count).map { k ->
+                    when {
+                        k in blank -> Photo(k, straighten(photos[k], located[k]!!, DISPLAY_WIDTH), emptyList(), NOTE_BLANK)
+                        else -> Photo(k, homs[k]?.let { display(photos[k], it, w, h) }, emptyList())
+                    }
+                },
                 status = "The photos do not show enough of the same screen to compare",
                 millis = (System.nanoTime() - started) / 1_000_000,
             )
@@ -153,19 +184,55 @@ class SpotFinder(
         }
 
         val found = differences.values.count { it.isNotEmpty() }
-        val skipped = (0 until count).filter { homs[it] == null }.map { it + 1 }
-        val status = buildString {
-            append("${aligned.size} photos compared; a difference in $found")
-            if (skipped.isNotEmpty()) append("; screen not found in photo ${skipped.joinToString()}")
-        }
+        val status = "${aligned.size} photos compared; a difference in $found" + leftOut(count, homs, blank, unlined)
         return Result(
             photos = (0 until count).map { k ->
-                Photo(k, homs[k]?.let { display(photos[k], it, w, h) }, differences[k] ?: emptyList())
+                when {
+                    k in blank -> Photo(k, straighten(photos[k], located[k]!!, DISPLAY_WIDTH), emptyList(), NOTE_BLANK)
+                    k in unlined -> Photo(k, display(photos[k], homs[k]!!, w, h), emptyList(), NOTE_UNLINED)
+                    else -> Photo(k, homs[k]?.let { display(photos[k], it, w, h) }, differences[k] ?: emptyList())
+                }
             },
             status = status,
             millis = (System.nanoTime() - started) / 1_000_000,
         )
     }
+
+    /** The tail of the status line: which photos were left out, and why. */
+    private fun leftOut(count: Int, homs: Array<Homography?>, blank: List<Int>, unlined: List<Int>): String = buildString {
+        fun names(ks: List<Int>) = (if (ks.size == 1) "photo " else "photos ") + ks.joinToString { "${it + 1}" }
+        if (blank.isNotEmpty()) append("; no picture on the screen in ${names(blank)}")
+        if (unlined.isNotEmpty()) append("; could not line up ${names(unlined)}")
+        val missing = (0 until count).filter { homs[it] == null }
+        if (missing.isNotEmpty()) append("; screen not found in ${names(missing)}")
+    }
+
+    /**
+     * How much picture there is on a located screen: the mean step in brightness between
+     * neighbouring pixels across the middle of the screen, straightened to a fixed width so
+     * the number does not depend on how close the photo was taken.
+     *
+     * Every picture in the rounds so far measures 7 or more -- the softest are photos of
+     * the pictures off a monitor -- and the plain green screen the room shows between
+     * pictures measures 1.5.
+     */
+    fun detail(photo: RgbImage, screen: ScreenLocator.Screen): Float {
+        val straight = straighten(photo, screen, DETAIL_WIDTH).luma()
+        val w = straight.width
+        val h = straight.height
+        var sum = 0L
+        var n = 0
+        for (y in h / 10 until h - h / 10) {
+            for (x in w / 10 until w - w / 10 - 1) {
+                sum += abs(straight[x + 1, y] - straight[x, y])
+                n++
+            }
+        }
+        return if (n == 0) 0f else sum.toFloat() / n
+    }
+
+    /** Whether there is a picture on the screen at all, rather than a plain one between pictures. */
+    fun hasPicture(photo: RgbImage, screen: ScreenLocator.Screen): Boolean = detail(photo, screen) >= MIN_DETAIL
 
     /**
      * Straightens one photo's screen on its outline alone, for a thumbnail taken before
@@ -202,6 +269,11 @@ class SpotFinder(
      *     and the rectangle used from then on is the median of them, corner by corner. A
      *     wrong outline is outvoted, including the reference's own.
      *  4. Once more by patches, against the median of all the photos.
+     *
+     * The reference is the photo the others agree with best, by a quick version of the
+     * coarse search between every pair. It used to be the photo with the biggest screen,
+     * and on 2026-10-31 that was twice the wrong one: a plain green screen between
+     * pictures, and an outline drawn round the neon. Neither agrees with anything.
      */
     private fun align(
         aligned: List<Int>,
@@ -210,19 +282,29 @@ class SpotFinder(
         homs: Array<Homography?>,
         w: Int,
         h0: Int,
-    ): Int {
+    ): Alignment {
         var h = h0
         var mask = BooleanArray(w * h) { true }
         for (k in aligned) andScreenMask(mask, located[k]!!, homs[k]!!, w, h)
 
-        val reference = aligned.maxBy { located[it]!!.area }
-        val first = warpLuma(lumas[reference], homs[reference]!!, w, h)
-        val firstPyramid = Pyramid(first, mask, w, h)
+        val pyramids = aligned.associateWith { Pyramid(warpLuma(lumas[it], homs[it]!!, w, h), mask, w, h) }
+        val coarse = pyramids.getValue(aligned[0]).at(GLOBAL_FACTOR)
+        val agreement = aligned.associateWith { r ->
+            val others = aligned.filter { it != r }
+            others.sumOf { k ->
+                val p = pyramids.getValue(k)
+                coarseSearch(pyramids.getValue(r), p.images[coarse], p.widths[coarse], p.heights[coarse], AGREEMENT_SCALE_STRIDE, AGREEMENT_SHIFT_STRIDE).score
+            } / others.size.coerceAtLeast(1)
+        }
+        val reference = aligned.maxBy { agreement.getValue(it) }
+        log("reference photo ${reference + 1}; agreement " + aligned.joinToString(" ") { "${it + 1}:%.2f".format(agreement.getValue(it)) })
+
+        val firstPyramid = pyramids.getValue(reference)
         for (k in aligned) {
             if (k == reference) continue
             var hom = homs[k]!!
             globalSimilarity(firstPyramid, warpLuma(lumas[k], hom, w, h), w, h, k)?.let { hom = hom * it }
-            homs[k] = refine(lumas[k], hom, firstPyramid, w, h, "photo ${k + 1} to photo ${reference + 1}")
+            homs[k] = refine(lumas[k], hom, firstPyramid, w, h, "photo ${k + 1} to photo ${reference + 1}").hom
         }
 
         // The rectangle, by majority.
@@ -250,9 +332,22 @@ class SpotFinder(
 
         val median = Pyramid(medianOf(aligned.map { warpLuma(lumas[it], homs[it]!!, w, h) }, w * h), mask, w, h)
         log("rectangle by majority: " + consensus.joinToString(" ") { "%.1f".format(it) } + " -> ${w}x$h")
-        for (k in aligned) homs[k] = refine(lumas[k], homs[k]!!, median, w, h, "photo ${k + 1} to the median")
-        return h
+        val agreed = HashMap<Int, Int>()
+        for (k in aligned) {
+            val refined = refine(lumas[k], homs[k]!!, median, w, h, "photo ${k + 1} to the median")
+            homs[k] = refined.hom
+            agreed[k] = refined.agreed
+        }
+        return Alignment(h, agreed)
     }
+
+    /**
+     * Where alignment left the photos: the height of the rectangle they are mapped to, and
+     * for each how many patches agreed at full resolution against the median of them all.
+     */
+    private class Alignment(val height: Int, val agreed: Map<Int, Int>)
+
+    private class Refined(val hom: Homography, val agreed: Int)
 
     /** A reference image and its mask at full, half, quarter and eighth resolution. */
     private inner class Pyramid(full: FloatArray, mask: BooleanArray, w: Int, h: Int) {
@@ -279,9 +374,13 @@ class SpotFinder(
         fun at(factor: Int) = Integer.numberOfTrailingZeros(factor)
     }
 
-    /** Patch corrections at a quarter, half and full resolution, in that order. */
-    private fun refine(luma: GrayImage, start: Homography, ref: Pyramid, w: Int, h: Int, label: String): Homography {
+    /**
+     * Patch corrections at a quarter, half and full resolution, in that order, and how many
+     * patches agreed at full resolution.
+     */
+    private fun refine(luma: GrayImage, start: Homography, ref: Pyramid, w: Int, h: Int, label: String): Refined {
         var hom = start
+        var agreed = 0
         val matches = Matches(GRID_X * GRID_Y)
         for (level in LEVELS) {
             val i = ref.at(level.factor)
@@ -297,8 +396,9 @@ class SpotFinder(
             val correction = fitMatches(matches, w, h, MATCH_TOLERANCE * level.factor)
             log("$label at 1/${level.factor}: ${matches.count} matches, ${lastAgreed} agree" + if (correction == null) ", no correction" else "")
             if (correction != null) hom = hom * correction
+            if (level.factor == 1) agreed = if (correction != null) lastAgreed else 0
         }
-        return hom
+        return Refined(hom, agreed)
     }
 
     /**
@@ -311,10 +411,6 @@ class SpotFinder(
      */
     private fun globalSimilarity(ref: Pyramid, movFull: FloatArray, w: Int, h: Int, k: Int): Homography? {
         val i = ref.at(GLOBAL_FACTOR)
-        val r = ref.images[i]
-        val mask = ref.masks[i]
-        val dw = ref.widths[i]
-        val dh = ref.heights[i]
         var mov = movFull
         var mw = w
         var mh = h
@@ -323,6 +419,37 @@ class SpotFinder(
             mw /= 2
             mh /= 2
         }
+        val found = coarseSearch(ref, mov, mw, mh, 1, 1)
+        log("photo ${k + 1}: coarse search %.3f at scale %.3f, shift %d,%d".format(found.score, found.scale, found.dx, found.dy))
+        if (found.score < GLOBAL_MIN_CORRELATION) return null
+        // In the decimated frame a reference point p lands at c + s * (p + d - c); scaled up,
+        // c and p by the factor, and d with them.
+        val f = GLOBAL_FACTOR.toDouble()
+        val c0 = ref.widths[i] / 2.0 * f
+        val c1 = ref.heights[i] / 2.0 * f
+        val s = found.scale
+        return Homography(
+            doubleArrayOf(
+                s, 0.0, c0 - s * c0 + s * found.dx * f,
+                0.0, s, c1 - s * c1 + s * found.dy * f,
+                0.0, 0.0, 1.0,
+            )
+        )
+    }
+
+    private class Coarse(val score: Double, val scale: Double, val dx: Int, val dy: Int)
+
+    /**
+     * The exhaustive search behind [globalSimilarity], on a photo already at the coarse
+     * level. Every [scaleStride]th scale and [shiftStride]th shift, so that the quick
+     * version choosing the reference can afford to run it between every pair of photos.
+     */
+    private fun coarseSearch(ref: Pyramid, mov: FloatArray, mw: Int, mh: Int, scaleStride: Int, shiftStride: Int): Coarse {
+        val i = ref.at(GLOBAL_FACTOR)
+        val r = ref.images[i]
+        val mask = ref.masks[i]
+        val dw = ref.widths[i]
+        val dh = ref.heights[i]
         // The template: the middle half of the reference each way, screen pixels only,
         // zero-mean. Half, not more, so that it stays inside the photo across the whole
         // search: at 1.4 times and shifted 15%, a template reaching past the middle half
@@ -337,13 +464,14 @@ class SpotFinder(
         val ty = ArrayList<Int>()
         for (y in y0 until y1) for (x in x0 until x1) if (mask[y * dw + x]) { tx.add(x); ty.add(y) }
         val m = tx.size
-        if (m < 48) return null
+        val none = Coarse(-2.0, 1.0, 0, 0)
+        if (m < 48) return none
         val a = DoubleArray(m) { r[ty[it] * dw + tx[it]].toDouble() }
         val mean = a.average()
         var na = 0.0
         for (j in 0 until m) { a[j] -= mean; na += a[j] * a[j] }
         na = sqrt(na)
-        if (na < 1e-6) return null
+        if (na < 1e-6) return none
 
         val shift = (dw * GLOBAL_SHIFT).roundToInt()
         val gw = x1 - x0 + 2 * shift
@@ -355,7 +483,7 @@ class SpotFinder(
         var bestScale = 1.0
         var bestDx = 0
         var bestDy = 0
-        for (step in 0 until GLOBAL_SCALES) {
+        for (step in 0 until GLOBAL_SCALES step scaleStride) {
             val s = Math.pow(GLOBAL_MIN_SCALE, 1.0 - 2.0 * step / (GLOBAL_SCALES - 1))
             // The photo resampled at this scale over the template's area and every shift.
             for (gy in 0 until gh) {
@@ -374,8 +502,8 @@ class SpotFinder(
                     }
                 }
             }
-            for (dy in -shift..shift) {
-                for (dx in -shift..shift) {
+            for (dy in -shift..shift step shiftStride) {
+                for (dx in -shift..shift step shiftStride) {
                     var sb = 0.0
                     var sbb = 0.0
                     var sab = 0.0
@@ -398,21 +526,7 @@ class SpotFinder(
                 }
             }
         }
-        log("photo ${k + 1}: coarse search %.3f at scale %.3f, shift %d,%d".format(best, bestScale, bestDx, bestDy))
-        if (best < GLOBAL_MIN_CORRELATION) return null
-        // In the decimated frame a reference point p lands at c + s * (p + d - c); scaled up,
-        // c and p by the factor, and d with them.
-        val f = GLOBAL_FACTOR.toDouble()
-        val c0 = cx * f
-        val c1 = cy * f
-        val s = bestScale
-        return Homography(
-            doubleArrayOf(
-                s, 0.0, c0 - s * c0 + s * bestDx * f,
-                0.0, s, c1 - s * c1 + s * bestDy * f,
-                0.0, 0.0, 1.0,
-            )
-        )
+        return Coarse(best, bestScale, bestDx, bestDy)
     }
 
     private fun median(values: DoubleArray): Double {
@@ -1016,7 +1130,7 @@ class SpotFinder(
         const val ID = "spot"
 
         /** Photos the room shows, and the app takes, per round. */
-        const val PHOTOS = 6
+        const val PHOTOS = 7
 
         /** Fewest photos a median can name the original from. */
         const val MIN_PHOTOS = 3
@@ -1072,6 +1186,23 @@ class SpotFinder(
         private const val GLOBAL_SHIFT = 0.15
         private const val GLOBAL_MIN_CORRELATION = 0.5
         private const val GLOBAL_TEMPLATE = 0.5
+
+        /** The quick coarse search between every pair, for the reference: every third scale, every other shift. */
+        private const val AGREEMENT_SCALE_STRIDE = 3
+        private const val AGREEMENT_SHIFT_STRIDE = 2
+
+        /**
+         * Patches that must agree at full resolution against the median for a photo to be
+         * compared. Every photo that lined up in the rounds so far had 40 or more.
+         */
+        private const val MIN_LINED_UP = 12
+
+        /** Width a screen is straightened to for [detail], and the least detail that is a picture. */
+        private const val DETAIL_WIDTH = 320
+        private const val MIN_DETAIL = 4f
+
+        const val NOTE_BLANK = "no picture on the screen"
+        const val NOTE_UNLINED = "could not line this one up with the others"
 
         /** How far in from the screen's outline comparison starts, as a fraction of the width. */
         private const val MARGIN_FRACTION = 0.022

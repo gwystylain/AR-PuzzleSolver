@@ -240,7 +240,7 @@ private val LOOKS: Map<String, Look> = mapOf(
     StrategyRoom.GRIDLOCK.id to Look(Color(0xFFB388FF), "Two boards, one plan, split between players", 2000) { p, c -> gridlockGlyph(p, c) },
     SPELLINATOR_ID to Look(SPELL_ACCENT, "One word from everyone's letters, in their colours", 2400) { p, c -> spellGlyph(p, c) },
     JUMBLE_ID to Look(JUMBLE_ACCENT, "Every word that uses all your letters", 2600) { p, c -> jumbleGlyph(p, c) },
-    SpotFinder.ID to Look(Color(0xFFFF3DCB), "Six photos of the screen, every difference boxed", 2600) { p, c -> spotGlyph(p, c) },
+    SpotFinder.ID to Look(Color(0xFFFF3DCB), "Seven photos of the screen, every difference boxed", 2600) { p, c -> spotGlyph(p, c) },
 )
 
 private val PLAIN = Look(Color(0xFF9AA6B2), "", 1000) { _, c -> plainGlyph(c) }

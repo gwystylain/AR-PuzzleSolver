@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -53,12 +54,12 @@ import com.puzzlesolver.app.spot.SpotController
 import com.puzzlesolver.core.puzzle.spot.SpotFinder
 
 /**
- * Spot: six photos of the screen, then every one of them back with what changed boxed.
+ * Spot: seven photos of the screen, then every one of them back with what changed boxed.
  *
  * While photos are being taken the camera is behind this, and the only things over it are
  * the screen's outline -- green when the app can see the whole screen, so the user knows
- * the next photo will count -- the six slots filling up, and the shutter at the bottom
- * where the thumb is. Once the sixth is in, the camera is covered by the answer.
+ * the next photo will count -- the slots filling up, and the shutter at the bottom where
+ * the thumb is. Once the last is in, the camera is covered by the answer.
  *
  * **Reset is always in the same place**, top right, whatever the round is doing: halfway
  * through the photos, while they are being compared, or over the answer. A round goes
@@ -161,11 +162,17 @@ private fun Taking(
     }
 }
 
-/** The six photos of the round: each one taken so far, then an empty numbered slot. */
+/**
+ * The photos of the round: each one taken so far, then an empty numbered slot. The slots
+ * share the width rather than having one of their own, so that seven fit across a phone
+ * held upright -- at a fixed 52 dp they ran off its edge.
+ */
 @Composable
 private fun Slots(thumbnails: List<ImageBitmap>, target: Int) {
     Row(
         Modifier
+            .widthIn(max = 480.dp)
+            .fillMaxWidth()
             .background(Color(0xCC101418), RoundedCornerShape(12.dp))
             .padding(8.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -174,7 +181,7 @@ private fun Slots(thumbnails: List<ImageBitmap>, target: Int) {
             val shape = RoundedCornerShape(6.dp)
             Box(
                 Modifier
-                    .width(52.dp)
+                    .weight(1f)
                     .aspectRatio(1.75f)
                     .clip(shape)
                     .border(1.dp, if (i < thumbnails.size) OUTLINE else Color(0x55FFFFFF), shape),
@@ -300,6 +307,7 @@ private fun ResultCard(index: Int, shown: SpotController.Shown, onClick: () -> U
             Text(
                 when {
                     shown.image == null -> "screen not found"
+                    shown.note != null -> "left out: ${shown.note}"
                     shown.differences.isEmpty() -> "no difference -- the original picture"
                     shown.differences.size == 1 -> "1 difference"
                     else -> "${shown.differences.size} possible differences"
