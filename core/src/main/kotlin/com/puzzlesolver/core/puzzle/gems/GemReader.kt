@@ -60,12 +60,12 @@ class GemReader {
         washFrom(view, cx, cy, pitch * GemPalette.MIDDLE_GAP_INNER, pitch * GemPalette.MIDDLE_GAP_OUTER)
         val middle = GemPalette.classifyAnnulus(
             view, cx, cy, pitch * GemPalette.MIDDLE_INNER, pitch * GemPalette.MIDDLE_OUTER,
-            votes, scratch, wash[0], wash[1], wash[2],
+            votes, scratch, wash[0], wash[1], wash[2], GemPalette.OWN_GREEN_MIDDLE,
         )
         washFrom(view, cx, cy, pitch * GemPalette.CENTRE_GAP_INNER, pitch * GemPalette.CENTRE_GAP_OUTER)
         val centre = GemPalette.classifyAnnulus(
             view, cx, cy, pitch * GemPalette.CENTRE_INNER, pitch * GemPalette.CENTRE_OUTER,
-            votes, scratch, wash[0], wash[1], wash[2],
+            votes, scratch, wash[0], wash[1], wash[2], GemPalette.OWN_GREEN_CENTRE,
         )
         val pattern = GemPattern(
             outer = outer.colour,

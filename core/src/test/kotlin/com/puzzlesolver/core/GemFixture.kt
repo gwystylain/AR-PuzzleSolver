@@ -192,6 +192,85 @@ object GemFixture {
     /** Column of the first wall row below it on screen. */
     const val TARGETS_WALL_X = 236f
 
+    /**
+     * The wall in all four colours: stage 3 of a round, from the run of 2026-10-31.
+     *
+     * The game plays three stages a round, and only the third lights yellow. Stages one
+     * and two worked on the day and the third did not, and this frame -- gem-0049 of the
+     * second capture, held still at the preset -- is why: every gem with a yellow middle
+     * ring under a green outer one read red, and the one under a blue outer read blue.
+     * Yellow light is red plus green light, so subtracting a green ring's glow from a
+     * yellow ring leaves red. No earlier fixture had more than one yellow ring in it.
+     *
+     * Cropped to the wall from x = 400; the camera was held portrait, so the image is on
+     * its side. Rings labelled by eye at 4x to 8x zoom. The gem cut off by the bottom
+     * edge is in [FOUR_CUT_OFF] instead, since only half of it is in frame.
+     */
+    val FOUR_LABELLED = listOf(
+        Labelled(73.4f, 81.0f, "red", "green", "green"),
+        Labelled(224.4f, 89.6f, "green", "red", "red"),
+        Labelled(368.6f, 98.3f, "yellow", "blue", "red"),
+        Labelled(507.1f, 105.2f, "green", "yellow", "yellow"),
+        Labelled(639.6f, 112.6f, "yellow", "red", "green"),
+        Labelled(767.7f, 119.5f, "yellow", "blue", "green"),
+        Labelled(83.8f, 230.7f, "yellow", "red", "yellow"),
+        Labelled(229.4f, 235.4f, "yellow", "blue", "red"),
+        Labelled(367.8f, 240.6f, "green", "yellow", "blue"),
+        Labelled(501.6f, 245.0f, "green", "yellow", "blue"),
+        Labelled(629.9f, 249.5f, "red", "red", "green"),
+        Labelled(753.2f, 252.6f, "red", "green", "yellow"),
+        Labelled(872.9f, 256.8f, "green", "yellow", "blue"),
+        Labelled(88.8f, 366.8f, "blue", "blue", "red"),
+        Labelled(230.3f, 368.0f, "red", "red", "blue"),
+        Labelled(367.8f, 370.6f, "green", "yellow", "red"),
+        Labelled(499.6f, 372.4f, "green", "yellow", "blue"),
+        Labelled(746.5f, 376.2f, "red", "yellow", "red"),
+        Labelled(864.3f, 377.2f, "green", "red", "green"),
+        Labelled(91.1f, 504.7f, "blue", "blue", "blue"),
+        Labelled(233.2f, 503.2f, "green", "red", "green"),
+        Labelled(370.1f, 503.2f, "red", "red", "green"),
+        Labelled(500.9f, 502.4f, "yellow", "green", "red"),
+        Labelled(625.5f, 501.5f, "green", "red", "red"),
+        Labelled(747.2f, 501.1f, "blue", "blue", "yellow"),
+        Labelled(865.4f, 500.3f, "green", "yellow", "green"),
+        Labelled(625.6f, 627.3f, "green", "green", "blue"),
+        Labelled(747.2f, 625.1f, "red", "yellow", "yellow"),
+        Labelled(865.3f, 622.1f, "blue", "red", "blue"),
+        Labelled(91.8f, 640.3f, "green", "blue", "red"),
+        Labelled(233.4f, 637.4f, "red", "yellow", "red"),
+        Labelled(370.7f, 633.4f, "green", "red", "blue"),
+        Labelled(501.2f, 630.2f, "red", "green", "red"),
+        Labelled(749.1f, 749.3f, "red", "red", "red"),
+        Labelled(866.3f, 744.3f, "green", "red", "blue"),
+        Labelled(93.1f, 777.7f, "green", "blue", "red"),
+        Labelled(234.5f, 771.5f, "blue", "green", "red"),
+        Labelled(371.5f, 765.6f, "green", "green", "green"),
+        Labelled(502.4f, 759.4f, "yellow", "yellow", "blue"),
+        Labelled(627.6f, 754.2f, "red", "red", "green"),
+        Labelled(875.6f, 864.3f, "red", "green", "blue"),
+        Labelled(91.6f, 912.9f, "blue", "green", "green"),
+        Labelled(236.0f, 904.0f, "blue", "green", "blue"),
+        Labelled(373.8f, 896.1f, "yellow", "yellow", "blue"),
+        Labelled(506.9f, 887.0f, "green", "yellow", "blue"),
+        Labelled(634.9f, 878.8f, "blue", "yellow", "green"),
+        Labelled(756.9f, 871.8f, "yellow", "yellow", "green"),
+        Labelled(235.0f, 1049.1f, "green", "blue", "red"),
+        Labelled(378.4f, 1038.8f, "yellow", "blue", "blue"),
+        Labelled(515.5f, 1026.8f, "red", "green", "blue"),
+        Labelled(648.4f, 1015.7f, "red", "green", "yellow"),
+        Labelled(775.4f, 1005.3f, "green", "yellow", "blue"),
+        Labelled(897.0f, 995.3f, "red", "red", "yellow"),
+    )
+
+    /**
+     * The gem half out of frame at the bottom edge: red/blue/red by eye, and read on the
+     * day as red/blue/blue, which lit it for a red/blue/blue target.
+     */
+    val FOUR_CUT_OFF = Labelled(85.7f, 1057.0f, "red", "blue", "red")
+
+    /** The 2026-10-31 stage-3 frame. See [FOUR_LABELLED]. */
+    fun loadFour(): CanvasView = load("gems-wall-four.ppm.gz")
+
     fun load(): CanvasView = load("gems-wall.ppm")
 
     /** The 2026-10-22 target row. See [TARGETS_TYPED]. */

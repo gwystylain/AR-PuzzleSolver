@@ -113,6 +113,57 @@ object GemPalette {
     const val WASH_CAP = 0.5f
 
     /**
+     * A middle ring whose green follows its red at least this closely keeps its green:
+     * none of the glow's green is taken out of it. See [OWN_GREEN_CENTRE] for the dot.
+     *
+     * Yellow light is red light plus green light, so in a single texel a yellow LED and
+     * a red LED under a green ring's glow are the same colour, and the subtraction that
+     * rescues the second destroys the first: on the run of 2026-10-31 -- the first with
+     * yellow lit across the wall, which the game only does in the third stage of a round
+     * -- the yellow cores of nine middle rings under green measured 54 degrees, and 19
+     * once the green glow came out. Every one read red, and every green/yellow/x gem lit
+     * for a green/red/x target. The single yellow ring under a blue one read blue, its
+     * dim cores outvoted by the glow once their green was gone.
+     *
+     * What tells them apart is where the green is. A yellow ring's green is its own, so
+     * it is bright on the LED dots and dark between them, exactly where its red is. Glow
+     * is a smooth wash, the same on a dot as beside it, so under a red ring the two
+     * channels do not move together -- or move apart, the green brightening towards the
+     * green ring as the red fades away from its own. Measured as the correlation of R and
+     * G across the band: 0.44 to 0.88 for yellow middles under green, 0.74 to 1.00 under
+     * red or yellow and 0.95 under blue; -0.70 to +0.45 for every red middle under green
+     * on both frames. And it has to follow in yellow's proportion -- see [OWN_GREEN_SLOPE].
+     *
+     * Only the green is kept, because that is the channel the two share; the rest of the
+     * glow still comes out. On the 2026-09-04 frame no red ring passes and the reading is
+     * unchanged; on the 2026-10-31 frame eight of nine yellow middles under green read
+     * yellow, and the one under blue.
+     */
+    const val OWN_GREEN_MIDDLE = 0.6f
+
+    /**
+     * At most this much green per unit of red, for the green to count as a yellow ring's.
+     *
+     * Green and red rise together on more than yellow rings. This wall's blue is cyan,
+     * with a little red in it, so on a cyan ring every channel brightens on the dots and
+     * the correlation alone would call its green its own -- and keeping a cyan ring's
+     * green while its glow's blue still comes out turns it green. The difference is the
+     * proportion: a yellow LED gives about as much green as red, a cyan one three times
+     * as much. Measured as the slope of G on R across the band, wherever they correlate:
+     * 0.43 to 1.03 on yellow middles and up to 1.53 on yellow centres under red (where
+     * there is little green glow to keep), 2.1 to 3.5 on cyan rings, and 1.4 to 3.4 on
+     * green ones -- which keep their green either way and are harmless.
+     */
+    const val OWN_GREEN_SLOPE = 1.2f
+
+    /**
+     * The same for the centre dot, set higher because the dot is a handful of texels
+     * inside its own glow: a red dot under a green ring on 2026-09-04 correlates at 0.24
+     * to 0.67, against 0.83 to 1.00 for the yellow dots of 2026-10-31.
+     */
+    const val OWN_GREEN_CENTRE = 0.75f
+
+    /**
      * Measured hue centroids, in degrees, in [GemColour.ALL] order.
      *
      * Note how far blue is from its name: the wall's "blue" measures 198 degrees, which
@@ -196,6 +247,9 @@ object GemPalette {
      * @param washR the glow to take out of each texel before reading it, already
      *        scaled by [WASH_FRACTION]; zero for the outer ring, which has nothing
      *        outside it. See [MIDDLE_GAP_INNER] for why this exists.
+     * @param ownGreen the R/G correlation at which the band's green is taken to be its
+     *        own and [washG] is not subtracted -- [OWN_GREEN_MIDDLE] or
+     *        [OWN_GREEN_CENTRE]. Above 1, the default, it never is.
      * @param scratch reused RGB buffer, so a full board read allocates nothing.
      */
     fun classifyAnnulus(
@@ -209,6 +263,7 @@ object GemPalette {
         washR: Float = 0f,
         washG: Float = 0f,
         washB: Float = 0f,
+        ownGreen: Float = 2f,
     ): Reading {
         votes.fill(0f)
         var lit = 0
@@ -230,6 +285,13 @@ object GemPalette {
         val samples = Math.PI * (outer2 - inner2)
         val step = if (samples <= TARGET_SAMPLES) 1
         else kotlin.math.sqrt(samples / TARGET_SAMPLES).toInt().coerceAtLeast(1)
+
+        // A ring whose green moves with its red is yellow, and the green is its own
+        // rather than glow -- see OWN_GREEN_MIDDLE. Only asked when there is green glow
+        // to take out, so the outer ring and a ring under red pay nothing for it.
+        val keepGreen = washG > 0f && ownGreen <= 1f &&
+            greenFollowsRed(view, cx, cy, inner2, outer2, x0, x1, y0, y1, step, scratch, ownGreen)
+        val washGreen = if (keepGreen) 0f else washG
 
         var y = y0
         while (y <= y1) {
@@ -258,7 +320,7 @@ object GemPalette {
                             // ring's glow is taken out. Each channel gives up the wash or
                             // half of itself, whichever is less -- see WASH_CAP.
                             val r = rawR - minOf(washR, WASH_CAP * rawR)
-                            val g = rawG - minOf(washG, WASH_CAP * rawG)
+                            val g = rawG - minOf(washGreen, WASH_CAP * rawG)
                             val b = rawB - minOf(washB, WASH_CAP * rawB)
                             val max = maxOf(r, g, b)
                             if (max > 0f) {
@@ -296,6 +358,65 @@ object GemPalette {
         }
         if (bestIndex < 0 || best <= 0f) return Reading(GemColour.UNKNOWN, 0f, washedOut, true)
         return Reading(GemColour.ALL[bestIndex], (best - second) / best, washedOut, true)
+    }
+
+    /**
+     * Whether the band's green rises and falls with its red, in a yellow LED's
+     * proportion: R and G correlated at [minCorrelation] or better over the band's lit,
+     * readable texels, with G rising no faster than [OWN_GREEN_SLOPE] times R. Sampled on
+     * the same stride as the vote. False when there is too little to say.
+     */
+    private fun greenFollowsRed(
+        view: CanvasView,
+        cx: Float,
+        cy: Float,
+        inner2: Float,
+        outer2: Float,
+        x0: Int,
+        x1: Int,
+        y0: Int,
+        y1: Int,
+        step: Int,
+        scratch: FloatArray,
+        minCorrelation: Float,
+    ): Boolean {
+        var n = 0
+        var sumR = 0.0
+        var sumG = 0.0
+        var sumRR = 0.0
+        var sumGG = 0.0
+        var sumRG = 0.0
+        var y = y0
+        while (y <= y1) {
+            val dy = y - cy
+            var x = x0
+            while (x <= x1) {
+                val dx = x - cx
+                val d2 = dx * dx + dy * dy
+                if (d2 >= inner2 && d2 <= outer2) {
+                    view.rgbAt(x, y, scratch)
+                    val r = scratch[0]
+                    val g = scratch[1]
+                    val b = scratch[2]
+                    val clipped = (if (r >= CLIP_LEVEL) 1 else 0) +
+                        (if (g >= CLIP_LEVEL) 1 else 0) +
+                        (if (b >= CLIP_LEVEL) 1 else 0)
+                    if (maxOf(r, g, b) >= MIN_VALUE && clipped < 2) {
+                        n++
+                        sumR += r; sumG += g
+                        sumRR += r * r; sumGG += g * g; sumRG += r * g
+                    }
+                }
+                x += step
+            }
+            y += step
+        }
+        if (n < MIN_SAMPLES) return false
+        val varR = sumRR - sumR * sumR / n
+        val varG = sumGG - sumG * sumG / n
+        if (varR <= 0.0 || varG <= 0.0) return false
+        val cov = sumRG - sumR * sumG / n
+        return cov / kotlin.math.sqrt(varR * varG) >= minCorrelation && cov / varR <= OWN_GREEN_SLOPE
     }
 
     /** Index into [GemColour.ALL] of the nearest centroid on the hue circle. */

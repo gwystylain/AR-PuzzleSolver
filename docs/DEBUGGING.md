@@ -173,7 +173,7 @@ on the end is the half that is missing, and it is the whole record of a gem run 
 anyone who left the room without pressing Capture:
 
 ```
-gems[blobs=13 lit=13 readable=11 matched=2 pitch=164.8px luma=41 dropped=14
+gems[blobs=13 lit=13 readable=11 matched=2 shown=2 pitch=164.8px luma=41 dropped=14
      targets=1/4 scan=23.4ms cap=0 status='2 matches  ·  11 of 13 gems read']
 ```
 
@@ -188,6 +188,11 @@ opposite fixes.
 - **`readable`** — of those, how many had all three rings named. A large gap between
   `lit` and `readable` with `washed` low is the classifier's problem; with `washed` high
   it is the camera's, and `washed` is in the `ae[...]` clause earlier on the line.
+- **`matched` / `shown`** — gems that matched a target in the latest scan, and gems
+  actually ringed. The rings are held over three scans so a borderline reading does not
+  blink; the two differing for a moment is that at work, and differing for long means a
+  gem is reading differently scan to scan. See
+  [GEM_PUZZLE.md](GEM_PUZZLE.md#holding-the-rings-steady).
 - **`pitch`** — median gem-to-gem spacing, in pixels, and the ruler every ring radius is
   a fraction of. `-1.0px` means fewer than six gems were in view and nothing was read.
 - **`targets`** — active of four. **`0/4` means nothing can match**, and every other

@@ -28,6 +28,7 @@ import com.puzzlesolver.core.image.RgbImage
 import com.puzzlesolver.core.puzzle.PuzzleRegistry
 import com.puzzlesolver.core.puzzle.bombs.BombAdapter
 import com.puzzlesolver.core.puzzle.gems.GemAdapter
+import com.puzzlesolver.core.puzzle.gems.GemHighlightSteadier
 import com.puzzlesolver.core.puzzle.gems.GemPattern
 import com.puzzlesolver.core.puzzle.gems.GemScanner
 import com.puzzlesolver.core.puzzle.gems.GemTargetStrip
@@ -259,6 +260,17 @@ class ScanPipeline(
 
     @Volatile
     private var liveResult: GemScanner.Result = GemScanner.Result.EMPTY
+
+    /**
+     * The gems actually ringed: [liveResult]'s matches held steady over the last few
+     * scans, so a gem reading either side of a colour boundary does not blink. See
+     * [GemHighlightSteadier]. Written on the solver thread, alongside [liveResult].
+     */
+    @Volatile
+    private var liveRings: List<GemScanner.Gem> = emptyList()
+
+    /** Belongs to the solver thread, like the scanner it follows. */
+    private val gemSteadier = GemHighlightSteadier()
 
     @Volatile
     private var liveTerminalResult: TerminalScanner.Result = TerminalScanner.Result.EMPTY
@@ -861,6 +873,7 @@ class ScanPipeline(
             minesCameraApplied = false
             liveSource = source as? Camera2FrameSource
             liveResult = GemScanner.Result.EMPTY
+            liveRings = emptyList()
             liveTerminalResult = TerminalScanner.Result.EMPTY
             liveSpotScreen = null
             solverThread.post {
@@ -868,6 +881,7 @@ class ScanPipeline(
                 terminalExposure.reset()
                 spotExposure.reset()
                 spotCameraWatch.reset()
+                gemSteadier.reset()
             }
             // Swapping *away* from the pose-free camera is the one moment that can end a
             // live mode, and it has to be done here rather than in a publisher. The AR
@@ -1175,7 +1189,7 @@ class ScanPipeline(
             val r = liveResult
             " gems[blobs=${r.blobCount} lit=${r.gems.size} " +
                 "readable=${r.gems.count { g -> g.pattern.isReadable }} " +
-                "matched=${r.matchCount} pitch=${"%.1f".format(r.pitch)}px " +
+                "matched=${r.matchCount} shown=${liveRings.size} pitch=${"%.1f".format(r.pitch)}px " +
                 "luma=$liveMeanLuma lattice=${"%.2f".format(liveResult.latticeSpread)} " +
                 "dropped=${source.droppedFrames} " +
                 "targets=${gemTargets.active().size}/${gemTargets.size} " +
@@ -1453,6 +1467,7 @@ class ScanPipeline(
         val started = System.nanoTime()
         try {
             val result = gemScanner.scan(view)
+            liveRings = gemSteadier.update(result, gemTargets.active())
             liveResult = result
             liveMeanLuma = meanLuma(view.luma)
             liveScanMillis = (System.nanoTime() - started) / 1e6f
@@ -1843,7 +1858,7 @@ class ScanPipeline(
             emptyList()
         } else {
             val point = FloatArray(2)
-            result.matches.map { gem ->
+            liveRings.map { gem ->
                 geometry.imageToView(gem.x, gem.y, point)
                 GemHighlight(
                     x = point[0],
@@ -2165,11 +2180,13 @@ class ScanPipeline(
         // Posted rather than called here: the scanner belongs to the solver thread, and
         // resetting it from under a scan in progress is exactly the kind of race that
         // shows up once a week and never in a test.
+        liveRings = emptyList()
         solverThread.post {
             terminalScanner.reset()
             terminalExposure.reset()
             spotExposure.reset()
             spotCameraWatch.reset()
+            gemSteadier.reset()
             // Spot has no adapter: it is not a wall the engine reads. Mines has one, but the
             // live scan reads the wall now, not the engine.
             when (id) {

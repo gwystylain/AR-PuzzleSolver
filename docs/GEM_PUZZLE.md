@@ -139,6 +139,27 @@ The slit is 56 dp tall. The wall's top row sat 1.3 pitches below the targets, ab
 gems and is refused rather than read. Typing is still there for a round where the slit
 will not settle.
 
+## Holding the rings steady
+
+Every frame is read from scratch, which is right for the reading and wrong for the rings
+drawn from it. A gem that reads either side of a colour boundary reads one way in one
+scan and the other way in the next, and at ten scans a second its ring blinks -- which
+is what the user saw in the third stage on 2026-10-31. A ring that comes and goes draws
+the eye and says nothing about which answer to believe.
+
+So the rings are not the scan's matches. `GemHighlightSteadier` follows each gem from
+scan to scan by position, moved with the wall as the camera pans, keeps its last three
+readings, and rings it for a target only when two of the three match. One stray reading
+can neither light a gem nor put one out, and a gem the detector misses for one scan keeps
+its history and its ring. A gem coming into view is ringed a scan later, a tenth of a
+second. Readings are kept rather than matched slots, so a change of targets applies at
+once to everything in view. The heartbeat prints both: `matched` is the latest scan,
+`shown` is what is ringed.
+
+A gem cut off by the edge of the frame is read but never matched: half its rings are not
+in the image, and the reader cannot tell. On 2026-10-31 one at the bottom edge, red/blue/
+red, read red/blue/blue and was ringed for slot 2. Panning a little brings all of it in.
+
 ## What a match means
 
 A target zone the user has not chosen yet is a **wildcard**. That is what makes the
@@ -322,6 +343,56 @@ bright enough to clip to white — the yellow ring above — have no hue to reco
 read as whatever surrounds them. When this was written blue had not been seen at the
 preset, and the cap was the argument that it would survive; the run of 2026-10-22 had
 blue rings in every frame and found every target with one.
+
+### Yellow is red plus green, so its own green is not glow
+
+The game plays three stages a round, and only the third lights yellow: the first is red
+and green, the second adds blue. On 2026-10-31 the first two stages of three rounds in a
+row worked well and the third stage of each struggled -- too many gems ringed, rings
+blinking on and off. Hand-labelled, a still frame from the third stage read the outer
+ring and the centre perfectly and missed ten middle rings, every one of them yellow:
+nine of nine under a green outer ring read red (one read green), and the one under a
+blue outer ring read blue. So a green/yellow/blue gem read as green/red/blue, and a
+green/red/blue target ringed seven gems on that frame where two were right.
+
+It was the glow subtraction above. Light adds, so a yellow LED is red light plus green
+light, and in a single texel it is exactly what a red ring under a green ring's glow
+looks like. Taking the green glow out is what rescues the red ring; done to a yellow ring
+it takes away the ring's own green. The yellow cores measured 54 degrees, and 19 once the
+green came out -- red. Under a blue ring, which is cyan, the subtraction took the green
+out of dim yellow dots and the glow between them outvoted what was left.
+
+What separates the two is *where* the green is. A yellow ring's green is its own, so it
+is bright on the LED dots and dark between them, exactly where its red is. Glow is a
+smooth wash, the same on a dot as beside it, so under a red ring the two channels do not
+move together, or move apart. Across the band, the correlation of R and G:
+
+| ring | R/G correlation |
+| --- | --- |
+| yellow middle under green | 0.44 – 0.88 |
+| yellow middle under red, yellow or blue | 0.74 – 1.00 |
+| red middle under green (both frames) | -0.70 – 0.45 |
+| yellow centre | 0.83 – 1.00 |
+| red centre under green (2026-09-04) | 0.24 – 0.67 |
+
+So a ring whose green follows its red -- 0.6 for the middle ring, 0.75 for the dot --
+keeps its green, and only the green: the rest of the glow still comes out. It also has
+to follow in yellow's proportion, no more than 1.2 of green per unit of red, because this
+wall's cyan has a little red in it and on a cyan ring every channel brightens on the dots
+together; a yellow LED gives about as much green as red, a cyan one three times as much.
+Without that, keeping a cyan ring's green while its glow's blue still came out turned it
+green, which the rendered-wall test caught.
+
+On the 2026-09-04 frame no red ring passes and the reading is unchanged, 109 of 111. On
+the 2026-10-31 frame it goes from 145 to 158 of 159 rings: eight of nine yellow middles
+under green read yellow, and the one under blue does. The one left has a yellow ring dim
+enough that its green barely follows its red (0.44). `GemFourColourTest` holds that frame.
+
+Two things that were tried and lost: dropping the subtraction altogether, or reading only
+the brightest texels, fixes the stage-three frame and breaks the 2026-09-04 one, whose
+red dots under green read yellow again; and no setting of the fraction or the cap fixes
+both. The two frames want opposite things from the same arithmetic, and only the shape
+of the light tells them apart.
 
 ### Accuracy
 
@@ -513,8 +584,9 @@ auto-exposure loop directly, so the interface had no implementations left.
 ## What is not covered
 
 - **A round changing mid-scan.** Nothing, as it turns out: every frame is read from
-  scratch, so the wall rearranging fixes itself on the next scan a tenth of a second
-  later. This is the one item on this list that the live rewrite deleted rather than
+  scratch, so the wall rearranging fixes itself within two scans, a fifth of a second
+  later -- the rings are held over three scans, so the second new reading is the one that
+  moves them. This is the one item on this list that the live rewrite deleted rather than
   deferred -- it was a real limitation of the canvas version, where a mosaic accumulated
   across a pan went stale the moment the round turned over. There is no **Rescan** button
   in Gems because there is nothing for it to restart.

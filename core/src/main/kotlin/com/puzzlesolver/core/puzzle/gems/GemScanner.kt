@@ -48,6 +48,15 @@ class GemScanner(
         @JvmField val confidence: Float,
         /** 1-based target slot this gem matched, or 0 for none. */
         @JvmField val matchedSlot: Int,
+        /**
+         * Whether the whole of the gem's outer ring is inside the frame.
+         *
+         * A gem cut off by the edge is still read and reported, but its rings are half
+         * there and the reader cannot tell, so it is never claimed as a match. On
+         * 2026-10-31 one half in frame read red/blue/blue and was ringed for slot 2; it
+         * was red/blue/red. Panning a little brings all of it in.
+         */
+        @JvmField val whole: Boolean = true,
     )
 
     class Result(
@@ -146,21 +155,27 @@ class GemScanner(
         var readable = 0
 
         for ((index, blob) in blobs.withIndex()) {
-            val read = reader.readAt(view, blob.x, blob.y, localPitch?.get(index) ?: pitch)
+            val gemPitch = localPitch?.get(index) ?: pitch
+            val read = reader.readAt(view, blob.x, blob.y, gemPitch)
             if (!read.lit) continue
             washedSum += read.washedOut
             washedCount++
             if (read.pattern.isReadable) readable++
 
+            val reach = gemPitch * GemPalette.OUTER_OUTER
+            val whole = blob.x >= reach && blob.y >= reach &&
+                blob.x <= view.width - 1 - reach && blob.y <= view.height - 1 - reach
             var slot = 0
-            for (i in active.indices) {
-                if (active[i].matches(read.pattern)) {
-                    slot = i + 1
-                    matchCount++
-                    break
+            if (whole) {
+                for (i in active.indices) {
+                    if (active[i].matches(read.pattern)) {
+                        slot = i + 1
+                        matchCount++
+                        break
+                    }
                 }
             }
-            gems.add(Gem(blob.x, blob.y, blob.radius, read.pattern, read.confidence, slot))
+            gems.add(Gem(blob.x, blob.y, blob.radius, read.pattern, read.confidence, slot, whole))
         }
 
         stageMicros[2] = (System.nanoTime() - mark) / 1000
