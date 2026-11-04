@@ -145,7 +145,7 @@ class EndToEndTest {
     }
 
     @Test
-    fun `one and done through the phones - the host saves, everyone sees it, its letters are spent`() {
+    fun `one and done through the phones - the host submits and saves, everyone sees it, its letters are spent`() {
         val s = server()
         val a = session(s.port)
         val b = session(s.port)
@@ -160,18 +160,31 @@ class EndToEndTest {
         a.setLength(3)
         a.typeAll("TO")
         b.type('P')
-        // OPT, POT and TOP spend the same letters and use both players; OPT comes first.
-        a.await("OPT") { it.room?.word == "OPT" && it.room!!.current }
+        // Every letter in, on both phones, and still no word: nobody has submitted.
+        val waiting = a.await("all letters in") { st ->
+            st.room?.let { it.current && it.letters == "TO" && it.players.any { p -> p.letters == "P" } } == true
+        }.room!!
+        assertNull(waiting.word)
+        assertFalse(waiting.solved)
 
-        b.saveWord() // not the host: the phone does not even ask
+        b.solve() // not the host: the phone does not even ask
+        a.solve()
+        // OPT, POT and TOP spend the same letters and use both players; OPT comes first.
+        for (p in listOf(a, b)) p.await("OPT") { it.room?.word == "OPT" && it.room!!.solved }
+
+        b.saveWord() // not the host either
         a.saveWord()
         for (p in listOf(a, b)) p.await("OPT saved") { it.room?.saved == listOf("OPT") }
         // O, P and T are spent, and they were all there was.
         assertNull(b.state.value.room!!.word)
         assertEquals(LetterMask.of("OPT"), b.state.value.room!!.used)
 
+        // Undone, and waiting to be submitted again.
         a.undoSaved()
-        b.await("undone") { it.room?.saved?.isEmpty() == true && it.room!!.word == "OPT" }
+        val undone = b.await("undone") { it.room?.saved?.isEmpty() == true }.room!!
+        assertNull(undone.word)
+        a.solve()
+        b.await("solved again") { it.room?.word == "OPT" }
     }
 
     @Test

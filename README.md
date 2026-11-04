@@ -168,7 +168,7 @@ a monitor. Nothing has yet been pointed at any of the three rooms themselves.
   off a real frame and five rounds of Spot
 - `./gradlew :app:testDebugUnitTest` — 60 tests, 60 passing (camera tuning, the
   auto-exposure loop and the preview geometry, all pure state machines and maths)
-- `./gradlew :spell:test :spell-client:test :spell-server:test` — 103 tests, 103 passing
+- `./gradlew :spell:test :spell-client:test :spell-server:test` — 111 tests, 111 passing
   (one more skips unless pointed at a deployed server), including the phone's connection
   code against the real lobby server through a proxy that drops and stalls connections
 - `./gradlew :app:assembleDebug` — succeeds, zero compiler warnings, ~10 MB debug APK

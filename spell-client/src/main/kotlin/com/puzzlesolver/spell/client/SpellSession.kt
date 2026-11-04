@@ -189,6 +189,12 @@ class SpellSession(
         publish()
     }
 
+    /** One and Done 2.0, host only: every letter is in, find the word. */
+    fun solve() = post {
+        val room = latest ?: return@post
+        if (seated && room.mode == GameMode.ONE_AND_DONE && me == room.host) send(ClientMessage.Solve)
+    }
+
     /** One and Done 2.0, host only: save the word on screen as the round's next. */
     fun saveWord() = post {
         val room = latest ?: return@post
@@ -588,6 +594,7 @@ class SpellSession(
                 mode = server?.mode ?: GameMode.CLASSIC,
                 host = server?.host ?: 0,
                 saved = server?.saved.orEmpty(),
+                solved = server?.solved ?: false,
             )
         }
         _state.value = SpellState(

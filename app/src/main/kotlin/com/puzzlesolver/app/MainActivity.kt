@@ -559,6 +559,7 @@ class MainActivity : ComponentActivity() {
                                     onSetServer = { spell.setServer(it) },
                                     variant = spellVariant,
                                     onVariant = { spell.setVariant(it) },
+                                    onSolve = { spell.solve() },
                                     onSaveWord = { spell.saveWord() },
                                     onUndoSaved = { spell.undoSaved() },
                                     onNewRound = { spell.newRound() },

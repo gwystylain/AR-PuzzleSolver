@@ -87,8 +87,19 @@ class LobbyManager(
          * in, so a better word turning up does not snatch away one the team may already be
          * spelling. Let go when a player clears their letters, when the length changes, or
          * when nobody has any letters left; the next word found is then held in its place.
+         * One and Done 2.0 finds a word only when the host submits; see [solved].
          */
         var held: String? = null
+
+        /** One and Done 2.0: the host has submitted the letters now in, and [held] is the answer. */
+        var solved = false
+
+        /** Lets the held word go; in One and Done 2.0, back to waiting for the host to submit. */
+        fun letGo() {
+            held = null
+            solved = false
+            if (mode == GameMode.ONE_AND_DONE) words = Matches.NONE
+        }
 
         fun freeSlot(): Int? = (1..Rules.MAX_PLAYERS).firstOrNull { it !in players }
     }
@@ -125,15 +136,18 @@ class LobbyManager(
                 ClientMessage.Leave -> leave(peer)
                 is ClientMessage.SetLetters -> change(peer, message.seq) { lobby, player ->
                     // Clearing -- Clear all, or the last letter backspaced away -- lets the
-                    // held word go.
-                    if (player.letters.isNotEmpty() && message.letters.isEmpty()) lobby.held = null
+                    // held word go. And a submit that found nothing has nothing to hold on
+                    // to: a new letter takes it back to waiting for the next one.
+                    val clearing = player.letters.isNotEmpty() && message.letters.isEmpty()
+                    if (clearing || lobby.held == null) lobby.letGo()
                     player.letters = message.letters
                 }
                 is ClientMessage.SetLength -> change(peer, message.seq) { lobby, _ ->
-                    if (message.length != lobby.length) lobby.held = null
+                    if (message.length != lobby.length) lobby.letGo()
                     lobby.length = message.length
                 }
                 is ClientMessage.SetSaved -> save(peer, message)
+                ClientMessage.Solve -> solve(peer)
                 is ClientMessage.Ping, is ClientMessage.Jumble -> Unit
             }
         }
@@ -261,7 +275,7 @@ class LobbyManager(
     /**
      * One and Done 2.0: the host sets the round's saved words. Each must be a real word, and
      * no letter may appear twice across them ([ClientMessage.problem] has checked that much).
-     * The held word is let go, so the next one found avoids the saved words' letters.
+     * The held word is let go, and the next one the host submits for avoids their letters.
      */
     private fun save(peer: Peer, message: ClientMessage.SetSaved) {
         val seat = seats[peer] ?: return error(peer, ErrorCode.NOT_IN_LOBBY, "join a lobby first")
@@ -273,10 +287,31 @@ class LobbyManager(
         change(peer, message.seq) { lobby, _ ->
             if (message.words != lobby.saved) {
                 lobby.saved = message.words
-                lobby.held = null
+                lobby.letGo()
                 log.info("lobby {}: {} saved", lobby.id, message.words.size)
             }
         }
+    }
+
+    /**
+     * One and Done 2.0: the host says every letter is in, so find the rarest word the whole
+     * pool makes and hold it. Submitting again re-solves, for a letter that came in late.
+     */
+    private fun solve(peer: Peer) {
+        val seat = seats[peer] ?: return error(peer, ErrorCode.NOT_IN_LOBBY, "join a lobby first")
+        val lobby = seat.lobby
+        if (lobby.mode != GameMode.ONE_AND_DONE) {
+            return error(peer, ErrorCode.BAD_REQUEST, "this lobby does not submit letters")
+        }
+        if (seat.player.slot != lobby.host) return error(peer, ErrorCode.NOT_HOST, "only the host submits")
+        if (lobby.done) return
+        val each = lobby.players.values.map { LetterMask.of(it.letters) }.toIntArray()
+        val everyone = each.fold(0) { m, p -> m or p }
+        lobby.words = lexicon.findOneAndDone(everyone, lobby.length, OneAndDone.used(lobby.saved), players = each)
+        lobby.held = lobby.words.words.firstOrNull()
+        lobby.solved = true
+        log.info("lobby {}: submitted, {} words", lobby.id, lobby.words.total)
+        broadcast(lobby)
     }
 
     /**
@@ -335,20 +370,22 @@ class LobbyManager(
     private fun stateOf(lobby: Lobby): String {
         val each = lobby.players.values.map { LetterMask.of(it.letters) }.toIntArray()
         val everyone = each.fold(0) { m, p -> m or p }
-        val used = OneAndDone.used(lobby.saved)
-        val key = each.toList() + lobby.length + used + (if (lobby.done) 1 else 0)
-        if (key != lobby.wordsKey) {
-            lobby.words = when {
-                lobby.done -> Matches.NONE
-                lobby.mode == GameMode.ONE_AND_DONE -> lexicon.findOneAndDone(everyone, lobby.length, used, players = each)
-                lobby.mode == GameMode.TIC_TAC_TOE ->
+        if (lobby.mode == GameMode.ONE_AND_DONE) {
+            // Worked out only when the host submits: see [solve].
+            if (everyone == 0 || lobby.done) lobby.letGo()
+        } else {
+            val key = each.toList() + lobby.length
+            if (key != lobby.wordsKey) {
+                lobby.words = if (lobby.mode == GameMode.TIC_TAC_TOE) {
                     lexicon.find(everyone, lobby.length, players = each, oneOf = TicTacToe.LETTERS)
-                else -> lexicon.find(everyone, lobby.length, players = each)
+                } else {
+                    lexicon.find(everyone, lobby.length, players = each)
+                }
+                lobby.wordsKey = key
             }
-            lobby.wordsKey = key
+            if (everyone == 0) lobby.held = null
+            if (lobby.held == null) lobby.held = lobby.words.words.firstOrNull()
         }
-        if (everyone == 0 || lobby.done) lobby.held = null
-        if (lobby.held == null) lobby.held = lobby.words.words.firstOrNull()
         val held = lobby.held
         return Protocol.encode(
             ServerMessage.State(
@@ -368,6 +405,7 @@ class LobbyManager(
                 mode = lobby.mode,
                 host = lobby.host,
                 saved = lobby.saved,
+                solved = lobby.solved,
             ),
         )
     }

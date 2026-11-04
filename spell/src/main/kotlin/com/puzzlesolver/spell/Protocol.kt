@@ -92,6 +92,15 @@ sealed interface ClientMessage {
     @SerialName("saved")
     data class SetSaved(val seq: Long, val words: List<String>) : ClientMessage
 
+    /**
+     * One and Done 2.0, from the host only: every letter is in, find the word. Nothing is
+     * looked for before this, because a word taken as soon as one can be made spends letters
+     * -- the vowels above all -- that a look at the whole pool would have saved.
+     */
+    @Serializable
+    @SerialName("solve")
+    data object Solve : ClientMessage
+
     /** Echoed straight back as [ServerMessage.Pong], to time the round trip and prove the link is alive. */
     @Serializable
     @SerialName("ping")
@@ -109,7 +118,7 @@ sealed interface ClientMessage {
 
     /** Why the server should refuse this message, or null if it is well formed. */
     fun problem(): String? = when (this) {
-        Browse, Leave, is Host, is Ping -> null
+        Browse, Leave, Solve, is Host, is Ping -> null
         is Jumble -> if (Rules.isValidLetters(letters)) null else "letters must be at most ${Rules.MAX_LETTERS} of A-Z"
         is Join -> if (LobbyCode.isValid(lobby)) null else "bad lobby code"
         is Resume -> when {
@@ -180,6 +189,11 @@ sealed interface ServerMessage {
         val host: Int = 0,
         /** One and Done 2.0: the words saved so far this round, in order. */
         val saved: List<String> = emptyList(),
+        /**
+         * One and Done 2.0: the host has submitted this wave's letters, so [word] is the answer
+         * -- and if it is null, there is none. False while the letters are still coming in.
+         */
+        val solved: Boolean = false,
     ) : ServerMessage
 
     /** You have left; you are browsing again. */

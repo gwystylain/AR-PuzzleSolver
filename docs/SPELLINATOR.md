@@ -75,13 +75,27 @@ classic.
 The goal is three words, one per wave, with **no letter used twice** -- not inside a word,
 and not across the three. A round goes:
 
-1. Everyone types the letters in front of them, as usual. A word appears and is held.
-2. Once it has been spelt, the **host** taps **Save word**. It fills the first of three
-   slots under the players, and its letters are spent for the rest of the round: they are
-   never suggested again, and the keypad shows them dark and struck through.
-3. Everyone clears and types the next wave's letters. The next word found avoids every
-   spent letter.
-4. After the third word the round is complete, and the host can start a **New round**.
+1. Everyone types the letters in front of them. No word appears yet.
+2. Once every letter is in, the **host** taps **Submit**, and the word that spends the rarest
+   letters comes back and is held. If a letter comes in late, **Solve again** takes it in.
+3. Once it has been spelt, the host taps **Save word**. It fills the first of three slots
+   under the players, and its letters are spent for the rest of the round: they are never
+   suggested again, and the keypad shows them dark and struck through.
+4. Everyone clears and types the next wave's letters, and the host submits again. The word
+   found avoids every spent letter.
+5. After the third word the round is complete, and the host can start a **New round**.
+
+Clearing, a new length, Undo and New round all go back to waiting for a submit; nothing is
+solved until the host says the letters are in.
+
+**Why wait.** A word taken as soon as one can be made is a word chosen from the first few
+letters typed, which spends common letters, the vowels above all, that later waves need. In a
+simulation of three-wave rounds on the real word list (random letters per wave, weighted like
+a Scrabble bag, so a guide and not a measurement of the room), four-letter words from ten
+letters per wave completed all three words 66% of the time taking the first word found, and
+92% waiting for every letter; the first word used 1.64 vowels on average, against 1.02.
+Ranking by fewest vowels on top of that added almost nothing, so the ranking below is
+unchanged.
 
 The **host** is whoever opened the lobby. If they leave, or their seat times out, it passes
 to the lowest-numbered player left; a connection that has only dropped keeps it. The host
@@ -201,6 +215,7 @@ a future protocol can be served alongside this one.
 | `resume {lobby, player, token}` | Give me back my seat after a dropped connection |
 | `letters {seq, letters}` | My letters are now these |
 | `length {seq, length}` | Everyone's word length is now this |
+| `solve` | One and Done 2.0, host only: every letter is in, find the word |
 | `saved {seq, words}` | One and Done 2.0, host only: the round's saved words are now these |
 | `jumble {letters}` | Jumble: which words use exactly these letters? Needs no lobby |
 | `leave`, `ping {at}` | |
@@ -209,7 +224,7 @@ a future protocol can be served alongside this one.
 | --- | --- |
 | `lobbies` | The open lobbies, newest first |
 | `joined {lobby, player, token, ack}` | You are seated; `token` takes the seat back later |
-| `state` | The whole lobby: length, every player's letters, online and `ack`, the held `word`, the ranked words, and the `mode`, `host` and `saved` words |
+| `state` | The whole lobby: length, every player's letters, online and `ack`, the held `word`, the ranked words, the `mode` and `host`, and for One and Done the `saved` words and whether the letters are `solved` |
 | `jumbled {letters, words, total}` | Jumble: the words that use exactly `letters`, alphabetical, to the asker alone |
 | `error {code}`, `left`, `pong {at}` | |
 

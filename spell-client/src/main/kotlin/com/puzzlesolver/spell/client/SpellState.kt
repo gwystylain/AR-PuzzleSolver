@@ -57,6 +57,11 @@ data class Room(
     val host: Int = 0,
     /** One and Done 2.0: the round's saved words so far. */
     val saved: List<String> = emptyList(),
+    /**
+     * One and Done 2.0: the host has submitted this wave's letters, so [word] is the answer,
+     * or there is none. False while the letters are still coming in.
+     */
+    val solved: Boolean = false,
 ) {
     /** Every letter anyone in the lobby has, as a [LetterMask]. */
     val everyone: Int get() = players.fold(LetterMask.of(letters)) { m, p -> m or LetterMask.of(p.letters) }

@@ -111,6 +111,7 @@ fun SpellScreen(
     /** What a lobby hosted from here plays: classic, or a variant switched on at the foot of the list. */
     variant: GameMode,
     onVariant: (GameMode) -> Unit,
+    onSolve: () -> Unit,
     onSaveWord: () -> Unit,
     onUndoSaved: () -> Unit,
     onNewRound: () -> Unit,
@@ -127,7 +128,7 @@ fun SpellScreen(
         if (room != null) {
             RoomView(
                 room, state.link, onLeave, onType, onBackspace, onClear, onLength,
-                Round(onSaveWord, onUndoSaved, onNewRound),
+                Round(onSolve, onSaveWord, onUndoSaved, onNewRound),
             )
         } else {
             LobbyView(state, server, onHost, onJoin, variant, onVariant, onEditServer = { editingServer = true })
@@ -293,7 +294,7 @@ private val GameMode.titleWithLevel: String
 private val GameMode.blurb: String
     get() = when (this) {
         GameMode.CLASSIC -> ""
-        GameMode.ONE_AND_DONE -> "Three words, no letter used twice. The host saves each one."
+        GameMode.ONE_AND_DONE -> "Three words, no letter used twice. The host submits each wave's letters and saves the word."
         GameMode.TIC_TAC_TOE -> "Only words with an O or an X in them."
     }
 
@@ -342,7 +343,7 @@ private fun VariantSwitch(mode: GameMode, on: Boolean, onChange: (Boolean) -> Un
 // --- In a lobby ----------------------------------------------------------
 
 /** The host's One and Done 2.0 controls, passed down together. */
-private class Round(val save: () -> Unit, val undo: () -> Unit, val newRound: () -> Unit)
+private class Round(val solve: () -> Unit, val save: () -> Unit, val undo: () -> Unit, val newRound: () -> Unit)
 
 @Composable
 private fun RoomView(
@@ -632,6 +633,7 @@ private fun SuggestionPanel(room: Room, round: Round, modifier: Modifier) {
     ) {
         when {
             room.done -> RoundDone(room, round)
+            oneAndDone && word == null && !room.solved -> AwaitingSubmit(room, round)
             room.everyone == 0 -> Hint(
                 if (oneAndDone) {
                     "Type the letters you can see. Each word uses a letter at most once, and no letter twice in the round."
@@ -672,9 +674,12 @@ private fun SuggestionPanel(room: Room, round: Round, modifier: Modifier) {
                     Spacer(Modifier.height(14.dp))
                     when {
                         oneAndDone && room.isHost -> {
-                            SmallButton("Save word ${room.saved.size + 1}", enabled = room.current, onClick = round.save)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                SmallButton("Save word ${room.saved.size + 1}", enabled = room.current, onClick = round.save)
+                                SmallButton("Solve again", enabled = room.seated, outlined = true, onClick = round.solve)
+                            }
                             Spacer(Modifier.height(8.dp))
-                            Hint("Save it once it is spelt. Then everyone clears for the next wave.")
+                            Hint("Save it once it is spelt, then everyone clears for the next wave. Solve again if more letters came in.")
                         }
                         oneAndDone -> Hint("Held until P${room.host} saves it or someone clears their letters")
                         else -> Text(
@@ -694,6 +699,40 @@ private fun SuggestionPanel(room: Room, round: Round, modifier: Modifier) {
                 color = ACCENT,
                 strokeWidth = 2.dp,
             )
+        }
+    }
+}
+
+/**
+ * One and Done 2.0 before the host submits. Nothing is suggested while letters are still
+ * coming in: a word taken as soon as one can be made spends letters -- the vowels above all --
+ * that a look at the whole pool would have saved for the waves to come.
+ */
+@Composable
+private fun AwaitingSubmit(room: Room, round: Round) {
+    val inPlay = Integer.bitCount(room.everyone and room.used.inv())
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            "WAVE ${room.saved.size + 1}",
+            color = TEXT_FAINT,
+            fontSize = 11.sp,
+            letterSpacing = 2.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.height(10.dp))
+        Text(
+            if (inPlay == 1) "1 letter in play" else "$inPlay letters in play",
+            color = TEXT,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.height(12.dp))
+        if (room.isHost) {
+            SmallButton("Submit", enabled = room.seated && inPlay > 0, onClick = round.solve)
+            Spacer(Modifier.height(8.dp))
+            Hint("Tap once everyone's letters are in, to get the word that spends the rarest ones.")
+        } else {
+            Hint("Type the letters you can see. P${room.host} submits once they are all in.")
         }
     }
 }
@@ -730,17 +769,18 @@ private fun RoundDone(room: Room, round: Round) {
 }
 
 @Composable
-private fun SmallButton(text: String, enabled: Boolean, onClick: () -> Unit) {
+private fun SmallButton(text: String, enabled: Boolean, outlined: Boolean = false, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(12.dp)
     Box(
         Modifier
             .height(46.dp)
             .alpha(if (enabled) 1f else 0.5f)
-            .background(ACCENT, RoundedCornerShape(12.dp))
+            .then(if (outlined) Modifier.border(1.dp, ACCENT, shape) else Modifier.background(ACCENT, shape))
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 24.dp),
+            .padding(horizontal = if (outlined) 14.dp else 24.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, color = INK, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text(text, color = if (outlined) ACCENT else INK, fontWeight = FontWeight.Bold, fontSize = 16.sp)
     }
 }
 

@@ -14,6 +14,7 @@ class ProtocolTest {
     fun `every client message survives the wire`() {
         val messages = listOf(
             ClientMessage.Browse,
+            ClientMessage.Solve,
             ClientMessage.Host(),
             ClientMessage.Host(GameMode.ONE_AND_DONE),
             ClientMessage.Host(GameMode.TIC_TAC_TOE),
@@ -35,7 +36,7 @@ class ProtocolTest {
             ServerMessage.Lobbies(listOf(LobbySummary("KQZT", 2, 5), LobbySummary("BCDF", 1, 3, GameMode.ONE_AND_DONE), LobbySummary("CDFG", 2, 4, GameMode.TIC_TAC_TOE))),
             ServerMessage.State(
                 "BCDF", 2, 3, listOf(PlayerState(2, "FIN", true, 1)), listOf("FIN"), 1,
-                word = "FIN", mode = GameMode.ONE_AND_DONE, host = 2, saved = listOf("DAB", "COT"),
+                word = "FIN", mode = GameMode.ONE_AND_DONE, host = 2, saved = listOf("DAB", "COT"), solved = true,
             ),
             ServerMessage.Joined("KQZT", 2, "b".repeat(Token.LENGTH), 41),
             ServerMessage.State(
@@ -62,6 +63,7 @@ class ProtocolTest {
     fun `a state from a server that predates the held word reads as having none`() {
         val old = """{"t":"state","lobby":"KQZT","rev":1,"length":3,"players":[],"words":["OOP"],"total":1}"""
         assertNull((Protocol.decodeServer(old) as ServerMessage.State).word)
+        assertEquals(false, (Protocol.decodeServer(old) as ServerMessage.State).solved)
     }
 
     @Test

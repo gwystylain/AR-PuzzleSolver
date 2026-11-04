@@ -166,6 +166,7 @@ class SpellController(context: Context) {
     fun clear() = session?.clear()
     fun setLength(length: Int) = session?.setLength(length)
     fun dismissNotice(id: Long) = session?.dismissNotice(id)
+    fun solve() = session?.solve()
     fun saveWord() = session?.saveWord()
     fun undoSaved() = session?.undoSaved()
     fun newRound() = session?.newRound()
