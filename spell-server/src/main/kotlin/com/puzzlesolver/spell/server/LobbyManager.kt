@@ -376,10 +376,10 @@ class LobbyManager(
         } else {
             val key = each.toList() + lobby.length
             if (key != lobby.wordsKey) {
-                lobby.words = if (lobby.mode == GameMode.TIC_TAC_TOE) {
-                    lexicon.find(everyone, lobby.length, players = each, oneOf = TicTacToe.LETTERS)
-                } else {
-                    lexicon.find(everyone, lobby.length, players = each)
+                lobby.words = when (lobby.mode) {
+                    GameMode.TIC_TAC_TOE -> lexicon.find(everyone, lobby.length, players = each, oneOf = TicTacToe.LETTERS)
+                    GameMode.LEVELS_6_PLUS -> lexicon.find(everyone, lobby.length, players = each, noRepeats = true)
+                    else -> lexicon.find(everyone, lobby.length, players = each)
                 }
                 lobby.wordsKey = key
             }

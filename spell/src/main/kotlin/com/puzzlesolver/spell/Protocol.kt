@@ -247,6 +247,10 @@ enum class GameMode {
      */
     @SerialName("tic_tac_toe")
     TIC_TAC_TOE,
+
+    /** For the room's levels 6 and up: classic, except that no word uses a letter twice. */
+    @SerialName("levels_6_plus")
+    LEVELS_6_PLUS,
 }
 
 /** The rule of a Tic-Tac-Toe lobby. */

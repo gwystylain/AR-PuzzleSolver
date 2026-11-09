@@ -37,7 +37,7 @@ class Lexicon private constructor(private val buckets: Map<Int, Bucket>) {
      * 3. then alphabetical.
      *
      * With [oneOf] (a [LetterMask]), only words with at least one of those letters count --
-     * Tic-Tac-Toe's O or X.
+     * Tic-Tac-Toe's O or X. With [noRepeats], only words that use no letter twice -- Levels 6+.
      *
      * At most [limit] are listed; [Matches.total] counts them all.
      */
@@ -47,12 +47,16 @@ class Lexicon private constructor(private val buckets: Map<Int, Bucket>) {
         limit: Int = Rules.MAX_WORDS,
         players: IntArray = IntArray(0),
         oneOf: Int = 0,
+        noRepeats: Boolean = false,
     ): Matches {
         val bucket = buckets[length] ?: return Matches.NONE
         if (available == 0 || (oneOf != 0 && available and oneOf == 0)) return Matches.NONE
         val outside = available.inv()
         val masks = bucket.masks
-        fun fits(mask: Int) = mask and outside == 0 && (oneOf == 0 || mask and oneOf != 0)
+        // A word with no letter twice has as many different letters as it has letters.
+        fun fits(mask: Int) = mask and outside == 0 &&
+            (oneOf == 0 || mask and oneOf != 0) &&
+            (!noRepeats || Integer.bitCount(mask) == length)
 
         val perRank = IntArray(RANKS)
         var total = 0

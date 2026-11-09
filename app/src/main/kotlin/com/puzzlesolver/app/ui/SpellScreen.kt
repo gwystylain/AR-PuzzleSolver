@@ -271,19 +271,23 @@ private fun LobbyRow(lobby: LobbySummary, enabled: Boolean, onJoin: () -> Unit) 
 }
 
 /** The variants, in the order their switches are listed. */
-private val VARIANTS = listOf(GameMode.ONE_AND_DONE, GameMode.TIC_TAC_TOE)
+private val VARIANTS = listOf(GameMode.ONE_AND_DONE, GameMode.TIC_TAC_TOE, GameMode.LEVELS_6_PLUS)
 
 private val GameMode.title: String
     get() = when (this) {
         GameMode.CLASSIC -> "Classic"
         GameMode.ONE_AND_DONE -> "One and Done 2.0"
         GameMode.TIC_TAC_TOE -> "Tic-Tac-Toe"
+        GameMode.LEVELS_6_PLUS -> "Levels 6+"
     }
 
-/** The Spellinator level the variant is for, which the room itself does not show. */
+/**
+ * The Spellinator level the variant is for, which the room itself does not show; none for
+ * Levels 6+, whose name already says.
+ */
 private val GameMode.level: Int?
     get() = when (this) {
-        GameMode.CLASSIC -> null
+        GameMode.CLASSIC, GameMode.LEVELS_6_PLUS -> null
         GameMode.ONE_AND_DONE -> 4
         GameMode.TIC_TAC_TOE -> 2
     }
@@ -291,11 +295,20 @@ private val GameMode.level: Int?
 private val GameMode.titleWithLevel: String
     get() = level?.let { "$title · level $it" } ?: title
 
+/** The variant's rule in a line, shown in the room for those that change which words count. */
+private val GameMode.rule: String?
+    get() = when (this) {
+        GameMode.TIC_TAC_TOE -> "Every word has an O or an X"
+        GameMode.LEVELS_6_PLUS -> "No letter twice in a word"
+        else -> null
+    }
+
 private val GameMode.blurb: String
     get() = when (this) {
         GameMode.CLASSIC -> ""
         GameMode.ONE_AND_DONE -> "Three words, no letter used twice. The host submits each wave's letters and saves the word."
         GameMode.TIC_TAC_TOE -> "Only words with an O or an X in them."
+        GameMode.LEVELS_6_PLUS -> "No word uses a letter twice."
     }
 
 /**
@@ -433,7 +446,7 @@ private fun ColumnScope.RoomTop(room: Room, link: Link, onLeave: () -> Unit, onL
         Spacer(Modifier.height(8.dp))
         RoundStrip(room, round)
     }
-    if (room.mode == GameMode.TIC_TAC_TOE) {
+    room.mode.rule?.let { rule ->
         Spacer(Modifier.height(8.dp))
         Row(
             Modifier
@@ -442,9 +455,9 @@ private fun ColumnScope.RoomTop(room: Room, link: Link, onLeave: () -> Unit, onL
                 .padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(GameMode.TIC_TAC_TOE.titleWithLevel, color = TEXT, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Text(room.mode.titleWithLevel, color = TEXT, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.weight(1f))
-            Text("Every word has an O or an X", color = ACCENT, fontSize = 12.sp)
+            Text(rule, color = ACCENT, fontSize = 12.sp)
         }
     }
 }
@@ -622,6 +635,7 @@ private fun SuggestionPanel(room: Room, round: Round, modifier: Modifier) {
     val word = room.word
     val oneAndDone = room.mode == GameMode.ONE_AND_DONE
     val ticTacToe = room.mode == GameMode.TIC_TAC_TOE
+    val noRepeats = room.mode == GameMode.LEVELS_6_PLUS
     val shape = RoundedCornerShape(14.dp)
     Box(
         modifier
@@ -639,6 +653,8 @@ private fun SuggestionPanel(room: Room, round: Round, modifier: Modifier) {
                     "Type the letters you can see. Each word uses a letter at most once, and no letter twice in the round."
                 } else if (ticTacToe) {
                     "Type the letters you can see. Every word has an O or an X, and any letter can be used more than once."
+                } else if (noRepeats) {
+                    "Type the letters you can see. Everyone's letters count, and no word uses a letter twice."
                 } else {
                     "Type the letters you can see. Everyone's letters count, and any letter can be used more than once."
                 },
@@ -650,6 +666,8 @@ private fun SuggestionPanel(room: Room, round: Round, modifier: Modifier) {
                     "No O or X yet, and every word needs one."
                 } else if (ticTacToe) {
                     "No ${room.length}-letter word with an O or an X from these letters."
+                } else if (noRepeats) {
+                    "No ${room.length}-letter word without a repeated letter from these letters."
                 } else {
                     "No ${room.length}-letter word from these letters."
                 },

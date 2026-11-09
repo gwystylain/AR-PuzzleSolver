@@ -188,6 +188,26 @@ class EndToEndTest {
     }
 
     @Test
+    fun `levels 6+ through the phones - no word uses a letter twice`() {
+        val s = server()
+        val a = session(s.port)
+        val b = session(s.port)
+        a.await("connected") { it.link is Link.Online }
+        a.host(GameMode.LEVELS_6_PLUS)
+        val id = a.await("hosting") { it.room?.seated == true && it.room!!.current }.room!!.lobby
+        b.await("listed as levels 6+") { st -> st.lobbies.any { it.id == id && it.mode == GameMode.LEVELS_6_PLUS } }
+        b.joinLobby(id)
+        assertEquals(GameMode.LEVELS_6_PLUS, b.state.value.room!!.mode)
+
+        // T, O and P make OOP, TOO, TOT and POP too, which classic would offer first.
+        a.setLength(3)
+        a.typeAll("TO")
+        b.type('P')
+        val room = b.await("OPT") { it.room?.word == "OPT" && it.room!!.current }.room!!
+        assertTrue(room.words.all { w -> w.toSet().size == w.length })
+    }
+
+    @Test
     fun `tic-tac-toe through the phones - every word has an O or an X`() {
         val s = server()
         val a = session(s.port)

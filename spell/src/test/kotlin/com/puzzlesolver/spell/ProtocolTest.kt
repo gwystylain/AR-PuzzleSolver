@@ -18,6 +18,7 @@ class ProtocolTest {
             ClientMessage.Host(),
             ClientMessage.Host(GameMode.ONE_AND_DONE),
             ClientMessage.Host(GameMode.TIC_TAC_TOE),
+            ClientMessage.Host(GameMode.LEVELS_6_PLUS),
             ClientMessage.SetSaved(4, listOf("DAB", "COT")),
             ClientMessage.Join("KQZT"),
             ClientMessage.Resume("KQZT", 3, "A".repeat(Token.LENGTH)),
@@ -33,7 +34,7 @@ class ProtocolTest {
     @Test
     fun `every server message survives the wire`() {
         val messages = listOf(
-            ServerMessage.Lobbies(listOf(LobbySummary("KQZT", 2, 5), LobbySummary("BCDF", 1, 3, GameMode.ONE_AND_DONE), LobbySummary("CDFG", 2, 4, GameMode.TIC_TAC_TOE))),
+            ServerMessage.Lobbies(listOf(LobbySummary("KQZT", 2, 5), LobbySummary("BCDF", 1, 3, GameMode.ONE_AND_DONE), LobbySummary("CDFG", 2, 4, GameMode.TIC_TAC_TOE), LobbySummary("DFGH", 3, 6, GameMode.LEVELS_6_PLUS))),
             ServerMessage.State(
                 "BCDF", 2, 3, listOf(PlayerState(2, "FIN", true, 1)), listOf("FIN"), 1,
                 word = "FIN", mode = GameMode.ONE_AND_DONE, host = 2, saved = listOf("DAB", "COT"), solved = true,

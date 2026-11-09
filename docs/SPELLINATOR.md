@@ -64,11 +64,11 @@ fires on touch-down rather than on release.
 
 ## Variants
 
-Two other ways to play, each for one level of the room, are chosen by whoever hosts: each
-has a switch at the foot of the lobby list, marked with its level, and at most one is on.
-With one on, **Host** opens a lobby playing it, tagged with its name and level in everyone's
-list; the phones that join play whatever the lobby plays. With neither on, a lobby is
-classic.
+Three other ways to play, each for particular levels of the room, are chosen by whoever
+hosts: each has a switch at the foot of the lobby list, marked with the level it is for, and
+at most one is on. With one on, **Host** opens a lobby playing it, tagged with its name and
+level in everyone's list; the phones that join play whatever the lobby plays. With none on,
+a lobby is classic.
 
 ## One and Done 2.0 (level 4)
 
@@ -121,6 +121,12 @@ except that **every word has an O or an X in it**: a word with neither is never 
 however good. The O and X keys are outlined on the keypad so they are found fast, and until
 someone has typed one the lobby says that every word needs one. (`find` in `Lexicon.kt`,
 with `oneOf`.)
+
+## Levels 6+
+
+Classic in every way, except that **no word uses a letter twice**: OPT, POT or TOP from T, O
+and P, never TOO, TOT or POP. Its switch carries no level tag, since its name says which
+levels it is for. (`find` in `Lexicon.kt`, with `noRepeats`.)
 
 ## Jumble
 
@@ -211,7 +217,7 @@ a future protocol can be served alongside this one.
 | Phone sends | Meaning |
 | --- | --- |
 | `browse` | Send me the lobby list, now and on every change |
-| `host {mode}` / `join {lobby}` | Seat me; `host` opens a lobby playing `classic`, `one_and_done` or `tic_tac_toe` |
+| `host {mode}` / `join {lobby}` | Seat me; `host` opens a lobby playing `classic`, `one_and_done`, `tic_tac_toe` or `levels_6_plus` |
 | `resume {lobby, player, token}` | Give me back my seat after a dropped connection |
 | `letters {seq, letters}` | My letters are now these |
 | `length {seq, length}` | Everyone's word length is now this |

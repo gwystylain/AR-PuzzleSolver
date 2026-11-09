@@ -188,6 +188,24 @@ class LexiconTest {
         assertEquals(5, m.total)
     }
 
+    // --- Levels 6+ -------------------------------------------------------------
+
+    @Test
+    fun `levels 6+ keeps only words with no letter twice, ranked as usual`() {
+        val lex = Lexicon.of("TOO", "TOT", "OOP", "POP", "TOP", "POT", "OPT")
+        // Classic leads with the words of two different letters; none of them may be had here.
+        assertEquals("OOP", lex.find(LetterMask.of("TOP"), 3).words.first())
+        val m = lex.find(LetterMask.of("TOP"), 3, noRepeats = true)
+        assertEquals(listOf("OPT", "POT", "TOP"), m.words)
+        assertEquals(3, m.total)
+    }
+
+    @Test
+    fun `levels 6+ with fewer different letters than the length finds nothing`() {
+        val lex = Lexicon.of("TOOT", "OTTO", "POOP")
+        assertEquals(Matches.NONE, lex.find(LetterMask.of("TOP"), 4, noRepeats = true))
+    }
+
     // --- Tic-Tac-Toe -----------------------------------------------------------
 
     @Test
