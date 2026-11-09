@@ -53,7 +53,32 @@ class WallScanPanTest {
         else -> null
     }
 
-    private fun render(cameraX: Float, cameraY: Float, roll: Float, colourFrame: Boolean): RgbImage {
+    /**
+     * What the board should read back as: the truth, except the armed mine, which a scan
+     * reports as unknown -- the wall is scanned before any mine goes down, so magenta
+     * there is something the palette does not know, not a mine.
+     */
+    private val expected: String get() = truth.toString().trim().replace('X', '#')
+
+    /**
+     * The middle of the room's wall, as the pan of 2026-11-07 showed it: a sparse row of
+     * buttons above the seven, every other column and half a column across, a little
+     * under a pitch above the top row.
+     */
+    private fun onExtraRow(wx: Float, wy: Float, face: Float): Boolean {
+        val e = Math.round(wx / pitch - 0.5f)
+        if (e % 2 != 0 || e !in 20..44) return false
+        return hypot(wx - (e + 0.5f) * pitch, wy + 0.9f * pitch) <= face
+    }
+
+    private fun render(
+        cameraX: Float,
+        cameraY: Float,
+        roll: Float,
+        colourFrame: Boolean,
+        extraRow: Boolean = false,
+        swallowBottom: Boolean = false,
+    ): RgbImage {
         val img = RgbImage(width, height)
         val panel = if (colourFrame) intArrayOf(2, 2, 3) else intArrayOf(45, 43, 78)
         val unlit = if (colourFrame) intArrayOf(5, 5, 6) else intArrayOf(176, 166, 196)
@@ -71,7 +96,14 @@ class WallScanPanTest {
                 val col = Math.round(wx / pitch)
                 val row = Math.round(wy / pitch)
                 var rgb = panel
-                if (col in 0 until truth.cols && row in 0 until truth.rows) {
+                if (extraRow && onExtraRow(wx, wy, face)) {
+                    rgb = unlit
+                } else if (swallowBottom && !colourFrame && row == truth.rows - 1 && col % 3 == 0 &&
+                    col in 0 until truth.cols && truth.kindAt(truth.index(col, row)) == Button.EMPTY
+                ) {
+                    // Lost in a neighbour's glare, as the bottom row was on 2026-11-07.
+                    rgb = panel
+                } else if (col in 0 until truth.cols && row in 0 until truth.rows) {
                     val d = hypot(wx - col * pitch, wy - row * pitch)
                     val kind = truth.kindAt(truth.index(col, row))
                     val led = ledAtColourExposure(kind)
@@ -122,7 +154,43 @@ class WallScanPanTest {
         wall.warnings.forEach { println("warning: $it") }
         assertTrue(wall.endSeen)
         assertEquals(truth.cols, wall.cols)
-        assertEquals(truth.toString().trim(), wall.describe().trim())
+        assertEquals(expected, wall.describe().trim())
+        assertTrue("the magenta button is called out", wall.warnings.any { it.contains("magenta") })
+        assertEquals(1, wall.unknownCount)
+        val armed = wall.toBombBoard()
+        assertEquals("and planned around like a hazard", Button.HAZARD, armed.kindAt(armed.index(25, 1)))
+    }
+
+    @Test
+    fun `a sparse row above the wall and discs lost in glare do not move the rows`() {
+        // Across the middle every column has an extra disc above it or beside it, and
+        // every third has lost its bottom disc. Taking the rows off any column of
+        // exactly seven discs, a column with both reads its extra disc as the top row,
+        // and every row in that frame comes out one too low.
+        val scanner = WallScanner(log = { if (it.contains("unplaced") || it.contains("relocated")) println("  $it") })
+        val frameNanos = 33_333_333L
+        val startX = width / 2f - pitch * 1.5f
+        val endX = truth.cols * pitch + width / 2f - pitch * 2f
+        val rowsCentre = (truth.rows - 1) * pitch / 2f
+        var t = 0L
+        var n = 0
+        while (true) {
+            val seconds = t / 1e9f
+            val x = startX + seconds * 4f * pitch
+            if (x > endX) break
+            val colour = n % 2 == 1
+            val frame = render(x, rowsCentre, 0f, colour, extraRow = true, swallowBottom = true)
+            scanner.offer(frame, if (colour) WallScanner.Exposure.COLOUR else WallScanner.Exposure.LATTICE, t)
+            t += frameNanos
+            n++
+        }
+        val wall = scanner.result()
+        assertNotNull("the green was never found", wall)
+        println(wall!!.describe())
+        wall.warnings.forEach { println("warning: $it") }
+        assertTrue(wall.endSeen)
+        assertEquals(truth.cols, wall.cols)
+        assertEquals(expected, wall.describe().trim())
     }
 
     @Test
@@ -151,6 +219,6 @@ class WallScanPanTest {
         assertTrue("never picked the count up again", relocated)
         val wall = scanner.result()!!
         assertEquals(truth.cols, wall.cols)
-        assertEquals(truth.toString().trim(), wall.describe().trim())
+        assertEquals(expected, wall.describe().trim())
     }
 }

@@ -249,16 +249,27 @@ class WallScanner(
         val kinds = ByteArray(cols * ROWS) { Button.UNSEEN.toByte() }
         val confidence = FloatArray(cols * ROWS)
         var strayGreens = 0
+        var magenta = 0
         for (c in 0 until cols) {
             val column = evidence[green + c] ?: continue
             for (r in 0 until ROWS) {
                 val (button, conf) = decide(column[r])
-                val kind = if (button == Button.GREEN && !(c == 0 && r == greenRow)) {
+                val kind = when {
                     // There is one green button on the wall and this is not it.
-                    strayGreens++
-                    Button.OPAQUE
-                } else {
-                    button
+                    button == Button.GREEN && !(c == 0 && r == greenRow) -> {
+                        strayGreens++
+                        Button.OPAQUE
+                    }
+                    // Magenta is an armed mine, and the wall is scanned before any mine
+                    // goes down, so whatever this is, it is not one. On 2026-11-07 it was
+                    // a pink-magenta button the palette had no name for; read as armed,
+                    // the planner fired straight through it. Unknown is planned around
+                    // as a hazard and shown as a question for the user to tap.
+                    button == Button.MINE -> {
+                        magenta++
+                        Button.OPAQUE
+                    }
+                    else -> button
                 }
                 kinds[r * cols + c] = kind.toByte()
                 confidence[r * cols + c] = conf
@@ -273,6 +284,9 @@ class WallScanner(
             warnings.add("The green button read in row ${greenRow + 1}, not row ${GREEN_ROW + 1}.")
         }
         if (strayGreens > 0) warnings.add("$strayGreens other button(s) read green; marked unknown.")
+        if (magenta > 0) {
+            warnings.add("$magenta button(s) read magenta, which nothing on the wall is before a mine goes down; marked unknown.")
+        }
         return ScannedWall(cols, ROWS, kinds, confidence, endCol != null, warnings)
     }
 
@@ -712,7 +726,10 @@ class WallScanner(
         val xr = FloatArray(n) { blobs[it].x * cr + blobs[it].y * sr }
         val yr = FloatArray(n) { -blobs[it].x * sr + blobs[it].y * cr }
 
-        // Columns: runs of discs closer than half a pitch across.
+        // Columns: runs of discs closer than half a pitch across, each then held to its
+        // own middle. A disc more than [COLUMN_TOLERANCE] of a pitch off it is not in the
+        // column -- which is the first of two things keeping out the sparse row above
+        // the middle of the wall, sitting between columns. See [findRows] for the other.
         val order = (0 until n).sortedBy { xr[it] }
         val clusters = ArrayList<ArrayList<Int>>()
         var sum = 0f
@@ -726,26 +743,19 @@ class WallScanner(
                 sum += xr[i]
             }
         }
-        val columns = clusters.filter { it.size >= MIN_COLUMN_DISCS }.map { c -> c.sortedBy { yr[it] } }
+        val columns = clusters.mapNotNull { c ->
+            val middle = median(c.map { xr[it] })
+            val inLine = c.filter { abs(xr[it] - middle) <= COLUMN_TOLERANCE * pitch }
+            if (inLine.size >= MIN_COLUMN_DISCS) inLine.sortedBy { yr[it] } else null
+        }
         if (columns.size < 2) {
             lastFailure = "${columns.size} column(s) in view"
             return null
         }
 
-        // A column with exactly seven evenly spaced discs is a whole column, and its
-        // order down the frame is the row of each. Those fix the row lines.
-        val complete = columns.filter { isWholeColumn(it, yr) }
-        if (complete.isEmpty()) {
-            lastFailure = "no column with all seven rows"
-            return null
-        }
         val rowA = FloatArray(ROWS)
         val rowB = FloatArray(ROWS)
-        for (r in 0 until ROWS) {
-            val xs = FloatArray(complete.size) { xr[complete[it][r]] }
-            val ys = FloatArray(complete.size) { yr[complete[it][r]] }
-            fitLine(xs, ys, pitch, rowA, rowB, r)
-        }
+        if (!findRows(columns, xr, yr, pitch, rowA, rowB)) return null
 
         // Every disc onto its row; a column keeps only discs that sit on one.
         val cells = ArrayList<LocalCell>()
@@ -823,12 +833,147 @@ class WallScanner(
         return FrameLattice(pitch, cells, lastColumn, endInView, n, kept, roll)
     }
 
-    private fun isWholeColumn(column: List<Int>, yr: FloatArray): Boolean {
-        if (column.size != ROWS) return false
-        val gaps = FloatArray(ROWS - 1) { yr[column[it + 1]] - yr[column[it]] }
-        val typical = median(gaps.toList())
-        if (typical <= 0f) return false
-        return gaps.all { it in typical * 0.65f..typical * 1.35f }
+    private class Link(val distance: Float, val disc: Int, val chain: Int)
+
+    /**
+     * The seven rows, found across the whole frame, into [rowA] and [rowB] as lines
+     * `y = a + b*x` in de-rolled coordinates, top row first. False, with [lastFailure]
+     * set, when the frame does not show exactly seven.
+     *
+     * Every disc is linked to the disc level with it in the column before -- or the one
+     * before that, past a disc lost in a neighbour's glare -- and the chains that form are
+     * the rows. A row of the wall runs through nearly every column in view; anything that
+     * does not is not one of the seven.
+     *
+     * Rows used to be taken off any single column of exactly seven evenly spaced discs,
+     * and on 2026-11-07 that failed across the middle of the wall, which has a sparse row
+     * of buttons above the seven: every other column, half a column across. An extra disc
+     * made its column eight and useless -- or, where glare had swallowed that column's
+     * bottom disc, made it seven again with every row one too low, and the frame was
+     * placed against the last one a row out. Tracking weakened there and was lost three
+     * times.
+     *
+     * The extra row is kept out first by the columns, which drop a disc half a column off
+     * their line; what reaches here is rows of the wall, some of them patchy. Glare and the
+     * dim edge of the frame take discs out of a real row -- on the same pan the bottom row
+     * often ran through only four columns of seven -- so the bar for a row is low, and the
+     * seven are the adjacent seven that together run through the most columns.
+     */
+    private fun findRows(
+        columns: List<List<Int>>,
+        xr: FloatArray,
+        yr: FloatArray,
+        pitch: Float,
+        rowA: FloatArray,
+        rowB: FloatArray,
+    ): Boolean {
+        val tolerance = ROW_TOLERANCE * pitch
+        val chains = ArrayList<ArrayList<Int>>()
+        val chainColumns = ArrayList<ArrayList<Int>>()
+        val chainOf = HashMap<Int, Int>()
+        for ((k, column) in columns.withIndex()) {
+            // Each disc to the chain ending nearest its height one column back, or two;
+            // the nearest pairs first, one disc per chain.
+            val links = ArrayList<Link>()
+            for (i in column) {
+                for (back in 1..2) {
+                    if (k - back < 0) break
+                    for (p in columns[k - back]) {
+                        val chain = chainOf[p] ?: continue
+                        if (chains[chain].last() != p) continue
+                        val d = abs(yr[i] - yr[p])
+                        if (d < tolerance) links.add(Link(d + (back - 1) * tolerance, i, chain))
+                    }
+                }
+            }
+            links.sortBy { it.distance }
+            val linked = HashSet<Int>()
+            val extended = HashSet<Int>()
+            for (l in links) {
+                if (l.disc in linked || l.chain in extended) continue
+                chains[l.chain].add(l.disc)
+                chainColumns[l.chain].add(k)
+                chainOf[l.disc] = l.chain
+                linked.add(l.disc)
+                extended.add(l.chain)
+            }
+            for (i in column) {
+                if (i in linked) continue
+                chainOf[i] = chains.size
+                chains.add(arrayListOf(i))
+                chainColumns.add(arrayListOf(k))
+            }
+        }
+
+        // A row broken by a longer stretch of glare is still one row: join pieces that
+        // follow one another across the frame at the same height.
+        var joined = true
+        while (joined) {
+            joined = false
+            search@ for (a in chains.indices) {
+                for (b in chains.indices) {
+                    if (a == b) continue
+                    val gap = chainColumns[b].first() - chainColumns[a].last()
+                    if (gap < 1 || gap > MAX_ROW_BREAK) continue
+                    if (abs(yr[chains[b].first()] - yr[chains[a].last()]) >= tolerance) continue
+                    chains[a].addAll(chains[b])
+                    chainColumns[a].addAll(chainColumns[b])
+                    chains.removeAt(b)
+                    chainColumns.removeAt(b)
+                    joined = true
+                    break@search
+                }
+            }
+        }
+
+        val needed = maxOf(2, Math.ceil(ROW_COVERAGE * columns.size.toDouble()).toInt())
+        val candidates = chains.indices.filter { chainColumns[it].size >= needed }
+        // What each chain covered, longest first, out of how many columns: whether rows
+        // are short of columns or broken into pieces says which went wrong.
+        val covered = " (rows cover " + chainColumns.map { it.size }.sortedDescending().take(9).joinToString(",") +
+            " of ${columns.size} columns)"
+        if (candidates.size < ROWS) {
+            lastFailure = "${candidates.size} of the seven rows across the frame$covered"
+            return false
+        }
+
+        // Each candidate fitted, and put in order where it crosses the middle of the
+        // frame, so a tilted wall does not shuffle them.
+        val m = candidates.size
+        val a = FloatArray(m)
+        val b = FloatArray(m)
+        for ((r, c) in candidates.withIndex()) {
+            val xs = FloatArray(chains[c].size) { xr[chains[c][it]] }
+            val ys = FloatArray(chains[c].size) { yr[chains[c][it]] }
+            fitLine(xs, ys, pitch, a, b, r)
+        }
+        val middle = median(columns.map { col -> median(col.map { xr[it] }) })
+        val order = (0 until m).sortedBy { a[it] + b[it] * middle }
+        val heights = order.map { a[it] + b[it] * middle }
+
+        // The seven adjacent candidates, evenly spaced, that run through the most columns.
+        var best = -1
+        var bestCover = -1
+        for (start in 0..m - ROWS) {
+            val gaps = (start until start + ROWS - 1).map { heights[it + 1] - heights[it] }
+            val typical = median(gaps)
+            if (typical <= 0f || gaps.any { it !in typical * 0.65f..typical * 1.35f }) continue
+            val cover = (start until start + ROWS).sumOf { chainColumns[candidates[order[it]]].size }
+            if (cover > bestCover) {
+                bestCover = cover
+                best = start
+            }
+        }
+        if (best < 0) {
+            lastFailure = "rows unevenly spaced$covered"
+            return false
+        }
+        for (r in 0 until ROWS) {
+            val i = order[best + r]
+            rowA[r] = a[i]
+            rowB[r] = b[i]
+        }
+        return true
     }
 
     /**
@@ -984,6 +1129,20 @@ class WallScanner(
         /** Discs further apart than this, in pitches, start a new column. */
         private const val COLUMN_GAP = 0.5f
         private const val MIN_COLUMN_DISCS = 3
+
+        /** How far off its column's middle a disc may sit and still be in it, in pitches. */
+        private const val COLUMN_TOLERANCE = 0.3f
+
+        /**
+         * A row runs through at least this share of the columns in view. Low, because
+         * glare and the dim edge of a frame take real rows down to a third: on the pan of
+         * 2026-11-07 the bottom row often showed in three columns of eight. What this keeps
+         * out is the odd stray disc or two; the extra row is kept out by the columns.
+         */
+        private const val ROW_COVERAGE = 0.3
+
+        /** Columns a row may be lost for, in glare, and still be joined up across. */
+        private const val MAX_ROW_BREAK = 5
 
         /** How far off its row line a disc may sit, in pitches. */
         private const val ROW_TOLERANCE = 0.35f

@@ -44,10 +44,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * that never touches the scanner at all. Planning runs on its own worker: a whole wall is
  * a few hundred milliseconds of search, and the camera should not stop for it.
  *
- * Each scan is written to the phone under `files/mines/<date-time>/`: the frames it read
- * (`frames.txt` says which was which), what the scanner made of each (`scan.txt`), and
- * the board and plan (`board.txt`). Not for the user; for replaying a scan at a desk
- * when one comes out wrong (`MinesReplay`).
+ * Each scan is written to the phone under `files/mines/<date-time>/`: the frames it read,
+ * at the size it read them (`frames.txt` says which was which), what the scanner made of
+ * each (`scan.txt`), and the board and plan (`board.txt`). Not for the user; for
+ * replaying a scan at a desk when one comes out wrong (`MinesReplay`).
  */
 class MinesController(
     context: Context,
@@ -94,6 +94,7 @@ class MinesController(
     private var scanText: PrintWriter? = null
     private var framesText: PrintWriter? = null
     private var savedFrames = 0
+    private var unsavedFrames = 0
 
     // Set from the main thread, taken by the solver thread on its next frame.
     private val startRequested = AtomicBoolean(false)
@@ -110,9 +111,13 @@ class MinesController(
     @Volatile
     private var planGeneration = 0
 
-    /** Frames are written off the solver thread; a full queue drops the frame, never waits. */
+    /**
+     * Frames are written off the solver thread, two at a time; a full queue skips the
+     * frame, never waits. Two, because every frame is now written at full size, and one
+     * writer encoding 960x540 JPEGs falls behind twenty frames a second.
+     */
     private val writer = ThreadPoolExecutor(
-        1, 1, 0L, TimeUnit.MILLISECONDS, ArrayBlockingQueue(8), ThreadPoolExecutor.DiscardPolicy(),
+        2, 2, 0L, TimeUnit.MILLISECONDS, ArrayBlockingQueue(WRITE_QUEUE), ThreadPoolExecutor.DiscardPolicy(),
     )
 
     /** The board and plan, which are never dropped. */
@@ -359,6 +364,7 @@ class MinesController(
             scanText = PrintWriter(File(dir, "scan.txt").bufferedWriter())
             framesText = PrintWriter(File(dir, "frames.txt").bufferedWriter())
             savedFrames = 0
+            unsavedFrames = 0
             scanText?.println("camera: ${describeCamera()}")
         } catch (e: Exception) {
             // Losing the copy costs a replay, never the scan.
@@ -370,29 +376,32 @@ class MinesController(
         if (scanning) scanText?.println(line)
     }
 
+    /**
+     * Keeps one frame of the scan, at the size the scanner read it.
+     *
+     * Full size, not half. The pan of 2026-11-07 was saved at half size and replayed at a
+     * desk lost the count at 7.2 s for good, where the phone had kept it: in a dark room
+     * the unlit buttons are a few levels above the panel, and halving and JPEG between
+     * them took them away. A replay that does not do what the phone did cannot show why
+     * the phone went wrong. Quality 95 for the same reason, at around 100 KB a frame.
+     *
+     * A frame the writers have no room for is left out of `frames.txt` as well, so the
+     * listing never names a file that is not there, and the gap is counted in `scan.txt`.
+     */
     private fun saveFrame(frame: RgbImage, lattice: Boolean, t: Long) {
         val dir = scanDir ?: return
         if (savedFrames >= MAX_SAVED_FRAMES) return
+        if (writer.queue.remainingCapacity() == 0) {
+            unsavedFrames++
+            return
+        }
         val name = "%04d.jpg".format(savedFrames++)
         framesText?.println("$name $t ${if (lattice) "L" else "C"}")
-        // Half size, the size the replay fixture is: every look the scanner needs, at a
-        // quarter of the bytes. Copied here because the frame's buffer is reused for the
-        // next one; a straight byte copy, so it costs about a millisecond.
-        val small = RgbImage(frame.width / 2, frame.height / 2)
-        var o = 0
-        for (y in 0 until small.height) {
-            var i = (y * 2 * frame.width) * 3
-            for (x in 0 until small.width) {
-                small.data[o] = frame.data[i]
-                small.data[o + 1] = frame.data[i + 1]
-                small.data[o + 2] = frame.data[i + 2]
-                o += 3
-                i += 6
-            }
-        }
+        // Copied here because the frame's buffer is reused for the next one.
+        val copy = RgbImage(frame.width, frame.height, frame.data.copyOf())
         writer.execute {
             try {
-                val b = Bitmap.createBitmap(small.toArgb(), small.width, small.height, Bitmap.Config.ARGB_8888)
+                val b = Bitmap.createBitmap(copy.toArgb(), copy.width, copy.height, Bitmap.Config.ARGB_8888)
                 File(dir, name).outputStream().use { b.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, it) }
                 b.recycle()
             } catch (e: Exception) {
@@ -402,6 +411,11 @@ class MinesController(
     }
 
     private fun closeFrames() {
+        if (framesText != null) {
+            val line = "frames saved: $savedFrames, not saved (writers behind): $unsavedFrames"
+            scanText?.println(line)
+            Log.i(TAG, line)
+        }
         framesText?.close()
         framesText = null
         scanText?.flush()
@@ -472,9 +486,12 @@ class MinesController(
         const val MAX_BRIGHTER_STEPS = 3
         const val MAX_DARKER_STEPS = 2
 
-        /** A minute at twenty frames a second, both kinds together. */
+        /** A minute at twenty frames a second, both kinds together: about 120 MB at most. */
         const val MAX_SAVED_FRAMES = 1200
-        const val JPEG_QUALITY = 88
+        const val JPEG_QUALITY = 95
+
+        /** Frames waiting to be written, at 1.5 MB each, before one is skipped. */
+        const val WRITE_QUEUE = 12
 
         val STAMP = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US)
     }

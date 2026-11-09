@@ -61,11 +61,14 @@ frame is a lattice frame, and colour falls back to the glow (below).
 `WallScanner`, in `core`, testable at a desk:
 
 1. **Find the buttons** in each lattice frame (`GemBlobDetector`, as Gems), take the
-   camera's roll off, group the discs into columns and the columns into rows. A column
-   with exactly seven evenly spaced discs fixes the row lines for the whole frame -- which
-   is why all seven rows have to be in view -- and every cell's position comes from where
-   its column's line crosses its row's, so a lit button too bloomed to be found as a disc
-   is still where it should be.
+   camera's roll off, group the discs into columns -- dropping any disc a third of a pitch
+   off its column's line -- and find the rows across the whole frame: each disc linked to
+   the one level with it a column or two back, the chains joined up across glare, and the
+   seven adjacent, evenly spaced chains that run through the most columns taken as the
+   rows. All seven rows have to be in view. Every cell's position comes from where its
+   column's line crosses its row's, so a lit button too bloomed to be found as a disc is
+   still where it should be. (Rows used to be taken off any one column of exactly seven
+   discs; see [In the room, 2026-11-07](#in-the-room-2026-11-07) for why not.)
 2. **Place the frame on the wall.** Every button of the last placed frame is moved on
    by the pan's velocity and each disc in this one votes for the column offset that puts
    it next to one. A slow pan moves a fraction of a column between frames, so the vote is
@@ -132,10 +135,15 @@ shows it as a "?" for the user to look at and tap. On the reference wall the pla
 mines in two detonations, found in about a third of a second, and checked by detonating
 it against the board read by eye.
 
+A button read **magenta** is reported unknown too. Magenta is an armed mine, and the wall
+is scanned before any mine goes down, so whatever reads that colour in a scan is not one --
+and read as armed, it is a cell the planner fires straight through.
+
 ### Keeping the evidence
 
-Every scan writes itself to the phone under `files/mines/<date-time>/`: the frames it read
-at half size, `frames.txt` saying when each was taken and which kind it was, `scan.txt`
+Every scan writes itself to the phone under `files/mines/<date-time>/`: the frames it read,
+at the size it read them and JPEG quality 95 (around 100 KB each, so a scan is tens of
+megabytes), `frames.txt` saying when each was taken and which kind it was, `scan.txt`
 with the scanner's reading of every frame and every lit cell, and `board.txt` with the
 board, each correction made by hand, and each plan. `tools/collect-session.sh` brings them
 off, and `MinesReplay` runs one back through the scanner at a desk:
@@ -191,11 +199,38 @@ stops up, unable to brighten; it is now counted from wherever the lattice frames
 started. And the steer logged under a tag the phone's log capture did not record, so the
 run left no trace of it; that tag is captured now.
 
+### In the room, 2026-11-07
+
+The first whole scan of the wall: green to end, all 64 columns, a plan of five mines in one
+detonation. The user then set one cell by hand and called the scan close but a few
+buttons out. Its frames and log are in `testVideos/phone-backup/2026-11-07/`.
+
+- **The middle of the wall has a sparse row of buttons above the seven** -- every other
+  column, half a column across, a little under a pitch up. Rows were taken off any single
+  column of exactly seven discs, and that rule failed there: an extra disc made its column
+  eight and useless, or, where a neighbour's glare had swallowed the bottom disc, made it
+  seven again with every row one too low. Tracking weakened from 7 s and was lost three
+  times, each time found again on only two or three lit buttons. Rows are now found across
+  the whole frame (above), and `WallScanPanTest` renders that wall -- extra row, bottom
+  discs lost in glare -- and reads it exactly, where the old rule lost the count for good.
+- **Glare.** The room was so dark that the lattice steer had gone to its limit, 1/62 s at
+  ISO 6400, and every lit button bloomed over its neighbours: discs hidden, and stray lit
+  readings in the cell beside a real one, outvoted but there.
+- **One button read pink-magenta**, hue 322 against the reds' 354. The board called it an
+  armed mine and the plan fired diagonally through it. The user believes it was a two-hit
+  mine. Whatever it is, magenta in a scan is now unknown, and planned around.
+- **The positions held up.** Every lit button was logged in one cell frame after frame,
+  and the count ended on 64. Replayed with the new row finder, the frames as saved -- half
+  size, which loses the faint discs, so the old finder lost the count at 7 s -- track to
+  column 64 and give the phone's board cell for cell. Which buttons the user saw out of
+  place is not yet known.
+- **The saved frames could not be replayed faithfully** at half size. They are now saved
+  at full size, so the next scan replays as it ran.
+
 ### Not yet verified
 
-- **A whole scan of the wall itself**, and with it the scan's cost with buttons in view.
-  The one attempt never found the wall (above); the fix is measured on its frames, not
-  on a new run.
+- **The new row finder on the phone, in the room.** Measured on the 2026-11-07 frames as
+  saved, at half size, and on rendered walls.
 - **Face colours at the colour exposure on this wall**, above.
 - **The lattice exposure's default** is still two stops under one auto-exposed video. The
   room needed three stops more than that on 2026-10-27; the steer covers the gap in about
