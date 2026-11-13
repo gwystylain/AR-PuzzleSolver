@@ -148,13 +148,42 @@ is what the user saw in the third stage on 2026-10-31. A ring that comes and goe
 the eye and says nothing about which answer to believe.
 
 So the rings are not the scan's matches. `GemHighlightSteadier` follows each gem from
-scan to scan by position, moved with the wall as the camera pans, keeps its last three
-readings, and rings it for a target only when two of the three match. One stray reading
-can neither light a gem nor put one out, and a gem the detector misses for one scan keeps
-its history and its ring. A gem coming into view is ringed a scan later, a tenth of a
-second. Readings are kept rather than matched slots, so a change of targets applies at
-once to everything in view. The heartbeat prints both: `matched` is the latest scan,
-`shown` is what is ringed.
+scan to scan, keeps its last three readings, and rings it for a target only when two of
+the three match. One stray reading can neither light a gem nor put one out, and a gem the
+detector misses for a scan -- or a scan with no gems in it at all -- keeps its history
+and its ring. A gem coming into view is ringed a scan later, a tenth of a second.
+Readings are kept rather than matched slots, so a change of targets applies at once to
+everything in view. The heartbeat prints both: `matched` is the latest scan, `shown` is
+what is ringed.
+
+**Following a gem means knowing how far the wall moved**, and the first version of this
+got it wrong in the room. It paired each gem with the nearest one from the scan before,
+within 0.4 of a pitch of where the last scan's motion put it. On 2026-11-12 the user
+swept the wall at three and a half to five pitches a second -- 0.35 to 0.5 of a pitch a
+scan, with hand shake on top -- and past the 0.4 nothing paired: every gem began a new
+history every scan and never reached two readings. The heartbeat shows it plainly,
+`matched=5 shown=0` and `matched=2 shown=0` all through the pans, with rings appearing
+only when the phone was held still. The scanner was right throughout: each round's wall
+was four decoy patterns repeated and each target once, and the captures show the target
+gems read and matched. A wider gate is no answer, since the lattice is the same
+everywhere and a wider gate pairs a gem with its neighbour.
+
+What is not the same everywhere is the colours. So the motion is found from the
+readings: every gem in this scan and every gem in the last with the same reading vote
+for the shift between them, in bins a fifth of a pitch across. The true shift collects a
+vote from nearly every gem in view; chance agreements scatter over every shift there is.
+Each gem then pairs with the one that shift puts nearest it, within 0.3 of a pitch. That
+follows the wall up to three pitches a scan with no motion carried over from the scan
+before. Only when too few readings agree to say -- under four votes, or under a quarter
+of the gems read -- does it fall back to the last scan's motion and the old gate. On a
+wall of one colour the vote could pick a shift off by a whole pitch, but then every
+neighbour reads the same and the history is unharmed.
+
+`GemHighlightSteadierTest` pans a room-like wall -- four decoy patterns, the targets once
+each -- at 0.1, 0.45 and 0.6 of a pitch a scan with hand shake, and at 1.5 in a flick, and
+holds the targets ringed at least 95% (90% for the flick) of the scans they have been in
+view for two, with no decoy ever ringed. The first version managed 92%, 21% through one
+empty scan, and none at all in the flick.
 
 A gem cut off by the edge of the frame is read but never matched: half its rings are not
 in the image, and the reader cannot tell. On 2026-10-31 one at the bottom edge, red/blue/

@@ -190,8 +190,9 @@ opposite fixes.
   it is the camera's, and `washed` is in the `ae[...]` clause earlier on the line.
 - **`matched` / `shown`** — gems that matched a target in the latest scan, and gems
   actually ringed. The rings are held over three scans so a borderline reading does not
-  blink; the two differing for a moment is that at work, and differing for long means a
-  gem is reading differently scan to scan. See
+  blink; the two differing for a moment is that at work. Differing for long means either
+  a gem is reading differently scan to scan or the gems are not being followed from scan
+  to scan at all -- `matched=5 shown=0` through every pan was the second, on 2026-11-12. See
   [GEM_PUZZLE.md](GEM_PUZZLE.md#holding-the-rings-steady).
 - **`pitch`** — median gem-to-gem spacing, in pixels, and the ruler every ring radius is
   a fraction of. `-1.0px` means fewer than six gems were in view and nothing was read.
