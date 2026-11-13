@@ -386,8 +386,9 @@ private fun Players(room: Room) {
 private val WALLS = listOf("North" to "door", "East" to null, "South" to null, "West" to null)
 
 /**
- * A row of slots per wall, under the column numbers so a slot can be called out ("east 4").
- * Sized to the space it is given, up to a comfortable tile, so it fits a phone held either way.
+ * A row of slots per wall, each under a line naming its wall, so the slots have the whole
+ * width; the column numbers along the top let a slot be called out ("east 4"). Sized to
+ * the space it is given, up to a comfortable tile, so it fits a phone held either way.
  */
 @Composable
 private fun Board(
@@ -399,50 +400,58 @@ private fun Board(
     modifier: Modifier,
 ) {
     BoxWithConstraints(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-        // Seven slots and a wall name across a phone held upright: about 35 dp a slot.
-        val gap = 5.dp
-        val header = 16.dp
-        val labelWidth = 50.dp
+        val gap = 6.dp
+        // Between one wall's slots and the next wall's name.
+        val wallGap = 10.dp
+        val numbers = 14.dp
+        val wallLine = 18.dp
+        val underLine = 3.dp
         val rows = SequenceBoard.ROWS
         val columns = SequenceBoard.COLUMNS
-        val rowHeight = ((maxHeight - header - gap * rows) / rows).coerceBetween(40.dp, 84.dp)
-        val slotWidth = (maxWidth - labelWidth - gap * columns) / columns
+        val rowHeight = ((maxHeight - numbers - (wallLine + underLine + wallGap) * rows) / rows)
+            .coerceBetween(40.dp, 84.dp)
+        val slotWidth = (maxWidth - gap * (columns - 1)) / columns
         val fontSize = with(LocalDensity.current) { (minOf(rowHeight, slotWidth) * 0.5f).toSp() }
-        Column(verticalArrangement = Arrangement.spacedBy(gap)) {
-            Row(Modifier.height(header), horizontalArrangement = Arrangement.spacedBy(gap)) {
-                Spacer(Modifier.width(labelWidth))
+        Column(verticalArrangement = Arrangement.spacedBy(wallGap)) {
+            Row(Modifier.height(numbers), horizontalArrangement = Arrangement.spacedBy(gap)) {
                 for (c in 1..columns) {
                     Text(
                         "$c",
                         color = TEXT_FAINT,
                         fontSize = 11.sp,
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.width(slotWidth),
+                        modifier = Modifier.weight(1f),
                     )
                 }
             }
             for (row in 0 until rows) {
-                Row(
-                    Modifier.height(rowHeight),
-                    horizontalArrangement = Arrangement.spacedBy(gap),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
+                Column(verticalArrangement = Arrangement.spacedBy(underLine)) {
                     val (wall, note) = WALLS[row]
-                    Column(Modifier.width(labelWidth)) {
-                        Text(wall, color = TEXT, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                        if (note != null) Text(note, color = ACCENT, fontSize = 11.sp)
-                    }
-                    for (column in 0 until columns) {
-                        val i = row * columns + column
-                        Slot(
-                            value = slots[i],
-                            counted = counted,
-                            editing = editing == i,
-                            typed = typed,
-                            fontSize = fontSize,
-                            modifier = Modifier.width(slotWidth).fillMaxHeight(),
-                            onTap = { onSlot(i) },
+                    Row(Modifier.height(wallLine), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            wall.uppercase(),
+                            color = TEXT,
+                            fontSize = 12.sp,
+                            letterSpacing = 1.5.sp,
+                            fontWeight = FontWeight.SemiBold,
                         )
+                        if (note != null) {
+                            Text("  ·  $note", color = ACCENT, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                    Row(Modifier.height(rowHeight), horizontalArrangement = Arrangement.spacedBy(gap)) {
+                        for (column in 0 until columns) {
+                            val i = row * columns + column
+                            Slot(
+                                value = slots[i],
+                                counted = counted,
+                                editing = editing == i,
+                                typed = typed,
+                                fontSize = fontSize,
+                                modifier = Modifier.weight(1f).fillMaxHeight(),
+                                onTap = { onSlot(i) },
+                            )
+                        }
                     }
                 }
             }
