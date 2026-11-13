@@ -50,7 +50,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -387,8 +386,8 @@ private val WALLS = listOf("North" to "door", "East" to null, "South" to null, "
 
 /**
  * A row of slots per wall, each under a line naming its wall, so the slots have the whole
- * width; the column numbers along the top let a slot be called out ("east 4"). Sized to
- * the space it is given, up to a comfortable tile, so it fits a phone held either way.
+ * width. Sized to the space it is given, up to a comfortable tile, so it fits a phone held
+ * either way.
  */
 @Composable
 private fun Board(
@@ -403,27 +402,15 @@ private fun Board(
         val gap = 6.dp
         // Between one wall's slots and the next wall's name.
         val wallGap = 10.dp
-        val numbers = 14.dp
-        val wallLine = 18.dp
-        val underLine = 3.dp
+        val wallLine = 22.dp
+        val underLine = 4.dp
         val rows = SequenceBoard.ROWS
         val columns = SequenceBoard.COLUMNS
-        val rowHeight = ((maxHeight - numbers - (wallLine + underLine + wallGap) * rows) / rows)
+        val rowHeight = ((maxHeight - (wallLine + underLine) * rows - wallGap * (rows - 1)) / rows)
             .coerceBetween(40.dp, 84.dp)
         val slotWidth = (maxWidth - gap * (columns - 1)) / columns
         val fontSize = with(LocalDensity.current) { (minOf(rowHeight, slotWidth) * 0.5f).toSp() }
         Column(verticalArrangement = Arrangement.spacedBy(wallGap)) {
-            Row(Modifier.height(numbers), horizontalArrangement = Arrangement.spacedBy(gap)) {
-                for (c in 1..columns) {
-                    Text(
-                        "$c",
-                        color = TEXT_FAINT,
-                        fontSize = 11.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-            }
             for (row in 0 until rows) {
                 Column(verticalArrangement = Arrangement.spacedBy(underLine)) {
                     val (wall, note) = WALLS[row]
@@ -431,12 +418,12 @@ private fun Board(
                         Text(
                             wall.uppercase(),
                             color = TEXT,
-                            fontSize = 12.sp,
+                            fontSize = 15.sp,
                             letterSpacing = 1.5.sp,
                             fontWeight = FontWeight.SemiBold,
                         )
                         if (note != null) {
-                            Text("  ·  $note", color = ACCENT, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text("  ·  $note", color = ACCENT, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
                     Row(Modifier.height(rowHeight), horizontalArrangement = Arrangement.spacedBy(gap)) {

@@ -15,8 +15,8 @@ same way: one phone hosts, the rest join from the list.
 2. One player taps **Host a lobby**. It appears on everyone else's phone as a four-letter
    code; they tap it to join. Players are P1 to P5 in the order they arrive. Sequence's
    lobbies are listed only in Sequence, and Spellinator's only in Spellinator.
-3. The board is a row of seven slots for each wall: **North** (the door), **East**, **South**
-   and **West**, with the columns numbered 1 to 7 so a slot can be called out ("east 4").
+3. The board is a row of seven slots for each wall, each under its wall's name: **North**
+   (the door), **East**, **South** and **West**.
 4. Anyone taps any slot, and a phone keypad comes up from the bottom. A **second digit
    enters the number** and closes it; **OK** enters a single digit. With nothing typed,
    **Clear** empties the slot; once a digit is typed, ⌫ takes it back. A tap outside, or
