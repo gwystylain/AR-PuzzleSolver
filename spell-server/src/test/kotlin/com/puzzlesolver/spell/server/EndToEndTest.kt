@@ -1,6 +1,8 @@
 package com.puzzlesolver.spell.server
 
+import com.puzzlesolver.spell.Game
 import com.puzzlesolver.spell.GameMode
+import com.puzzlesolver.spell.SequenceBoard
 import com.puzzlesolver.spell.LetterMask
 import com.puzzlesolver.spell.Lexicon
 import com.puzzlesolver.spell.Protocol
@@ -72,8 +74,8 @@ class EndToEndTest {
 
     private fun proxy(to: SpellServer) = FlakyProxy(to.port).also { cleanup += { it.close() } }
 
-    private fun session(port: Int, store: SessionStore = SessionStore.NONE): SpellSession =
-        SpellSession("ws://127.0.0.1:$port", http, store, timing).also {
+    private fun session(port: Int, store: SessionStore = SessionStore.NONE, game: Game = Game.SPELLINATOR): SpellSession =
+        SpellSession("ws://127.0.0.1:$port", http, store, timing, game = game).also {
             cleanup += { it.close() }
             it.start()
         }
@@ -185,6 +187,65 @@ class EndToEndTest {
         assertNull(undone.word)
         a.solve()
         b.await("solved again") { it.room?.word == "OPT" }
+    }
+
+    @Test
+    fun `sequence through the phones - anyone fills the board, the host counts, everyone sees it`() {
+        val s = server()
+        val words = session(s.port)
+        val a = session(s.port, game = Game.SEQUENCE)
+        val b = session(s.port, game = Game.SEQUENCE)
+        a.await("connected") { it.link is Link.Online }
+        a.host(GameMode.SEQUENCE)
+        val id = a.await("hosting") { it.room?.seated == true && it.room!!.current }.room!!.lobby
+        b.joinLobby(id)
+        assertEquals(SequenceBoard.SLOTS, b.state.value.room!!.slots.size)
+        // Listed to Sequence's phones only.
+        words.await("connected") { it.link is Link.Online }
+        val spellLobby = session(s.port).hostLobby()
+        words.await("the word lobby listed") { st -> st.lobbies.any { it.id == spellLobby } }
+        assertTrue(words.state.value.lobbies.none { it.id == id })
+
+        b.setSlot(0, 12)
+        a.setSlot(7, 3)
+        b.setSlot(20, 40)
+        for (p in listOf(a, b)) {
+            p.await("the board") { st ->
+                st.room?.let { it.current && it.slots[0] == 12 && it.slots[7] == 3 && it.slots[20] == 40 } == true
+            }
+        }
+
+        b.count() // not the host: the phone does not even ask
+        a.count()
+        b.await("3 lit") { it.room?.counted == 3 }
+        a.count()
+        a.count()
+        b.await("40 lit") { it.room?.counted == 40 }
+        a.countBack()
+        b.await("back to 12") { it.room?.counted == 12 && a.state.value.room!!.current }
+
+        a.resetBoard()
+        for (p in listOf(a, b)) {
+            p.await("wiped") { st -> st.room?.let { r -> r.current && r.counted == null && r.slots.all { it == null } } == true }
+        }
+    }
+
+    @Test
+    fun `a number typed while the link is down goes through once it is back`() {
+        val s = server()
+        val proxy = proxy(s)
+        val a = session(s.port, game = Game.SEQUENCE)
+        val b = session(proxy.port, game = Game.SEQUENCE)
+        a.await("connected") { it.link is Link.Online }
+        a.host(GameMode.SEQUENCE)
+        val id = a.await("hosting") { it.room?.seated == true && it.room!!.current }.room!!.lobby
+        b.joinLobby(id)
+
+        proxy.freeze()
+        b.setSlot(5, 77)
+        // Shown on the phone that typed it at once, link or no link.
+        assertEquals(77, b.await("shown here") { it.room?.slots?.get(5) == 77 }.room!!.slots[5])
+        a.await("arrived elsewhere", timeoutMillis = 10_000) { it.room?.slots?.get(5) == 77 }
     }
 
     @Test

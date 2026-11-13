@@ -6,7 +6,7 @@ the instant the solution becomes determined, which for some puzzle types is well
 before you have finished scanning.
 
 Native Kotlin + ARCore. Every solver is fully local: no network calls, no cloud anchors,
-no model downloads. The two online modes, Spellinator and Jumble, talk only to a lobby server you run
+no model downloads. The three online modes, Spellinator, Jumble and Sequence, talk only to a lobby server you run
 yourself. Optimised for throughput; power consumption is deliberately not a
 consideration.
 
@@ -29,9 +29,9 @@ AR][arcore] installed — an x86 emulator will not run it, since ARCore ships ar
 ABIs only. Because the APK does not come from the Play Store, Android will ask
 you to allow installing unknown apps for whichever app opened the file.
 
-Nothing leaves the device except in Spellinator and Jumble, which connect to your own lobby server
+Nothing leaves the device except in Spellinator, Jumble and Sequence, which connect to your own lobby server
 and nothing else (see [docs/SPELLINATOR.md](docs/SPELLINATOR.md)). The camera permission is
-the only one that prompts; network access, for Spellinator and Jumble, is granted at install.
+the only one that prompts; network access, for those three, is granted at install.
 
 Building it yourself, or cutting a new release, is covered in
 [docs/RELEASING.md](docs/RELEASING.md).
@@ -123,6 +123,12 @@ one of them, and the phone shows each word that uses all of them exactly once --
 to pick, since the word is as long as the letters, and repeats count. It asks Spellinator's
 server, since that is where the word list lives, and needs no lobby. See
 [docs/SPELLINATOR.md](docs/SPELLINATOR.md#jumble).
+
+**Sequence** is a board of numbers on Spellinator's server, with its lobbies listed apart:
+a row of seven slots for each wall -- north (the door), east, south, west. Anyone taps a slot
+and types the one- or two-digit number they can see on a phone keypad, and the host taps
+**Count** to light the numbers one at a time, lowest first, shading each one passed, on
+every phone at once. See [docs/SEQUENCE.md](docs/SEQUENCE.md).
 
 Gems, Terminal and Spot do **not** use the AR pipeline. All three own the camera directly
 and read each frame in image space with no pose, wall fit or canvas. Gems does because
@@ -250,7 +256,8 @@ core/                      pure JVM, no Android -- unit-testable in milliseconds
                            camera -- see docs/STRATEGY_PUZZLE.md
   PuzzleEngine.kt          detect -> read -> solve, platform-free
 spell/                     Spellinator's protocol, limits and word finder, shared by both
-                           ends -- see docs/SPELLINATOR.md
+                           ends, and Sequence's board -- see docs/SPELLINATOR.md and
+                           docs/SEQUENCE.md
 spell-client/              the phone's connection to the lobby server: reconnects, resumes;
                            and Jumble's, which asks it for anagrams
 spell-server/              the lobby server (Ktor), its Dockerfile and TrueNAS app YAML

@@ -13,7 +13,7 @@ class ProtocolTest {
     @Test
     fun `every client message survives the wire`() {
         val messages = listOf(
-            ClientMessage.Browse,
+            ClientMessage.Browse(),
             ClientMessage.Solve,
             ClientMessage.Host(),
             ClientMessage.Host(GameMode.ONE_AND_DONE),
@@ -27,6 +27,13 @@ class ProtocolTest {
             ClientMessage.SetLength(8, 6),
             ClientMessage.Ping(123456789L),
             ClientMessage.Jumble("TTEELR"),
+            ClientMessage.Browse(Game.SEQUENCE),
+            ClientMessage.Host(GameMode.SEQUENCE),
+            ClientMessage.SetSlot(9, 23, 42),
+            ClientMessage.SetSlot(10, 0, null),
+            ClientMessage.SetCount(11, 7),
+            ClientMessage.SetCount(12, null),
+            ClientMessage.ResetBoard(13),
         )
         for (m in messages) assertEquals(m, Protocol.decodeClient(Protocol.encode(m)))
     }
@@ -45,6 +52,11 @@ class ProtocolTest {
                 listOf(PlayerState(1, "T", true, 3), PlayerState(2, "OP", false, 0)),
                 listOf("TOP", "POT"), 7, word = "TOP",
             ),
+            ServerMessage.State(
+                "GHJK", 4, 5, listOf(PlayerState(1, "", true, 6)), emptyList(), 0,
+                mode = GameMode.SEQUENCE, host = 1,
+                slots = List(SequenceBoard.SLOTS) { if (it % 5 == 0) it * 4 else null }, counted = 20,
+            ),
             ServerMessage.Left,
             ServerMessage.Error(ErrorCode.LOBBY_FULL, "full"),
             ServerMessage.Pong(5),
@@ -57,7 +69,75 @@ class ProtocolTest {
     @Test
     fun `the tag is short and the payload is plain`() {
         assertEquals("""{"t":"letters","seq":7,"letters":"TOP"}""", Protocol.encode(ClientMessage.SetLetters(7, "TOP")))
-        assertEquals("""{"t":"browse"}""", Protocol.encode(ClientMessage.Browse))
+        assertEquals("""{"t":"browse","game":"spellinator"}""", Protocol.encode(ClientMessage.Browse()))
+        assertEquals("""{"t":"slot","seq":3,"slot":5,"value":12}""", Protocol.encode(ClientMessage.SetSlot(3, 5, 12)))
+    }
+
+    @Test
+    fun `a browse from a phone that predates Sequence asks for Spellinator's lobbies`() {
+        assertEquals(ClientMessage.Browse(Game.SPELLINATOR), Protocol.decodeClient("""{"t":"browse"}"""))
+        assertEquals(ClientMessage.Browse(Game.SEQUENCE), Protocol.decodeClient("""{"t":"browse","game":"sequence"}"""))
+        assertEquals(Game.SEQUENCE, GameMode.SEQUENCE.game)
+        assertTrue(GameMode.entries.filter { it != GameMode.SEQUENCE }.all { it.game == Game.SPELLINATOR })
+    }
+
+    @Test
+    fun `sequence messages must name a real slot, a two-digit number and a count in range`() {
+        // Four walls of seven.
+        assertEquals(4, SequenceBoard.ROWS)
+        assertEquals(7, SequenceBoard.COLUMNS)
+        assertNull(ClientMessage.SetSlot(1, 27, 5).problem())
+        assertNotNull(ClientMessage.SetSlot(1, 28, 5).problem())
+        val good = listOf(
+            ClientMessage.SetSlot(1, 0, 0),
+            ClientMessage.SetSlot(1, SequenceBoard.SLOTS - 1, 99),
+            ClientMessage.SetSlot(1, 7, null),
+            ClientMessage.SetCount(1, null),
+            ClientMessage.SetCount(1, 0),
+            ClientMessage.SetCount(1, 100),
+            ClientMessage.ResetBoard(1),
+        )
+        for (m in good) assertNull(m.problem(), m.toString())
+        val bad = listOf(
+            ClientMessage.SetSlot(1, -1, 5),
+            ClientMessage.SetSlot(1, SequenceBoard.SLOTS, 5),
+            ClientMessage.SetSlot(1, 3, 100),
+            ClientMessage.SetSlot(1, 3, -1),
+            ClientMessage.SetSlot(-1, 3, 5),
+            ClientMessage.SetCount(1, -1),
+            ClientMessage.SetCount(1, 101),
+            ClientMessage.ResetBoard(-1),
+        )
+        for (m in bad) assertNotNull(m.problem(), m.toString())
+    }
+
+    @Test
+    fun `the count steps up through the numbers, lowest first, ties together, and past the last`() {
+        val slots = MutableList<Int?>(SequenceBoard.SLOTS) { null }
+        assertNull(SequenceBoard.next(slots, null), "nothing to count on an empty board")
+        slots[0] = 12
+        slots[7] = 3
+        slots[13] = 40
+        slots[20] = 12
+        val steps = generateSequence(SequenceBoard.next(slots, null)) { at ->
+            SequenceBoard.next(slots, at).takeIf { it != at }
+        }.toList()
+        assertEquals(listOf(3, 12, 40, 41), steps)
+        assertTrue(SequenceBoard.finished(slots, 41))
+        assertTrue(!SequenceBoard.finished(slots, 40))
+        // And back down again, to not started.
+        assertEquals(40, SequenceBoard.previous(slots, 41))
+        assertEquals(12, SequenceBoard.previous(slots, 40))
+        assertEquals(3, SequenceBoard.previous(slots, 12))
+        assertNull(SequenceBoard.previous(slots, 3))
+        // A number typed below the count mid-way is shaded; one above it is still to come.
+        slots[1] = 5
+        slots[2] = 20
+        assertEquals(20, SequenceBoard.next(slots, 12))
+        // A number past the end of a finished count brings it back to life.
+        slots[3] = 99
+        assertEquals(99, SequenceBoard.next(slots, 41))
+        assertEquals(100, SequenceBoard.next(slots, 99))
     }
 
     @Test

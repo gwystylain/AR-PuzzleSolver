@@ -2,6 +2,7 @@ package com.puzzlesolver.spell.server
 
 import com.puzzlesolver.spell.ClientMessage
 import com.puzzlesolver.spell.ErrorCode
+import com.puzzlesolver.spell.Game
 import com.puzzlesolver.spell.GameMode
 import com.puzzlesolver.spell.LetterMask
 import com.puzzlesolver.spell.Lexicon
@@ -12,6 +13,7 @@ import com.puzzlesolver.spell.OneAndDone
 import com.puzzlesolver.spell.PlayerState
 import com.puzzlesolver.spell.Protocol
 import com.puzzlesolver.spell.Rules
+import com.puzzlesolver.spell.SequenceBoard
 import com.puzzlesolver.spell.ServerMessage
 import com.puzzlesolver.spell.TicTacToe
 import com.puzzlesolver.spell.Token
@@ -69,6 +71,12 @@ class LobbyManager(
 
         /** One and Done 2.0: the round's saved words, whose letters are out of play. */
         var saved: List<String> = emptyList()
+
+        /** Sequence: the board, row by row; anyone seated sets any slot. */
+        val slots = arrayOfNulls<Int>(SequenceBoard.SLOTS)
+
+        /** Sequence: where the host's count stands; null before it starts. */
+        var counted: Int? = null
         val done: Boolean get() = mode == GameMode.ONE_AND_DONE && saved.size >= Rules.ONE_AND_DONE_WORDS
 
         /** Called whenever a seat is given up, so the lobby is never left without a host. */
@@ -110,8 +118,9 @@ class LobbyManager(
     /** Insertion-ordered, so the list can be shown newest first. */
     private val lobbies = LinkedHashMap<String, Lobby>()
     private val seats = HashMap<Peer, Seat>()
-    private val browsers = LinkedHashSet<Peer>()
-    private var lastLobbyList: String? = null
+    /** Everyone browsing, and whose lobbies they are looking for. */
+    private val browsers = LinkedHashMap<Peer, Game>()
+    private val lastLobbyList = HashMap<Game, String>()
 
     val lobbyCount: Int get() = synchronized(lock) { lobbies.size }
 
@@ -129,7 +138,7 @@ class LobbyManager(
         }
         synchronized(lock) {
             when (message) {
-                ClientMessage.Browse -> browse(peer)
+                is ClientMessage.Browse -> browse(peer, message.game)
                 is ClientMessage.Host -> host(peer, message.mode)
                 is ClientMessage.Join -> join(peer, message.lobby)
                 is ClientMessage.Resume -> resume(peer, message)
@@ -148,6 +157,17 @@ class LobbyManager(
                 }
                 is ClientMessage.SetSaved -> save(peer, message)
                 ClientMessage.Solve -> solve(peer)
+                is ClientMessage.SetSlot -> setSlot(peer, message)
+                is ClientMessage.SetCount -> if (sequenceHost(peer, "counts")) {
+                    change(peer, message.seq) { lobby, _ -> lobby.counted = message.at }
+                }
+                is ClientMessage.ResetBoard -> if (sequenceHost(peer, "resets")) {
+                    change(peer, message.seq) { lobby, _ ->
+                        lobby.slots.fill(null)
+                        lobby.counted = null
+                        log.info("lobby {}: board reset", lobby.id)
+                    }
+                }
                 is ClientMessage.Ping, is ClientMessage.Jumble -> Unit
             }
         }
@@ -202,10 +222,10 @@ class LobbyManager(
 
     // --- Messages ----------------------------------------------------------
 
-    private fun browse(peer: Peer) {
+    private fun browse(peer: Peer, game: Game) {
         if (peer in seats) return error(peer, ErrorCode.ALREADY_IN_LOBBY, "leave the lobby first")
-        browsers.add(peer)
-        peer.send(lobbyList())
+        browsers[peer] = game
+        peer.send(lobbyList(game))
     }
 
     private fun host(peer: Peer, mode: GameMode) {
@@ -314,6 +334,25 @@ class LobbyManager(
         broadcast(lobby)
     }
 
+    /** Sequence: anyone seated sets any slot of the board, to a number or to nothing. */
+    private fun setSlot(peer: Peer, message: ClientMessage.SetSlot) {
+        val seat = seats[peer] ?: return error(peer, ErrorCode.NOT_IN_LOBBY, "join a lobby first")
+        if (seat.lobby.mode != GameMode.SEQUENCE) return error(peer, ErrorCode.BAD_REQUEST, "this lobby has no board")
+        change(peer, message.seq) { lobby, _ -> lobby.slots[message.slot] = message.value }
+    }
+
+    /** Whether [peer] hosts a Sequence lobby, so may do what only its host [does]; says why not when not. */
+    private fun sequenceHost(peer: Peer, does: String): Boolean {
+        val seat = seats[peer]
+        when {
+            seat == null -> error(peer, ErrorCode.NOT_IN_LOBBY, "join a lobby first")
+            seat.lobby.mode != GameMode.SEQUENCE -> error(peer, ErrorCode.BAD_REQUEST, "this lobby has no board")
+            seat.player.slot != seat.lobby.host -> error(peer, ErrorCode.NOT_HOST, "only the host $does")
+            else -> return true
+        }
+        return false
+    }
+
     /**
      * Applies a numbered change from a seated player, unless a later one of theirs is already
      * in -- a change that arrives late, or arrives again after a reconnect, is dropped.
@@ -370,7 +409,9 @@ class LobbyManager(
     private fun stateOf(lobby: Lobby): String {
         val each = lobby.players.values.map { LetterMask.of(it.letters) }.toIntArray()
         val everyone = each.fold(0) { m, p -> m or p }
-        if (lobby.mode == GameMode.ONE_AND_DONE) {
+        if (lobby.mode == GameMode.SEQUENCE) {
+            // Numbers, not letters: there are no words to look for.
+        } else if (lobby.mode == GameMode.ONE_AND_DONE) {
             // Worked out only when the host submits: see [solve].
             if (everyone == 0 || lobby.done) lobby.letGo()
         } else {
@@ -406,22 +447,29 @@ class LobbyManager(
                 host = lobby.host,
                 saved = lobby.saved,
                 solved = lobby.solved,
+                slots = if (lobby.mode == GameMode.SEQUENCE) lobby.slots.toList() else emptyList(),
+                counted = lobby.counted,
             ),
         )
     }
 
-    private fun lobbyList(): String = Protocol.encode(
+    private fun lobbyList(game: Game): String = Protocol.encode(
         ServerMessage.Lobbies(
-            lobbies.values.reversed().take(MAX_LISTED).map { LobbySummary(it.id, it.players.size, it.length, it.mode) },
+            lobbies.values.reversed()
+                .filter { it.mode.game == game }
+                .take(MAX_LISTED)
+                .map { LobbySummary(it.id, it.players.size, it.length, it.mode) },
         ),
     )
 
     /** Tells everyone browsing, if what they would see has changed. */
     private fun publishLobbies() {
-        val text = lobbyList()
-        if (text == lastLobbyList) return
-        lastLobbyList = text
-        for (peer in browsers) peer.send(text)
+        for (game in Game.entries) {
+            val text = lobbyList(game)
+            if (text == lastLobbyList[game]) continue
+            lastLobbyList[game] = text
+            for ((peer, browsing) in browsers) if (browsing == game) peer.send(text)
+        }
     }
 
     private fun error(peer: Peer, code: String, message: String) {

@@ -6,6 +6,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.util.Log
 import com.puzzlesolver.app.BuildConfig
+import com.puzzlesolver.spell.Game
 import com.puzzlesolver.spell.GameMode
 import com.puzzlesolver.spell.client.JumbleSession
 import com.puzzlesolver.spell.client.JumbleState
@@ -56,6 +57,14 @@ class SpellController(context: Context) {
     private val _jumble = MutableStateFlow(JumbleState())
     val jumble: StateFlow<JumbleState> = _jumble.asStateFlow()
 
+    /**
+     * Sequence: the board room. Its own session on the same server, browsing Sequence's
+     * lobbies, with its seat kept in preferences of its own so it never takes Spellinator's.
+     */
+    private val sequencePrefs: SharedPreferences = app.getSharedPreferences("sequence", Context.MODE_PRIVATE)
+    private val _sequence = MutableStateFlow(SpellState())
+    val sequence: StateFlow<SpellState> = _sequence.asStateFlow()
+
     /** The server in use: the one set in the app, else the one built in, else none. */
     private val _server = MutableStateFlow(prefs.getString(KEY_SERVER, null) ?: builtIn())
     val server: StateFlow<String?> = _server.asStateFlow()
@@ -85,6 +94,13 @@ class SpellController(context: Context) {
     private var jumbleMirror: Job? = null
     private var jumbleOpen = false
 
+    private var sequenceSession: SpellSession? = null
+    private var sequenceMirror: Job? = null
+    private var sequenceOpen = false
+
+    /** The network is watched while any of the three rooms is open. */
+    private val anyOpen: Boolean get() = open || jumbleOpen || sequenceOpen
+
     fun open() {
         if (open) return
         open = true
@@ -96,7 +112,7 @@ class SpellController(context: Context) {
         if (!open) return
         open = false
         session?.stop()
-        watchNetwork(jumbleOpen)
+        watchNetwork(anyOpen)
     }
 
     fun openJumble() {
@@ -110,14 +126,30 @@ class SpellController(context: Context) {
         if (!jumbleOpen) return
         jumbleOpen = false
         jumbleSession?.stop()
-        watchNetwork(open)
+        watchNetwork(anyOpen)
+    }
+
+    fun openSequence() {
+        if (sequenceOpen) return
+        sequenceOpen = true
+        sequenceFor(_server.value)?.start()
+        watchNetwork(true)
+    }
+
+    fun closeSequence() {
+        if (!sequenceOpen) return
+        sequenceOpen = false
+        sequenceSession?.stop()
+        watchNetwork(anyOpen)
     }
 
     fun release() {
         close()
         closeJumble()
+        closeSequence()
         session?.close()
         jumbleSession?.close()
+        sequenceSession?.close()
         scope.cancel()
     }
 
@@ -154,6 +186,12 @@ class SpellController(context: Context) {
             _jumble.value = JumbleState()
             val nextJumble = jumbleFor(base)
             if (jumbleOpen) nextJumble?.start()
+            sequenceSession?.close()
+            sequenceSession = null
+            sequenceMirror?.cancel()
+            _sequence.value = SpellState()
+            val nextSequence = sequenceFor(base)
+            if (sequenceOpen) nextSequence?.start()
         }
         return null
     }
@@ -171,6 +209,15 @@ class SpellController(context: Context) {
     fun undoSaved() = session?.undoSaved()
     fun newRound() = session?.newRound()
 
+    fun hostSequence() = sequenceSession?.host(GameMode.SEQUENCE)
+    fun joinSequence(lobby: String) = sequenceSession?.join(lobby)
+    fun leaveSequence() = sequenceSession?.leave()
+    fun setSlot(slot: Int, value: Int?) = sequenceSession?.setSlot(slot, value)
+    fun count() = sequenceSession?.count()
+    fun countBack() = sequenceSession?.countBack()
+    fun resetBoard() = sequenceSession?.resetBoard()
+    fun dismissSequenceNotice(id: Long) = sequenceSession?.dismissNotice(id)
+
     fun typeJumble(letter: Char) = jumbleSession?.type(letter)
     fun backspaceJumble() = jumbleSession?.backspace()
     fun clearJumble() = jumbleSession?.clear()
@@ -184,6 +231,22 @@ class SpellController(context: Context) {
         session = created
         mirror?.cancel()
         mirror = scope.launch { created.state.collect { _state.value = it } }
+        return created
+    }
+
+    private fun sequenceFor(base: String?): SpellSession? {
+        if (base == null) return null
+        sequenceSession?.let { if (it.server == base) return it }
+        val created = SpellSession(
+            base,
+            http,
+            PrefsStore(sequencePrefs),
+            log = { Log.i(SEQUENCE_TAG, it) },
+            game = Game.SEQUENCE,
+        )
+        sequenceSession = created
+        sequenceMirror?.cancel()
+        sequenceMirror = scope.launch { created.state.collect { _sequence.value = it } }
         return created
     }
 
@@ -213,6 +276,7 @@ class SpellController(context: Context) {
                 hadNone = false
                 session?.reconnectNow()
                 jumbleSession?.reconnectNow()
+                sequenceSession?.reconnectNow()
             }
         }
 
@@ -222,6 +286,7 @@ class SpellController(context: Context) {
             hadNone = true
             session?.networkLost()
             jumbleSession?.networkLost()
+            sequenceSession?.networkLost()
         }
     }
 
@@ -280,6 +345,7 @@ class SpellController(context: Context) {
 
     private companion object {
         const val TAG = "Spellinator"
+        const val SEQUENCE_TAG = "Sequence"
         const val KEY_SERVER = "server"
         const val KEY_VARIANT = "mode.variant"
         /** Before Tic-Tac-Toe, when One and Done was the only variant; read once and dropped. */

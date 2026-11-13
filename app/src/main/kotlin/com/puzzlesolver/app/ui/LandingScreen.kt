@@ -96,6 +96,7 @@ fun LandingScreen(
     onSelectGuide: (StrategyRoom) -> Unit,
     onSelectSpell: () -> Unit,
     onSelectJumble: () -> Unit,
+    onSelectSequence: () -> Unit,
     onSelectSpot: () -> Unit,
     /** Whether the HUD shows the debug panel, switched at the foot of the page. */
     debug: Boolean,
@@ -126,6 +127,8 @@ fun LandingScreen(
                 onSelectSpell()
             } + Entry(JUMBLE_ID, "Jumble", camera = false, LOOKS.getValue(JUMBLE_ID), "online -- asks Spellinator's server") {
                 onSelectJumble()
+            } + Entry(SEQUENCE_ID, "Sequence", camera = false, LOOKS.getValue(SEQUENCE_ID), "online -- phones join one lobby") {
+                onSelectSequence()
             }
         }
 
@@ -240,6 +243,7 @@ private val LOOKS: Map<String, Look> = mapOf(
     StrategyRoom.GRIDLOCK.id to Look(Color(0xFFB388FF), "Two boards, one plan, split between players", 2000) { p, c -> gridlockGlyph(p, c) },
     SPELLINATOR_ID to Look(SPELL_ACCENT, "One word from everyone's letters, in their colours", 2400) { p, c -> spellGlyph(p, c) },
     JUMBLE_ID to Look(JUMBLE_ACCENT, "Every word that uses all your letters", 2600) { p, c -> jumbleGlyph(p, c) },
+    SEQUENCE_ID to Look(SEQUENCE_ACCENT, "Every wall's numbers on one board, counted lowest first", 3200) { p, c -> sequenceGlyph(p, c) },
     SpotFinder.ID to Look(Color(0xFFFF3DCB), "Seven photos of the screen, every difference boxed", 2600) { p, c -> spotGlyph(p, c) },
 )
 
@@ -598,6 +602,43 @@ private fun DrawScope.jumbleGlyph(phase: Float, accent: Color) {
         drawRoundRect(if (lit) accent else Color(0xFF3A4654), Offset(x, y), Size(w, h), CornerRadius(w * 0.18f))
         val bar = y + h * (0.25f + 0.5f * i / (n - 1))
         drawLine(if (lit) ink else Color(0xFFDDE5EC), Offset(x + w * 0.25f, bar), Offset(x + w * 0.75f, bar), w * 0.14f)
+    }
+}
+
+/**
+ * Six tiles of a board, lit one at a time in counting order, which is not their order on
+ * the board; each one passed is shaded. Then a beat with all of them shaded, and round again.
+ */
+private fun DrawScope.sequenceGlyph(phase: Float, accent: Color) {
+    val s = size.minDimension
+    val cols = 3
+    val rows = 2
+    val gap = s * 0.07f
+    val w = (s - gap * (cols - 1)) / cols
+    val h = w * 1.1f
+    val top = (s - (h * rows + gap)) / 2f
+    // Where each count lands, tile by tile.
+    val order = intArrayOf(4, 0, 5, 2, 1, 3)
+    val beat = (phase * (order.size + 1)).toInt()
+    val ink = Color(0xFF06121F)
+    for (tile in 0 until cols * rows) {
+        val rank = order.indexOf(tile)
+        val x = (tile % cols) * (w + gap)
+        val y = top + (tile / cols) * (h + gap)
+        val colour = when {
+            rank == beat -> accent
+            rank < beat -> Color(0x1FDDE5EC)
+            else -> Color(0x55DDE5EC)
+        }
+        drawRoundRect(colour, Offset(x, y), Size(w, h), CornerRadius(w * 0.18f))
+        // A bar per tile, longer for a later count, so they read as numbers of different sizes.
+        val bar = w * (0.2f + 0.08f * rank)
+        drawLine(
+            if (rank == beat) ink else Color(0xFFDDE5EC).copy(alpha = if (rank < beat) 0.25f else 0.8f),
+            Offset(x + (w - bar) / 2f, y + h / 2f),
+            Offset(x + (w + bar) / 2f, y + h / 2f),
+            w * 0.12f,
+        )
     }
 }
 

@@ -62,6 +62,13 @@ data class Room(
      * or there is none. False while the letters are still coming in.
      */
     val solved: Boolean = false,
+    /**
+     * Sequence: the board, [com.puzzlesolver.spell.SequenceBoard.SLOTS] numbers or nulls, row
+     * by row, with this phone's changes shown before the server has them. Empty in a word lobby.
+     */
+    val slots: List<Int?> = emptyList(),
+    /** Sequence: where the count stands -- that number lit, every lower one shaded; null before it starts. */
+    val counted: Int? = null,
 ) {
     /** Every letter anyone in the lobby has, as a [LetterMask]. */
     val everyone: Int get() = players.fold(LetterMask.of(letters)) { m, p -> m or LetterMask.of(p.letters) }

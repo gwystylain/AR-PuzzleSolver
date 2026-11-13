@@ -45,7 +45,7 @@ class OneAndDoneTest {
 
     @Test
     fun `the lobby says what it plays, to browsers and to its players`() {
-        val browser = FakePeer().apply { say(ClientMessage.Browse) }
+        val browser = FakePeer().apply { say(ClientMessage.Browse()) }
         val (p1, p2) = round()
         val listed = browser.received.filterIsInstance<ServerMessage.Lobbies>().last().lobbies.single()
         assertEquals(GameMode.ONE_AND_DONE, listed.mode)

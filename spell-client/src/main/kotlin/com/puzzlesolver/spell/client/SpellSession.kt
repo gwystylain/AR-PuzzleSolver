@@ -2,12 +2,14 @@ package com.puzzlesolver.spell.client
 
 import com.puzzlesolver.spell.ClientMessage
 import com.puzzlesolver.spell.ErrorCode
+import com.puzzlesolver.spell.Game
 import com.puzzlesolver.spell.GameMode
 import com.puzzlesolver.spell.LobbyCode
 import com.puzzlesolver.spell.LobbySummary
 import com.puzzlesolver.spell.PlayerState
 import com.puzzlesolver.spell.Protocol
 import com.puzzlesolver.spell.Rules
+import com.puzzlesolver.spell.SequenceBoard
 import com.puzzlesolver.spell.ServerMessage
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -63,6 +65,8 @@ class SpellSession(
     private val timing: Timing = Timing(),
     dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val log: (String) -> Unit = {},
+    /** Whose lobbies this session browses and plays: Spellinator's word games, or Sequence's board. */
+    val game: Game = Game.SPELLINATOR,
 ) {
     data class Timing(
         val pingEveryMillis: Long = 2_000,
@@ -158,7 +162,7 @@ class SpellSession(
         if (lobby == null && wanted == null) return@post
         if (seated) send(ClientMessage.Leave)
         dropSeat()
-        if (online) send(ClientMessage.Browse)
+        if (online) send(ClientMessage.Browse(game))
         publish()
     }
 
@@ -214,6 +218,54 @@ class SpellSession(
         if (room.saved.isNotEmpty()) setSaved(room, emptyList())
     }
 
+    /**
+     * Sequence: [slot] of the board now holds [value], or nothing. Shown here at once and sent
+     * at once; kept and sent again, like letters, until the server has it.
+     */
+    fun setSlot(slot: Int, value: Int?) = post {
+        if (!onBoard() || slot !in 0 until SequenceBoard.SLOTS) return@post
+        if (value != null && value !in SequenceBoard.VALUES) return@post
+        val change = PendingSlot(++seq, value)
+        pendingSlots[slot] = change
+        if (seated) {
+            send(ClientMessage.SetSlot(change.seq, slot, value))
+            changeSentAt = now()
+        }
+        persist()
+        publish()
+    }
+
+    /** Sequence, host only: light the next number up, shading the one lit now. */
+    fun count() = post {
+        if (!hostsBoard()) return@post
+        val at = shownCount()
+        val next = SequenceBoard.next(shownSlots(), at)
+        if (next != at) changeCount(next)
+    }
+
+    /** Sequence, host only: one step of the count back, for a press too many. */
+    fun countBack() = post {
+        if (!hostsBoard()) return@post
+        val at = shownCount() ?: return@post
+        changeCount(SequenceBoard.previous(shownSlots(), at))
+    }
+
+    /** Sequence, host only: wipe every number and the count. */
+    fun resetBoard() = post {
+        if (!hostsBoard()) return@post
+        val s = ++seq
+        pendingReset = s
+        // Changes made before the reset are wiped by it; there is nothing left to resend.
+        pendingSlots.clear()
+        pendingCount = null
+        if (seated) {
+            send(ClientMessage.ResetBoard(s))
+            changeSentAt = now()
+        }
+        persist()
+        publish()
+    }
+
     fun dismissNotice(id: Long) = post {
         if (notice?.id == id) {
             notice = null
@@ -229,6 +281,14 @@ class SpellSession(
     }
 
     private data class PendingLength(val seq: Long, val length: Int)
+    private data class PendingSlot(val seq: Long, val value: Int?)
+    private data class PendingCount(val seq: Long, val at: Int?)
+
+    /** Sequence: slots changed here that the server has not yet acknowledged, by slot. */
+    private val pendingSlots = HashMap<Int, PendingSlot>()
+    private var pendingCount: PendingCount? = null
+    /** Sequence: the seq of a reset the server has not yet acknowledged. */
+    private var pendingReset: Long? = null
 
     private var running = false
     private var socket: WebSocket? = null
@@ -337,7 +397,7 @@ class SpellSession(
             id != null -> send(ClientMessage.Join(id))
             wanting is Wanted.Host -> send(ClientMessage.Host(wanting.mode))
             wanting is Wanted.Join -> send(ClientMessage.Join(wanting.lobby))
-            else -> send(ClientMessage.Browse)
+            else -> send(ClientMessage.Browse(game))
         }
         send(ClientMessage.Ping(t / 1000))
         publish()
@@ -352,7 +412,8 @@ class SpellSession(
             return
         }
         when (message) {
-            is ServerMessage.Lobbies -> lobbies = message.lobbies
+            // Filtered here as well, for a server from before Sequence, which lists every lobby.
+            is ServerMessage.Lobbies -> lobbies = message.lobbies.filter { it.mode.game == game }
             is ServerMessage.Joined -> joined(message)
             is ServerMessage.State -> if (message.lobby == lobby) state(message)
             ServerMessage.Left -> Unit
@@ -396,6 +457,11 @@ class SpellSession(
         val unsent = buildList {
             if (lettersSeq > ack) add(lettersSeq to ClientMessage.SetLetters(lettersSeq, letters))
             pendingLength?.takeIf { it.seq > ack }?.let { add(it.seq to ClientMessage.SetLength(it.seq, it.length)) }
+            for ((slot, change) in pendingSlots) {
+                if (change.seq > ack) add(change.seq to ClientMessage.SetSlot(change.seq, slot, change.value))
+            }
+            pendingCount?.takeIf { it.seq > ack }?.let { add(it.seq to ClientMessage.SetCount(it.seq, it.at)) }
+            pendingReset?.takeIf { it > ack }?.let { add(it to ClientMessage.ResetBoard(it)) }
         }
         for ((_, m) in unsent.sortedBy { it.first }) send(m)
         if (unsent.isNotEmpty()) changeSentAt = now()
@@ -403,6 +469,14 @@ class SpellSession(
     }
 
     private fun state(message: ServerMessage.State) {
+        if (game == Game.SEQUENCE && message.mode != GameMode.SEQUENCE) {
+            // A server from before Sequence hosts a word lobby instead; there is no board in it.
+            send(ClientMessage.Leave)
+            dropSeat()
+            notify("The server is older than Sequence and needs updating")
+            send(ClientMessage.Browse(game))
+            return
+        }
         latest = message
         val mine = message.players.firstOrNull { it.id == me } ?: return
         if (adoptServerLetters) {
@@ -412,6 +486,15 @@ class SpellSession(
             persist()
         }
         pendingLength?.let { if (mine.ack >= it.seq) pendingLength = null }
+        pendingSlots.values.removeAll { it.seq <= mine.ack }
+        pendingCount?.let { if (mine.ack >= it.seq) pendingCount = null }
+        pendingReset?.let { if (mine.ack >= it) pendingReset = null }
+        // Counting is the host's; if that is no longer this phone, the server would refuse
+        // these for ever, so they are dropped rather than resent.
+        if (message.host != me) {
+            pendingCount = null
+            pendingReset = null
+        }
     }
 
     private fun failed(error: ServerMessage.Error) {
@@ -428,20 +511,20 @@ class SpellSession(
                 } else {
                     dropSeat()
                     notify("Lost your seat")
-                    send(ClientMessage.Browse)
+                    send(ClientMessage.Browse(game))
                 }
             }
             ErrorCode.LOBBY_NOT_FOUND -> {
                 val id = lobby ?: (wanted as? Wanted.Join)?.lobby
                 dropSeat()
                 notify(if (id != null) "Lobby $id has closed" else "That lobby has closed")
-                send(ClientMessage.Browse)
+                send(ClientMessage.Browse(game))
             }
             ErrorCode.LOBBY_FULL -> {
                 val id = lobby ?: (wanted as? Wanted.Join)?.lobby
                 dropSeat()
                 notify(if (id != null) "Lobby $id is full" else "That lobby is full")
-                send(ClientMessage.Browse)
+                send(ClientMessage.Browse(game))
             }
             ErrorCode.SERVER_FULL -> {
                 wanted = null
@@ -533,6 +616,9 @@ class SpellSession(
         letters = ""
         lettersSeq = 0
         pendingLength = null
+        pendingSlots.clear()
+        pendingCount = null
+        pendingReset = null
         store.clear()
     }
 
@@ -564,11 +650,50 @@ class SpellSession(
 
     private fun shownLength(): Int = pendingLength?.length ?: latest?.length ?: Rules.DEFAULT_LENGTH
 
+    /** Sequence: seated in a lobby whose state has come, and which has a board. */
+    private fun onBoard(): Boolean = lobby != null && latest?.mode == GameMode.SEQUENCE
+
+    private fun hostsBoard(): Boolean = onBoard() && me != null && me == latest?.host
+
+    /** Sequence: the board as the server has it, with this phone's changes it has yet to take in on top. */
+    private fun shownSlots(): List<Int?> {
+        val server = latest?.slots?.takeIf { it.size == SequenceBoard.SLOTS }
+        return List(SequenceBoard.SLOTS) { i ->
+            val mine = pendingSlots[i]
+            when {
+                mine != null -> mine.value
+                pendingReset != null || server == null -> null
+                else -> server[i]
+            }
+        }
+    }
+
+    private fun shownCount(): Int? {
+        pendingCount?.let { return it.at }
+        return if (pendingReset != null) null else latest?.counted
+    }
+
+    private fun changeCount(at: Int?) {
+        val change = PendingCount(++seq, at)
+        pendingCount = change
+        if (seated) {
+            send(ClientMessage.SetCount(change.seq, at))
+            changeSentAt = now()
+        }
+        persist()
+        publish()
+    }
+
     private fun publish() {
         val room = lobby?.let { id ->
             val server = latest?.takeIf { it.lobby == id }
             val mine = server?.players?.firstOrNull { it.id == me }
-            val newest = maxOf(lettersSeq, pendingLength?.seq ?: 0)
+            val newest = maxOf(
+                lettersSeq,
+                pendingLength?.seq ?: 0,
+                pendingSlots.values.maxOfOrNull { it.seq } ?: 0,
+                maxOf(pendingCount?.seq ?: 0, pendingReset ?: 0),
+            )
             val players = server?.players.orEmpty().map {
                 if (it.id == me) it.copy(letters = letters, online = seated) else it
             }.let { list ->
@@ -595,6 +720,8 @@ class SpellSession(
                 host = server?.host ?: 0,
                 saved = server?.saved.orEmpty(),
                 solved = server?.solved ?: false,
+                slots = if (game == Game.SEQUENCE) shownSlots() else emptyList(),
+                counted = shownCount(),
             )
         }
         _state.value = SpellState(

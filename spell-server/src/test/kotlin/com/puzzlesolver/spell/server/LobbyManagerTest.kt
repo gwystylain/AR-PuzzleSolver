@@ -135,7 +135,7 @@ class LobbyManagerTest {
 
     @Test
     fun `leaving frees the seat, the lowest free seat is taken next, and the last one out closes the lobby`() {
-        val browser = FakePeer().also { it.say(ClientMessage.Browse) }
+        val browser = FakePeer().also { it.say(ClientMessage.Browse()) }
         val (p1, id) = hosted()
         val p2 = joining(id)
         val p3 = joining(id)
@@ -389,7 +389,7 @@ class LobbyManagerTest {
 
     @Test
     fun `browsers see lobbies open, fill, change length and close, newest first`() {
-        val browser = FakePeer().also { it.say(ClientMessage.Browse) }
+        val browser = FakePeer().also { it.say(ClientMessage.Browse()) }
         assertTrue(browser.lobbies().lobbies.isEmpty())
         val (a, first) = hosted()
         val (_, second) = hosted()

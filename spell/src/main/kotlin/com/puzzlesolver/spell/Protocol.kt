@@ -47,10 +47,13 @@ object Protocol {
 @Serializable
 sealed interface ClientMessage {
 
-    /** Send me the open lobbies, now and whenever they change, until I join one. */
+    /**
+     * Send me the open lobbies of [game], now and whenever they change, until I join one.
+     * A phone from before Sequence names no game, and is sent Spellinator's.
+     */
     @Serializable
     @SerialName("browse")
-    data object Browse : ClientMessage
+    data class Browse(val game: Game = Game.SPELLINATOR) : ClientMessage
 
     /** Open a lobby playing [mode] and seat me in it, as its host. */
     @Serializable
@@ -101,6 +104,28 @@ sealed interface ClientMessage {
     @SerialName("solve")
     data object Solve : ClientMessage
 
+    /**
+     * Sequence: [slot] of the board (row by row, see [SequenceBoard]) now holds [value], or
+     * nothing. Anyone in the lobby may set any slot; the whole value, so a resend is harmless.
+     */
+    @Serializable
+    @SerialName("slot")
+    data class SetSlot(val seq: Long, val slot: Int, val value: Int? = null) : ClientMessage
+
+    /**
+     * Sequence, from the host only: the count now stands at [at] -- every slot holding [at]
+     * is lit and every lower number is shaded -- or, when null, has not started. The value
+     * rather than "step on", so a resend never counts twice.
+     */
+    @Serializable
+    @SerialName("count")
+    data class SetCount(val seq: Long, val at: Int? = null) : ClientMessage
+
+    /** Sequence, from the host only: wipe every number off the board and start the count again. */
+    @Serializable
+    @SerialName("reset")
+    data class ResetBoard(val seq: Long) : ClientMessage
+
     /** Echoed straight back as [ServerMessage.Pong], to time the round trip and prove the link is alive. */
     @Serializable
     @SerialName("ping")
@@ -118,7 +143,7 @@ sealed interface ClientMessage {
 
     /** Why the server should refuse this message, or null if it is well formed. */
     fun problem(): String? = when (this) {
-        Browse, Leave, Solve, is Host, is Ping -> null
+        Leave, Solve, is Browse, is Host, is Ping -> null
         is Jumble -> if (Rules.isValidLetters(letters)) null else "letters must be at most ${Rules.MAX_LETTERS} of A-Z"
         is Join -> if (LobbyCode.isValid(lobby)) null else "bad lobby code"
         is Resume -> when {
@@ -144,6 +169,19 @@ sealed interface ClientMessage {
             !OneAndDone.allLettersOnce(words) -> "a letter is used twice"
             else -> null
         }
+        is SetSlot -> when {
+            seq < 0 -> "bad seq"
+            slot !in 0 until SequenceBoard.SLOTS -> "bad slot"
+            value != null && value !in SequenceBoard.VALUES ->
+                "numbers are ${SequenceBoard.VALUES.first}-${SequenceBoard.VALUES.last}"
+            else -> null
+        }
+        is SetCount -> when {
+            seq < 0 -> "bad seq"
+            at != null && at !in SequenceBoard.COUNTS -> "bad count"
+            else -> null
+        }
+        is ResetBoard -> if (seq < 0) "bad seq" else null
     }
 }
 
@@ -194,6 +232,13 @@ sealed interface ServerMessage {
          * -- and if it is null, there is none. False while the letters are still coming in.
          */
         val solved: Boolean = false,
+        /**
+         * Sequence: the board, [SequenceBoard.SLOTS] numbers or nulls, row by row. Empty in
+         * every other mode.
+         */
+        val slots: List<Int?> = emptyList(),
+        /** Sequence: where the count stands, as in [ClientMessage.SetCount]; null before it starts. */
+        val counted: Int? = null,
     ) : ServerMessage
 
     /** You have left; you are browsing again. */
@@ -251,6 +296,73 @@ enum class GameMode {
     /** For the room's levels 6 and up: classic, except that no word uses a letter twice. */
     @SerialName("levels_6_plus")
     LEVELS_6_PLUS,
+
+    /**
+     * Not a word game at all: a board of numbers, one row per wall of the room, that the host
+     * counts through from the lowest. Listed apart from the word lobbies. See [SequenceBoard].
+     */
+    @SerialName("sequence")
+    SEQUENCE,
+    ;
+
+    /** Whose lobby list a lobby playing this appears in. */
+    val game: Game get() = if (this == SEQUENCE) Game.SEQUENCE else Game.SPELLINATOR
+}
+
+/**
+ * The lobby lists a phone can browse: Spellinator's word games, or Sequence's boards. Each
+ * screen sees only its own, so a phone from before Sequence never sees a lobby it cannot play.
+ */
+@Serializable
+enum class Game {
+    @SerialName("spellinator")
+    SPELLINATOR,
+
+    @SerialName("sequence")
+    SEQUENCE,
+}
+
+/**
+ * The board of a Sequence lobby: a row of [COLUMNS] slots for each of the room's [ROWS]
+ * walls -- north (the door), east, south, west -- each empty or holding a number of one or
+ * two digits. Slot `row * COLUMNS + column`.
+ *
+ * The host counts through the numbers from the lowest up. The count is a number, not a
+ * place in a list: every slot holding it is lit and every lower one shaded, so a number
+ * typed or changed mid-count simply falls where it belongs.
+ */
+object SequenceBoard {
+    const val ROWS = 4
+    const val COLUMNS = 7
+    const val SLOTS = ROWS * COLUMNS
+
+    /** The numbers a slot holds: what fits in two digits. */
+    val VALUES: IntRange = 0..99
+
+    /** Where the count can stand: on any number, or one past the largest, when all are counted. */
+    val COUNTS: IntRange = 0..VALUES.last + 1
+
+    /**
+     * Where one more press of Count puts it: the lowest number above [at] (the lowest of all
+     * when the count has not started); after the last number, one past it, so that it too is
+     * shaded. Unchanged once everything is counted, and null for an empty board.
+     */
+    fun next(slots: List<Int?>, at: Int?): Int? {
+        val higher = slots.filterNotNull().filter { at == null || it > at }.minOrNull()
+        return when {
+            higher != null -> higher
+            at != null && at in slots -> at + 1
+            else -> at
+        }
+    }
+
+    /** One press back: the highest number below [at], or null -- not started -- when there is none. */
+    fun previous(slots: List<Int?>, at: Int?): Int? =
+        if (at == null) null else slots.filterNotNull().filter { it < at }.maxOrNull()
+
+    /** Every number on the board is counted: the count stands past them all. */
+    fun finished(slots: List<Int?>, at: Int?): Boolean =
+        at != null && slots.any { it != null } && slots.none { it != null && it >= at }
 }
 
 /** The rule of a Tic-Tac-Toe lobby. */
@@ -296,6 +408,6 @@ object ErrorCode {
     const val RESUME_FAILED = "resume_failed"
     const val NOT_IN_LOBBY = "not_in_lobby"
     const val ALREADY_IN_LOBBY = "already_in_lobby"
-    /** Only a One and Done 2.0 lobby's host saves its words. */
+    /** Only a One and Done 2.0 lobby's host saves its words, and only a Sequence lobby's host counts or resets. */
     const val NOT_HOST = "not_host"
 }

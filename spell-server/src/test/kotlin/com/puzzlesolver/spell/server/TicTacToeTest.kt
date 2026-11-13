@@ -38,7 +38,7 @@ class TicTacToeTest {
 
     @Test
     fun `the lobby says what it plays`() {
-        val browser = FakePeer().apply { say(ClientMessage.Browse) }
+        val browser = FakePeer().apply { say(ClientMessage.Browse()) }
         val (p1, _) = lobby()
         assertEquals(GameMode.TIC_TAC_TOE, p1.state().mode)
         assertEquals(GameMode.TIC_TAC_TOE, browser.received.filterIsInstance<ServerMessage.Lobbies>().last().lobbies.single().mode)

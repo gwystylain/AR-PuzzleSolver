@@ -39,7 +39,7 @@ class LevelsSixPlusTest {
 
     @Test
     fun `the lobby says what it plays`() {
-        val browser = FakePeer().apply { say(ClientMessage.Browse) }
+        val browser = FakePeer().apply { say(ClientMessage.Browse()) }
         val (p1, _) = lobby()
         assertEquals(GameMode.LEVELS_6_PLUS, p1.state().mode)
         assertEquals(
