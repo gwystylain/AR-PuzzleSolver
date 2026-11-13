@@ -97,6 +97,7 @@ fun LandingScreen(
     onSelectSpell: () -> Unit,
     onSelectJumble: () -> Unit,
     onSelectSequence: () -> Unit,
+    onSelectSimon: () -> Unit,
     onSelectSpot: () -> Unit,
     /** Whether the HUD shows the debug panel, switched at the foot of the page. */
     debug: Boolean,
@@ -129,6 +130,8 @@ fun LandingScreen(
                 onSelectJumble()
             } + Entry(SEQUENCE_ID, "Sequence", camera = false, LOOKS.getValue(SEQUENCE_ID), "online -- phones join one lobby") {
                 onSelectSequence()
+            } + Entry(SIMON_ID, "Simon Says", camera = false, LOOKS.getValue(SIMON_ID), null) {
+                onSelectSimon()
             }
         }
 
@@ -244,6 +247,7 @@ private val LOOKS: Map<String, Look> = mapOf(
     SPELLINATOR_ID to Look(SPELL_ACCENT, "One word from everyone's letters, in their colours", 2400) { p, c -> spellGlyph(p, c) },
     JUMBLE_ID to Look(JUMBLE_ACCENT, "Every word that uses all your letters", 2600) { p, c -> jumbleGlyph(p, c) },
     SEQUENCE_ID to Look(SEQUENCE_ACCENT, "Every wall's numbers on one board, counted lowest first", 3200) { p, c -> sequenceGlyph(p, c) },
+    SIMON_ID to Look(SIMON_ACCENT, "Tap the colours as they flash, read the order back", 2500) { p, c -> simonGlyph(p, c) },
     SpotFinder.ID to Look(Color(0xFFFF3DCB), "Seven photos of the screen, every difference boxed", 2600) { p, c -> spotGlyph(p, c) },
 )
 
@@ -670,6 +674,40 @@ private fun DrawScope.spotGlyph(phase: Float, accent: Color) {
             Offset(centre.x - r, centre.y - r),
             Size(2 * r, 2 * r),
             style = Stroke(1.5.dp.toPx()),
+        )
+    }
+}
+
+/**
+ * Five colour pads, lit one after another in a little sequence, each press dropping a
+ * tile into the log strip underneath.
+ */
+private fun DrawScope.simonGlyph(phase: Float, @Suppress("UNUSED_PARAMETER") accent: Color) {
+    val s = size.minDimension
+    val colours = SimonColour.entries
+    val order = intArrayOf(0, 3, 1, 4, 2)
+    val gap = s * 0.04f
+    val w = (s - gap * (colours.size - 1)) / colours.size
+    val padTop = s * 0.12f
+    val padH = s * 0.4f
+    val beat = (phase * (order.size + 1)).toInt()
+    colours.forEachIndexed { i, c ->
+        val lit = beat < order.size && order[beat] == i
+        drawRoundRect(
+            c.fill.copy(alpha = if (lit) 1f else 0.35f),
+            Offset(i * (w + gap), padTop),
+            Size(w, padH),
+            CornerRadius(w * 0.2f),
+        )
+    }
+    val logTop = padTop + padH + s * 0.12f
+    val tile = w * 0.8f
+    for (k in 0 until minOf(beat + 1, order.size)) {
+        drawRoundRect(
+            colours[order[k]].fill,
+            Offset(k * (w + gap) + (w - tile) / 2f, logTop),
+            Size(tile, tile),
+            CornerRadius(tile * 0.2f),
         )
     }
 }

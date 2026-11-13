@@ -52,6 +52,8 @@ import com.puzzlesolver.app.ui.PuzzleSolverTheme
 import com.puzzlesolver.app.ui.ScanScreen
 import com.puzzlesolver.app.ui.JumbleScreen
 import com.puzzlesolver.app.ui.SequenceScreen
+import com.puzzlesolver.app.ui.SimonColour
+import com.puzzlesolver.app.ui.SimonScreen
 import com.puzzlesolver.app.ui.SpellScreen
 import com.puzzlesolver.app.ui.SpotScreen
 import com.puzzlesolver.app.ui.MinesScreen
@@ -141,6 +143,13 @@ class MainActivity : ComponentActivity() {
     private var sequenceOpen by mutableStateOf(false)
 
     /**
+     * Whether Simon Says is on screen, and its log of presses. No camera, no server; the
+     * log is kept across a stray Back and only Clear wipes it.
+     */
+    private var simonOpen by mutableStateOf(false)
+    private var simonLog by mutableStateOf(emptyList<SimonColour>())
+
+    /**
      * Spot's round: the photos taken so far and, once there are six, what differs in each.
      * Kept across a trip to another room and back, like Spellinator's seat; Reset is how a
      * round is thrown away.
@@ -154,8 +163,8 @@ class MainActivity : ComponentActivity() {
      */
     private lateinit var mines: MinesController
 
-    /** A guide, Spellinator, Jumble or Sequence is up, so the camera is off. */
-    private val cameraFree: Boolean get() = guideRoom != null || spellOpen || jumbleOpen || sequenceOpen
+    /** A guide, Spellinator, Jumble, Sequence or Simon Says is up, so the camera is off. */
+    private val cameraFree: Boolean get() = guideRoom != null || spellOpen || jumbleOpen || sequenceOpen || simonOpen
 
     /**
      * Whether the landing page is up. True at launch, cleared by any mode choice --
@@ -600,6 +609,14 @@ class MainActivity : ComponentActivity() {
                                     onSetServer = { spell.setServer(it) },
                                 )
                             }
+                        } else if (simonOpen) {
+                            {
+                                SimonScreen(
+                                    log = simonLog,
+                                    onPress = { simonLog = simonLog + it },
+                                    onClear = { simonLog = emptyList() },
+                                )
+                            }
                         } else guideRoom?.let { room -> {
                             val levels = guideLevels.getValue(room)
                             StrategyScreen(
@@ -651,6 +668,7 @@ class MainActivity : ComponentActivity() {
                         onSelectSpell = { enterSpell() },
                         onSelectJumble = { enterJumble() },
                         onSelectSequence = { enterSequence() },
+                        onSelectSimon = { enterSimon() },
                         onSelectSpot = { selectPuzzleMode(SpotFinder.ID) },
                         debug = showDebugPanel,
                         onToggleDebug = { showDebugPanel = !showDebugPanel },
@@ -767,6 +785,7 @@ class MainActivity : ComponentActivity() {
         closeSpell()
         closeJumble()
         closeSequence()
+        simonOpen = false
         guideRoom = room
         if (wasScanning) pauseScanning()
         loadStrategyGuides()
@@ -779,6 +798,7 @@ class MainActivity : ComponentActivity() {
         guideRoom = null
         closeJumble()
         closeSequence()
+        simonOpen = false
         spellOpen = true
         if (wasScanning) pauseScanning()
         spell.open()
@@ -797,6 +817,7 @@ class MainActivity : ComponentActivity() {
         guideRoom = null
         closeSpell()
         closeSequence()
+        simonOpen = false
         jumbleOpen = true
         if (wasScanning) pauseScanning()
         spell.openJumble()
@@ -815,6 +836,7 @@ class MainActivity : ComponentActivity() {
         guideRoom = null
         closeSpell()
         closeJumble()
+        simonOpen = false
         sequenceOpen = true
         if (wasScanning) pauseScanning()
         spell.openSequence()
@@ -826,13 +848,26 @@ class MainActivity : ComponentActivity() {
         spell.closeSequence()
     }
 
-    /** Back to a camera mode from a guide, Spellinator, Jumble or Sequence. */
+    private fun enterSimon() {
+        Log.i(TAG, "mode selected: simon")
+        showLanding = false
+        val wasScanning = !cameraFree
+        guideRoom = null
+        closeSpell()
+        closeJumble()
+        closeSequence()
+        simonOpen = true
+        if (wasScanning) pauseScanning()
+    }
+
+    /** Back to a camera mode from a guide, Spellinator, Jumble, Sequence or Simon Says. */
     private fun leaveCameraFree() {
         if (!cameraFree) return
         guideRoom = null
         closeSpell()
         closeJumble()
         closeSequence()
+        simonOpen = false
         resumeScanning()
     }
 
