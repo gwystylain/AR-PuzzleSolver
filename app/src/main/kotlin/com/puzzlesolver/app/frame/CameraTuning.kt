@@ -229,11 +229,13 @@ class CameraTuning(
     /**
      * Turns the interleaved lattice frames on or off.
      *
-     * The default is as much light as 1/250 s at ISO 3200, about two stops under what the
-     * phone's own camera chose for the reference footage of the mines wall, where the
-     * unlit buttons sat near 190 and the lit ones were long since clipped. Two stops down
-     * keeps every unlit button well clear of the panel while giving them room either side.
-     * Sensitivity first, so the shutter stays short enough not to smear a pan.
+     * The default is 1/60 s at ISO 6400: as long as a lattice frame may run before a pan
+     * smears it, at the top of this phone's sensitivity. Every visit to the real room has
+     * needed it. On 2026-10-27 two stops over the old default (1/250 s at ISO 3200, set
+     * off reference footage of a brighter room) left the wall unseen; 2026-11-07 and
+     * scan 3 of 2026-11-12 found it at 1/60 s ISO 6400, unlit buttons at 40-80; scan 1 of
+     * 2026-11-12, at the old default, had them at 7-15 and never saw the green. A
+     * brighter room is left to the steer to darken.
      *
      * @return whether anything changed; false on a device without manual control too.
      */
@@ -371,12 +373,12 @@ class CameraTuning(
         /** 1/250 s, which is roughly where the readable reference clips sit. */
         const val LED_WALL_EXPOSURE_NANOS = 4_000_000L
 
-        /** The lattice frames' default: 1/250 s at ISO 3200, as exposure time times ISO. */
-        const val LATTICE_ISO = 3200
-        const val LATTICE_LIGHT = 4_000_000L * LATTICE_ISO
-
         /** A sixtieth: the longest a lattice frame may run before a pan smears it. */
         const val LATTICE_MAX_EXPOSURE_NANOS = 16_666_666L
+
+        /** The lattice frames' default: 1/60 s at ISO 6400, as exposure time times ISO. */
+        const val LATTICE_ISO = 6400
+        const val LATTICE_LIGHT = LATTICE_MAX_EXPOSURE_NANOS * LATTICE_ISO
 
         /**
          * How long the sensor may go on disagreeing with a request before the camera is

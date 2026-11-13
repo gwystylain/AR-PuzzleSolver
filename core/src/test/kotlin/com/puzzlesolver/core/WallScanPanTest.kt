@@ -54,6 +54,19 @@ class WallScanPanTest {
     }
 
     /**
+     * The faces as the room's camera rendered them on 2026-11-12, white balance locked at
+     * a tint that turned every white button blue -- the medians of scan 3's colour frames.
+     */
+    private fun ledTintedBlue(kind: Int): IntArray? = when (kind) {
+        Button.WHITE -> intArrayOf(60, 106, 194)
+        Button.BLUE -> intArrayOf(27, 111, 224)
+        Button.HAZARD -> intArrayOf(150, 14, 15)
+        Button.GREEN -> intArrayOf(14, 181, 124)
+        Button.MINE -> intArrayOf(214, 36, 236)
+        else -> null
+    }
+
+    /**
      * What the board should read back as: the truth, except the armed mine, which a scan
      * reports as unknown -- the wall is scanned before any mine goes down, so magenta
      * there is something the palette does not know, not a mine.
@@ -78,6 +91,7 @@ class WallScanPanTest {
         colourFrame: Boolean,
         extraRow: Boolean = false,
         swallowBottom: Boolean = false,
+        palette: (Int) -> IntArray? = ::ledAtColourExposure,
     ): RgbImage {
         val img = RgbImage(width, height)
         val panel = if (colourFrame) intArrayOf(2, 2, 3) else intArrayOf(45, 43, 78)
@@ -106,7 +120,7 @@ class WallScanPanTest {
                 } else if (col in 0 until truth.cols && row in 0 until truth.rows) {
                     val d = hypot(wx - col * pitch, wy - row * pitch)
                     val kind = truth.kindAt(truth.index(col, row))
-                    val led = ledAtColourExposure(kind)
+                    val led = palette(kind)
                     rgb = when {
                         led == null -> if (d <= face) unlit else panel
                         colourFrame -> if (d <= face) led else panel
@@ -159,6 +173,34 @@ class WallScanPanTest {
         assertEquals(1, wall.unknownCount)
         val armed = wall.toBombBoard()
         assertEquals("and planned around like a hazard", Button.HAZARD, armed.kindAt(armed.index(25, 1)))
+    }
+
+    @Test
+    fun `whites the camera tints blue are told from the blues`() {
+        val scanner = WallScanner()
+        val frameNanos = 33_333_333L
+        val startX = width / 2f - pitch * 1.5f
+        val endX = truth.cols * pitch + width / 2f - pitch * 2f
+        val rowsCentre = (truth.rows - 1) * pitch / 2f
+        var t = 0L
+        var n = 0
+        while (true) {
+            val x = startX + t / 1e9f * 4f * pitch
+            if (x > endX) break
+            val colour = n % 2 == 1
+            val frame = render(x, rowsCentre, 0f, colour, palette = ::ledTintedBlue)
+            scanner.offer(frame, if (colour) WallScanner.Exposure.COLOUR else WallScanner.Exposure.LATTICE, t)
+            t += frameNanos
+            n++
+        }
+        val wall = scanner.result()
+        assertNotNull("the green was never found", wall)
+        println(wall!!.describe())
+        wall.warnings.forEach { println("warning: $it") }
+        // Every one of these whites is past the face vote's line for white: without the
+        // split they all read blue, as the room's did.
+        assertTrue(wall.warnings.any { it.startsWith("Whites and blues told apart") })
+        assertEquals(expected, wall.describe().trim())
     }
 
     @Test

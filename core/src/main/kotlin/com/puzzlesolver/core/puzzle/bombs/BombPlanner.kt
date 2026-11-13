@@ -367,7 +367,7 @@ class BombPlanner(
         // branching is driven by unsatisfied buttons -- so this line fails the branch
         // rather than claiming it.
         if (pivot < 0) return model.isCleared && sim.settled(board, model.mines()) != null
-        if ((totalNeed + Dir.COUNT - 1) / Dir.COUNT > remaining) return false
+        if (!couldStillCover(model, remaining, totalNeed)) return false
 
         val cands = model.los.candidatesFor(pivot)
         val free = IntArray(cands.size)
@@ -393,6 +393,51 @@ class BombPlanner(
         for (j in 0 until bannedCount) model.unban(banned[j])
         return solved
     }
+
+    /**
+     * Whether [remaining] more mines could still land [owed] hits, at the very best.
+     *
+     * A free cell can add at most one hit to each button it reaches that is still owed
+     * one -- a mine hits a button once -- so the best [remaining] such counts, added up,
+     * must reach [owed]. The bound this replaced assumed eight hits a mine, which a real
+     * board almost never offers: on the room's wall of 2026-11-12, seventeen blues and 34
+     * hits owed, no cell reached more than four of them. Assuming eight, the search could
+     * cut almost nothing, spent its whole node budget failing to settle five mines and then
+     * six, never got as far as seven, and handed over greedy's eleven.
+     */
+    private fun couldStillCover(model: RoundModel, remaining: Int, owed: Int): Boolean {
+        val cells = model.allTargets().let { if (it.isEmpty()) return true else model.los }
+        stamp++
+        if (seen.size < seenSize(model)) seen = IntArray(seenSize(model))
+        java.util.Arrays.fill(gainCounts, 0)
+        for (t in model.allTargets()) {
+            if (model.needOf(t) == 0) continue
+            for (c in cells.candidatesFor(t)) {
+                if (seen[c] == stamp || !model.isFree(c)) continue
+                seen[c] = stamp
+                var gain = 0
+                for (u in cells.reachFrom(c)) if (model.needOf(u) > 0) gain++
+                gainCounts[gain]++
+            }
+        }
+        var left = remaining
+        var total = 0
+        var g = Dir.COUNT
+        while (g > 0 && left > 0) {
+            val take = minOf(left, gainCounts[g])
+            total += take * g
+            left -= take
+            g--
+        }
+        return total >= owed
+    }
+
+    private fun seenSize(model: RoundModel): Int = model.hits.size
+
+    // Scratch for [couldStillCover]: a stamp per cell instead of clearing a set per node.
+    private var seen = IntArray(0)
+    private var stamp = 0
+    private val gainCounts = IntArray(Dir.COUNT + 1)
 
     // ------------------------------------------------------------- many rounds
 

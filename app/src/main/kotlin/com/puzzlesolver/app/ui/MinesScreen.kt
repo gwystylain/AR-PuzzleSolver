@@ -74,11 +74,10 @@ fun MinesScreen(
     onRescan: () -> Unit,
     onCorrect: (Int, Int) -> Unit,
     onNudgeLattice: (Boolean) -> Unit,
-    onNudgeColour: (Boolean) -> Unit,
 ) {
     when (state.phase) {
         MinesController.Phase.AIMING, MinesController.Phase.SCANNING ->
-            Scanning(state, onScan, onFinish, onRescan, onNudgeLattice, onNudgeColour)
+            Scanning(state, onScan, onFinish, onRescan, onNudgeLattice)
         MinesController.Phase.PLANNING, MinesController.Phase.DONE -> Answer(state, onRescan, onCorrect)
     }
 }
@@ -90,7 +89,6 @@ private fun Scanning(
     onFinish: () -> Unit,
     onCancel: () -> Unit,
     onNudgeLattice: (Boolean) -> Unit,
-    onNudgeColour: (Boolean) -> Unit,
 ) {
     val scanning = state.phase == MinesController.Phase.SCANNING
     Box(Modifier.fillMaxSize()) {
@@ -157,7 +155,7 @@ private fun Scanning(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            if (!scanning) CameraRow(state.camera, onNudgeLattice, onNudgeColour)
+            if (!scanning) CameraRow(state.camera, onNudgeLattice)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (scanning) {
                     OutlinedButton(onClick = onCancel) { Text("Cancel", color = Color.White) }
@@ -179,12 +177,16 @@ private fun Scanning(
 }
 
 /**
- * Both exposures, and a step either way for each. Normally left alone: the colour is
- * Gems' preset and the lattice steers itself while aiming. Here for the room that
- * proves otherwise, because the trip there is the expensive part.
+ * Both exposures, and a step either way for the lattice's. Normally left alone: the
+ * lattice steers itself while aiming, and is here for the room that proves otherwise,
+ * because the trip there is the expensive part.
+ *
+ * The colour exposure has no buttons. It is Gems' preset, the face colours are measured
+ * at it, and on 2026-11-12 four taps of Colour + (1/250 s to 1/15 s) clipped every blue
+ * LED to white and ruined the scan.
  */
 @Composable
-private fun CameraRow(camera: String, onNudgeLattice: (Boolean) -> Unit, onNudgeColour: (Boolean) -> Unit) {
+private fun CameraRow(camera: String, onNudgeLattice: (Boolean) -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
@@ -194,10 +196,6 @@ private fun CameraRow(camera: String, onNudgeLattice: (Boolean) -> Unit, onNudge
         Text(camera, color = SUBTLE, fontSize = 11.sp)
         Spacer(Modifier.height(6.dp))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Colour", color = Color.White, fontSize = 12.sp)
-            Small("-") { onNudgeColour(false) }
-            Small("+") { onNudgeColour(true) }
-            Spacer(Modifier.width(12.dp))
             Text("Lattice", color = Color.White, fontSize = 12.sp)
             Small("-") { onNudgeLattice(false) }
             Small("+") { onNudgeLattice(true) }

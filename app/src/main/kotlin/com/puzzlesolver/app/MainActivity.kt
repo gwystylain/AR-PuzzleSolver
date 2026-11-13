@@ -615,7 +615,6 @@ class MainActivity : ComponentActivity() {
                                     onRescan = { mines.rescan() },
                                     onCorrect = { col, row -> mines.correctCell(col, row) },
                                     onNudgeLattice = { mines.nudgeLattice(it) },
-                                    onNudgeColour = { mines.nudgeColour(it) },
                                 )
                             }
                         } else null,

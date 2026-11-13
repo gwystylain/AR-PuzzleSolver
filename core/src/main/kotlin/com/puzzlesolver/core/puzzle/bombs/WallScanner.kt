@@ -6,7 +6,9 @@ import com.puzzlesolver.core.puzzle.gems.GemBlobDetector
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.exp
 import kotlin.math.hypot
+import kotlin.math.ln
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
@@ -78,9 +80,10 @@ class WallScanner(
         val wallInView: Boolean,
         val message: String,
         /**
-         * How bright the typical button was in the last lattice frame that had the wall
-         * in it, on the brightest channel; -1 before there was one. The typical button is
-         * unlit, so this is what says whether the lattice exposure can see them.
+         * How bright the buttons were in the last lattice frame that had the wall in it,
+         * on the brightest channel, as their lower quartile; -1 before there was one.
+         * That is an unlit button, so this is what says whether the lattice exposure can
+         * see them.
          */
         val buttonBrightness: Float,
         /** Mean luma of the last lattice frame, wall or not. */
@@ -145,6 +148,8 @@ class WallScanner(
         @JvmField val fromFace: Boolean,
         /** What was measured, for the scan log; empty for an unlit button. */
         @JvmField val detail: String = "",
+        /** A lit face's red over its blue, at the colour exposure; NaN otherwise. See [splitWhiteBlue]. */
+        @JvmField val tint: Float = Float.NaN,
     )
 
     private class Evidence {
@@ -152,6 +157,7 @@ class WallScanner(
         var unlit = 0f
         val face = FloatArray(8)
         val halo = FloatArray(8)
+        val tints = ArrayList<Float>(0)
     }
 
     // --- State -------------------------------------------------------------
@@ -250,10 +256,12 @@ class WallScanner(
         val confidence = FloatArray(cols * ROWS)
         var strayGreens = 0
         var magenta = 0
+        val tinted = ArrayList<Tinted>()
         for (c in 0 until cols) {
             val column = evidence[green + c] ?: continue
             for (r in 0 until ROWS) {
                 val (button, conf) = decide(column[r])
+                if (isWhiteOrBlue(column[r], button)) tinted.add(Tinted(r * cols + c, median(column[r].tints)))
                 val kind = when {
                     // There is one green button on the wall and this is not it.
                     button == Button.GREEN && !(c == 0 && r == greenRow) -> {
@@ -287,7 +295,98 @@ class WallScanner(
         if (magenta > 0) {
             warnings.add("$magenta button(s) read magenta, which nothing on the wall is before a mine goes down; marked unknown.")
         }
+        val threshold = splitWhiteBlue(tinted.map { it.tint })
+        if (threshold != null) {
+            var changed = 0
+            var whites = 0
+            for (t in tinted) {
+                val kind = if (t.tint > threshold) Button.WHITE else Button.BLUE
+                if (kind == Button.WHITE) whites++
+                if (kinds[t.index].toInt() != kind) {
+                    changed++
+                    kinds[t.index] = kind.toByte()
+                    if (confidence[t.index] <= 0f) confidence[t.index] = SPLIT_CONFIDENCE
+                }
+            }
+            if (changed > 0) {
+                warnings.add(
+                    "Whites and blues told apart against each other ($whites white, ${tinted.size - whites} blue): " +
+                        "$changed read the other way by colour alone."
+                )
+            }
+        } else if (tinted.size >= 2) {
+            val typical = median(tinted.map { it.tint })
+            if (typical in AMBIGUOUS_TINT_LOW..AMBIGUOUS_TINT_HIGH) {
+                warnings.add(
+                    "All ${tinted.size} white or blue buttons look alike, in a colour between the two; check them."
+                )
+            }
+        }
         return ScannedWall(cols, ROWS, kinds, confidence, endCol != null, warnings)
+    }
+
+    private class Tinted(val index: Int, val tint: Float)
+
+    /**
+     * Whether a cell is a white or a blue button as far as its colour vote goes -- or a
+     * split vote between the two, which the tint can settle. Needs at least one tint.
+     */
+    private fun isWhiteOrBlue(e: Evidence, button: Int): Boolean {
+        if (e.tints.isEmpty()) return false
+        if (button == Button.WHITE || button == Button.BLUE) return true
+        if (button != Button.OPAQUE || e.lit <= e.unlit) return false
+        val total = e.face.sum()
+        return total > 0f && e.face[Button.WHITE] + e.face[Button.BLUE] >= WHITE_BLUE_SHARE * total
+    }
+
+    /**
+     * The red-over-blue ratio that divides this wall's whites from its blues, or null
+     * when they do not fall into two groups.
+     *
+     * The face vote names white by saturation against a fixed line, which holds only as
+     * long as the camera renders a white LED white. White balance is locked at whatever
+     * the camera began with, and on 2026-11-12 that tinted every white button blue:
+     * faces of (60, 106, 194), saturation 0.70, against the wall's true blues at
+     * (27, 111, 224), saturation 0.88. All seventeen read blue, the planner was asked for
+     * 34 hits where there were 20, and the plan came out at twice the mines. On
+     * 2026-11-07, with the camera rendering white nearly white, the whites sat at
+     * saturation 0.27 -- three hundredths inside the line.
+     *
+     * In each of those scans, though, the two kinds stood far apart from each other: red
+     * over blue 0.27-0.34 against 0.12-0.14 on 2026-11-12, 0.79-0.82 against 0.22-0.25 on
+     * 2026-11-07. A tint shifts both kinds the same way, so the gap survives it. The
+     * split is the one that best separates the ratios on a log scale, taken only if the
+     * two groups' middles are [MIN_TINT_SEPARATION] apart, there is a clear gap where
+     * they meet, and the lower group is blue by any standard. Otherwise -- a wall of only
+     * whites, or only blues -- the face vote stands.
+     */
+    private fun splitWhiteBlue(tints: List<Float>): Float? {
+        if (tints.size < 2) return null
+        val logs = tints.map { ln(it.coerceAtLeast(0.01f).toDouble()) }.sorted()
+        val n = logs.size
+        val total = logs.sum()
+        var below = 0.0
+        var best = -1
+        var bestScore = 0.0
+        for (k in 1 until n) {
+            below += logs[k - 1]
+            val m1 = below / k
+            val m2 = (total - below) / (n - k)
+            val score = k.toDouble() * (n - k) * (m2 - m1) * (m2 - m1)
+            if (score > bestScore) {
+                bestScore = score
+                best = k
+            }
+        }
+        if (best < 0) return null
+        val lowTop = logs[best - 1]
+        val highBottom = logs[best]
+        val m1 = logs.subList(0, best).average()
+        val m2 = logs.subList(best, n).average()
+        if (m2 - m1 < ln(MIN_TINT_SEPARATION)) return null
+        if (highBottom - lowTop < ln(MIN_TINT_GAP)) return null
+        if (exp(lowTop) > MAX_BLUE_TINT) return null
+        return exp((lowTop + highBottom) / 2).toFloat()
     }
 
     // --- Lattice frames ------------------------------------------------------
@@ -510,7 +609,10 @@ class WallScanner(
         val brightness = faces.mapNotNull { it?.brightness }
         if (brightness.isEmpty()) return faces.map { null }
         val typical = median(brightness)
-        buttonBrightness = typical
+        // The lower quartile, not the median, for the camera to be steered by: a quarter
+        // of the buttons would have to be lit before a lit one could stand in for the
+        // unlit ones, where half will do it to a median.
+        buttonBrightness = brightness.sorted()[brightness.size / 4]
 
         val lit = BooleanArray(faces.size) { k ->
             val face = faces[k] ?: return@BooleanArray false
@@ -627,7 +729,8 @@ class WallScanner(
             val c = last.cells[k]
             if (face.lit) {
                 lit++
-                record(c.col, c.row, Look(true, face.button, face.confidence * FACE_WEIGHT, true))
+                val tint = face.meanR / face.meanB.coerceAtLeast(1f)
+                record(c.col, c.row, Look(true, face.button, face.confidence * FACE_WEIGHT, true, tint = tint))
                 litDetail.append("\n    lit ${c.col - (greenCol ?: 0)},${c.row}: face $face")
             } else {
                 record(c.col, c.row, Look(false, -1, 0f, true))
@@ -646,6 +749,7 @@ class WallScanner(
         if (row !in 0 until ROWS) return
         val e = evidence.getOrPut(col) { Array(ROWS) { Evidence() } }[row]
         if (look.lit) e.lit += 1f else e.unlit += 1f
+        if (!look.tint.isNaN()) e.tints.add(look.tint)
         if (look.button >= 0 && look.weight > 0f) {
             if (look.fromFace) e.face[look.button] += look.weight else e.halo[look.button] += look.weight
         }
@@ -1190,6 +1294,31 @@ class WallScanner(
         private const val MIN_MARGIN = 0.15f
 
         private const val MAX_ROLL = 0.35f
+
+        /**
+         * See [splitWhiteBlue]. The groups' middles must be this many times apart in red
+         * over blue (2.4 on 2026-11-12, 3.4 on 2026-11-07; the whites alone spread 1.26),
+         * with at least [MIN_TINT_GAP] between the nearest pair across the split, and the
+         * bluer group no redder than [MAX_BLUE_TINT] -- a wall of whites, some clipped
+         * and some not, is not to be halved into whites and blues.
+         */
+        private const val MIN_TINT_SEPARATION = 1.8f
+        private const val MIN_TINT_GAP = 1.25f
+        private const val MAX_BLUE_TINT = 0.5f
+
+        /** A split vote of white against blue counts as one if the two hold this much of it. */
+        private const val WHITE_BLUE_SHARE = 0.8f
+
+        /** Confidence given a button the split named when its own vote could not. */
+        private const val SPLIT_CONFIDENCE = 0.5f
+
+        /**
+         * Without a split, a wall whose white-or-blue buttons sit in this band of red over
+         * blue is flagged: whites tinted as on 2026-11-12 (0.27-0.34) or blues rendered
+         * warm. True blues measured 0.12-0.25, whites rendered white 0.79-0.82.
+         */
+        private const val AMBIGUOUS_TINT_LOW = 0.26f
+        private const val AMBIGUOUS_TINT_HIGH = 0.6f
 
         /**
          * See [liftDim]. Swept on the pan of 2026-10-27 replayed at one to four times its

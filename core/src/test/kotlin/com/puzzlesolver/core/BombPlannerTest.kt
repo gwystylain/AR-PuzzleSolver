@@ -326,6 +326,26 @@ class BombPlannerTest {
     }
 
     @Test
+    fun `the room's wall of 2026-11-12 is planned at the fewest one detonation allows`() {
+        // Seventeen blues, read off the room. As a set multicover -- each cell covering the
+        // first button down each of its lines, each blue needing two cells, no line onto a
+        // red -- an integer program puts the minimum for one detonation at ten. The search
+        // used to stop at eleven: it took eight hits a mine as its bound, spent its whole
+        // node budget failing to settle five and six, and never tried ten.
+        val board = """
+            .................B.B.......B....................................
+            ................................................B.R.............
+            G...........B....B.B.......B....................................
+            ..............................BR.....B..B...........B...........
+            ................................................................
+            .............................B............R.............B.......
+            ......................B..........B..........B...................
+        """
+        val plan = found(board, budget = 34, rounds = 1)
+        assertEquals(10, plan.totalMines)
+    }
+
+    @Test
     fun `a full-size board is planned inside the solver time budget`() {
         // The real room is about seven rows by a hundred columns, and the pipeline
         // gives the solver 12 ms a step. This checks the search returns something

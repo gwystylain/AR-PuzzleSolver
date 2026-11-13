@@ -85,6 +85,8 @@ class MinesController(
     private var lastSnapshotNanos = 0L
     private var lastCameraChangeNanos = 0L
     private var latticeSteps = 0
+    private var steerWants: Boolean? = null
+    private var steerStreak = 0
     private var steeredTo: CameraTuning.Lattice? = null
     private var limitLogged = false
     private var aimingSinceNanos = 0L
@@ -166,11 +168,6 @@ class MinesController(
     fun nudgeLattice(brighter: Boolean) {
         autoLattice = false
         tuning()?.nudgeLattice(brighter)
-    }
-
-    fun nudgeColour(brighter: Boolean) {
-        val t = tuning() ?: return
-        if (brighter) t.brighter() else t.darker()
     }
 
     fun release() {
@@ -264,14 +261,20 @@ class MinesController(
      * Keeps the lattice frames bright enough to see the unlit buttons, while aiming only.
      *
      * One stop at a time, a second and a half apart so each change is measured before
-     * the next. Up to three stops brighter and two darker than the default, which was set
-     * off reference footage of a brighter room than the one on 2026-10-27: there, two
-     * stops up (1/125 s at ISO 6400) left the unlit buttons at 15-30 and the wall unseen,
-     * and replaying that pan at twice the light found it in 145 frames of 147. The third
-     * stop is that doubling -- 1/62 s at ISO 6400, as long as a lattice frame may run
-     * before a pan smears it -- and the scanner lifts a dim frame for the rest (see
-     * WallScanner.liftDim). Never during a scan, because a retune stops the camera for a
-     * moment and the count cannot afford a gap.
+     * the next, and only once [STEER_STREAK] lattice frames in a row have asked for it.
+     * The default is already as bright as a lattice frame may go (see
+     * CameraTuning.setLatticeFrames), so this only ever darkens, for a brighter room than
+     * the real one, and brightens back; five stops down reaches two below the old
+     * default, which came off reference footage of a brighter room.
+     *
+     * The streak is for 2026-11-12. Starting from that old default the steer took one stop
+     * up, then a single frame reading the buttons at 239 with the frame itself at 15 --
+     * lit LEDs standing in for the unlit buttons -- took it straight back down, and the
+     * scan ran three stops too dark to find the green. The scanner now reports the lower
+     * quartile of the buttons, not the median, for the same reason.
+     *
+     * Never during a scan, because a retune stops the camera for a moment and the count
+     * cannot afford a gap.
      */
     private fun steerLattice(progress: WallScanner.Progress, now: Long) {
         if (!autoLattice) return
@@ -279,13 +282,12 @@ class MinesController(
         val current = t.settings.lattice ?: return
         // Counted from wherever the lattice frames last started. Leaving Mines turns them
         // off and coming back starts them at the default again; a count carried across
-        // that would hold a second visit at the default, already "three stops up".
+        // that would hold a second visit at the default, already counted at its limit.
         if (current != steeredTo) {
             latticeSteps = 0
             limitLogged = false
         }
-        if (now - lastCameraChangeNanos < STEER_INTERVAL_NANOS) return
-        val brighter = when {
+        val wants = when {
             progress.wallInView && progress.buttonBrightness in 0f..DIM_BUTTONS -> true
             progress.wallInView && progress.buttonBrightness > BRIGHT_BUTTONS -> false
             // Black, but with lit buttons in the colour frames: on the wall, too dark to
@@ -294,8 +296,13 @@ class MinesController(
             // describes the gem loop falling into.
             !progress.wallInView && progress.frameBrightness in 0f..BLACK_FRAME &&
                 progress.litInView >= MIN_LIT_FOR_DARK -> true
-            else -> return
+            else -> null
         }
+        steerStreak = if (wants != null && wants == steerWants) steerStreak + 1 else 1
+        steerWants = wants
+        if (wants == null || steerStreak < STEER_STREAK) return
+        if (now - lastCameraChangeNanos < STEER_INTERVAL_NANOS) return
+        val brighter: Boolean = wants
         val atLimit = if (brighter) latticeSteps >= MAX_BRIGHTER_STEPS else latticeSteps <= -MAX_DARKER_STEPS
         if (atLimit) {
             // Said once per stretch at the limit. Without it a room too dark even here
@@ -318,6 +325,7 @@ class MinesController(
             steeredTo = t.settings.lattice
             limitLogged = false
             lastCameraChangeNanos = now
+            steerStreak = 0
             Log.i(
                 TAG,
                 "lattice ${if (brighter) "brighter" else "darker"}: buttons=%.0f frame=%.0f -> %s".format(
@@ -483,8 +491,11 @@ class MinesController(
         const val BRIGHT_BUTTONS = 205f
         const val BLACK_FRAME = 12f
         const val MIN_LIT_FOR_DARK = 2
-        const val MAX_BRIGHTER_STEPS = 3
-        const val MAX_DARKER_STEPS = 2
+        const val MAX_BRIGHTER_STEPS = 0
+        const val MAX_DARKER_STEPS = 5
+
+        /** Lattice frames in a row that must ask for the same change: about half a second. */
+        const val STEER_STREAK = 6
 
         /** A minute at twenty frames a second, both kinds together: about 120 MB at most. */
         const val MAX_SAVED_FRAMES = 1200

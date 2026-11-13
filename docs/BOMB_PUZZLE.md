@@ -109,10 +109,28 @@ a second of it mid-pan and the count is lost, then found again by the lit button
 **At the colour exposure, off the face** (`ButtonFace`). Gems' vote with the rings taken
 out: every texel bright enough to be LED votes, white if barely saturated, otherwise for
 the nearest hue -- red 352, green 146, blue 198, measured on the gem wall on this camera
-at this preset, and an armed mine (red *and* blue) at 275 between them. **Not yet
-measured on the mines wall itself**; no footage of it at this exposure exists yet. The
-scan log records every lit cell's mean colour, so the first scan in the room is the
-measurement.
+at this preset, and an armed mine (red *and* blue) at 275 between them.
+
+**White against blue is then settled across the whole wall**, not button by button. The
+face vote calls a texel white below a fixed saturation, which holds only while the camera
+renders a white LED white -- and white balance is locked at whatever the camera began
+with. In the room the faces measured:
+
+| | white | blue | red | green |
+|---|---|---|---|---|
+| 2026-11-07 | (125, 113, 157), sat 0.27 | (46, 110, 203), sat 0.77 | (175, 24, 39) | (16, 147, 16) |
+| 2026-11-12 | (60, 106, 194), sat 0.70 | (27, 111, 224), sat 0.88 | (150, 14, 15) | (14, 181, 124) |
+
+On 2026-11-12 every white crossed the line and read blue; on 2026-11-07 the whites were
+three hundredths inside it. But in each scan the two kinds stand far apart from each other,
+red over blue 0.27-0.34 against 0.12-0.14 and 0.79-0.82 against 0.22-0.25, because a tint
+moves them both. So every cell read white or blue (or split between the two) carries the
+median red over blue of its face looks, and the scan is divided where those ratios best
+fall into two groups on a log scale -- if the groups' middles are at least 1.8 times
+apart, there is a clear gap where they meet, and the bluer group has red under half its
+blue. A wall of only whites, or only blues, keeps the face vote; if its buttons all sit
+between the two (red over blue 0.26-0.6) the board says to check them. When the split
+changes anything the board says so too.
 
 **At the lattice exposure, off the glow.** The fallback, and what the reference pan can
 test. The face of a lit button is clipped there, so the colour is read off the light it
@@ -227,14 +245,47 @@ buttons out. Its frames and log are in `testVideos/phone-backup/2026-11-07/`.
 - **The saved frames could not be replayed faithfully** at half size. They are now saved
   at full size, so the next scan replays as it ran.
 
+### In the room, 2026-11-12
+
+Three scans, frames and log in `testVideos/phone-backup/2026-11-12/`. The user reported
+that the app placed more mines than the room allowed, and that they had tapped the camera
+buttons because the green was not being found.
+
+- **The green was not found because the lattice frames were three stops too dark.** The
+  steer started from the old default, 1/250 s at ISO 3200, took one stop up, then a single
+  frame reading the buttons at 239 with the frame itself at 15 -- lit LEDs standing in for
+  the unlit buttons in the median -- took it straight back down. The scan ran with the unlit
+  buttons at 7-15; no lattice frame in 180 found the wall well enough to see the green.
+  Every visit to the room has now needed 1/60 s at ISO 6400 (unlit buttons at 40-80), so
+  that is the default, the brightest a lattice frame may go. The steer only darkens from
+  there (five stops, to two under the old default) and brightens back. It takes a change
+  only after six lattice frames in a row ask for it, and it reads the buttons' lower
+  quartile, not their median.
+- **The second scan is not evidence of anything.** Colour + had been tapped four times
+  (1/250 s to 1/15 s) and every blue LED clipped and read white. The Colour buttons are
+  gone from the Mines screen; only the lattice exposure can be stepped by hand.
+- **The third read seventeen blues; fourteen were whites** tinted by the locked white
+  balance (the table above). Blue takes two hits, so the planner was asked for 34 hits
+  where there were 20 and gave 11 mines. Replayed (the frames are full size, and the
+  replay gives the phone's board cell for cell), the split reads 14 white and 3 blue. The
+  plan is 5 mines over two detonations. `WallScanPanTest` renders a wall in that scan's
+  colours: every white reads blue by the face vote alone, and the split reads the wall
+  exactly.
+- **The exact search gave up on that board** at its node budget and handed over greedy's
+  11. Its bound assumed a mine could land 8 hits, and no cell there reached more than 4,
+  so it cut nothing. It now sums the best per-cell gains. The board as read plans at 10,
+  the proven minimum for one detonation.
+
 ### Not yet verified
 
 - **The new row finder on the phone, in the room.** Measured on the 2026-11-07 frames as
   saved, at half size, and on rendered walls.
-- **Face colours at the colour exposure on this wall**, above.
-- **The lattice exposure's default** is still two stops under one auto-exposed video. The
-  room needed three stops more than that on 2026-10-27; the steer covers the gap in about
-  five seconds of aiming, and the lift covers it before then.
+- **The white/blue split in the room.** Measured on the replayed scan of 2026-11-12 and
+  on rendered walls.
+- **The lattice default of 1/60 s at ISO 6400 from the start**, and the steer's streak.
+- **White balance itself** is still whatever the camera began with. A fixed preset for the
+  colour frames would take the tint away at the source; it changes every colour the face
+  vote sees, so it wants a visit to the room.
 
 ## The rules, as the practice game plays them
 
