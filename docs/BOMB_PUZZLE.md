@@ -48,9 +48,10 @@ So the camera alternates, frame by frame, as one repeating burst
 The preview shows only the lattice frames, because a preview strobing between the two
 is unwatchable. Each frame is tagged with its request and read back by sensor timestamp;
 the two kinds get a ready slot each in the hand-off, because one slot refilled at the
-preview's rate would only ever hold one kind. While aiming, the lattice exposure steers
-itself a stop at a time (up to three brighter, two darker) to keep the unlit buttons
-between 45 and 205; during a scan it is left alone, because a retune stops the camera for
+preview's rate would only ever hold one kind. The lattice frames start at 1/60 s and
+ISO 6400, the brightest they may go, because the room has needed that every time. While
+aiming they steer a stop at a time (up to five darker, and back) to keep the unlit buttons
+between 45 and 205; during a scan they are left alone, because a retune stops the camera for
 a moment and the count cannot afford a gap. A lattice frame still too dim is lifted by
 the scanner before the buttons are looked for in it (`WallScanner.liftDim`), and the
 steer logs when it wants more light than it may take. A camera without manual control sends one exposure, every
@@ -276,13 +277,42 @@ buttons because the green was not being found.
   so it cut nothing. It now sums the best per-cell gains. The board as read plans at 10,
   the proven minimum for one detonation.
 
+### In the room, 2026-11-14
+
+Two scans, the first on the build with the white/blue split and the bright lattice
+default; frames and log in `testVideos/phone-backup/2026-11-14/`. The user called the first
+perfect, and said the second lost track and struggled to solve.
+
+- **The first** found the green at once, tracked every lattice frame of 217 to the end,
+  and read 14 white, 3 blue and 3 red -- the split turning all 14 whites back from blue,
+  as on 2026-11-12. Its plan was 5 mines in 3 detonations.
+- **The second lost the count for fourteen seconds**, a third of the way along. Its
+  lattice frames were dimmer, and as the pan reached a stretch with six lit buttons in
+  view their glare took over the 99th percentile the dim-frame lift was set by. The lift
+  fell from about two to barely one, the dim bottom row dropped under the finder's line,
+  and frame after frame found only six rows. The user panned back and forth until it was
+  found again. The lift is now set off the 95th percentile, which the unlit buttons hold
+  (see `WallScanner.liftDim`); replayed, the same pan tracks 295 lattice frames of 300
+  where it tracked 170, and the 2026-11-07 pan 211 of 248 where it tracked 142.
+- **Its board was right regardless.** Checked by eye against the frames across the
+  stretch it lost, and read the same with the tracking fixed: 10 white, 1 blue, 3 red.
+  Its plan was 3 mines in 2 detonations, found in 20 ms, and it clears that board under
+  the practice game's rules. Its second round puts a mine on (20, 6), the white button the
+  first round destroys; the user confirmed the room allows that, as the practice game does.
+- **Distance was not the difference.** Both scans were held alike: buttons 61-63 px
+  apart in the 540-wide frame, eight columns in view, the seven rows filling about 40% of
+  its height -- as on 2026-11-12 and 2026-11-07. The second simply had fewer lit buttons
+  (no more than one in view in 42% of its lattice frames, against 23%). Frame to frame the
+  count follows every button, lit or not; lit ones matter only for finding the place again
+  once it is lost.
+- The steer logged "wants brighter but is at its limit" on every frame rather than once:
+  it took the lattice exposure as unsteered until its first change, and at the brightest
+  default there never is one.
+
 ### Not yet verified
 
-- **The new row finder on the phone, in the room.** Measured on the 2026-11-07 frames as
-  saved, at half size, and on rendered walls.
-- **The white/blue split in the room.** Measured on the replayed scan of 2026-11-12 and
-  on rendered walls.
-- **The lattice default of 1/60 s at ISO 6400 from the start**, and the steer's streak.
+- **The white/blue split in the room** beyond the first scan of 2026-11-14.
+- **The 95th-percentile lift on the phone.** Measured on the replayed scans.
 - **White balance itself** is still whatever the camera began with. A fixed preset for the
   colour frames would take the tint away at the source; it changes every colour the face
   vote sees, so it wants a visit to the room.

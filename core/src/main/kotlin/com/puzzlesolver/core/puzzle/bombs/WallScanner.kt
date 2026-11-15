@@ -1140,9 +1140,21 @@ class WallScanner(
      * Scaling only stretches what the sensor recorded -- noise comes up with the buttons --
      * so it worked because the fixed line, not the noise, was what stood in the way.
      *
-     * Lifts the 99th percentile toward [LIFT_TARGET], at most [MAX_LIFT] times. Nothing
-     * below [MIN_LIFT_P99]: a frame that dark is the floor or a pocket, and stretching it
-     * would only hand the finder its noise. Only the copy the finder reads is changed;
+     * Lifts the 95th percentile toward [LIFT_TARGET], at most [MAX_LIFT] times. Nothing
+     * below [MIN_LIFT_LEVEL]: a frame that dark is the floor or a pocket, and stretching it
+     * would only hand the finder its noise.
+     *
+     * The 95th, not the 99th, because a lit button is not what this is about and must not
+     * decide it. The unlit buttons fill a tenth of a frame or so, and a few lit ones
+     * blooming fill more than a hundredth: once they did, the 99th percentile was their
+     * glare, the lift fell from two to barely one, and the dim bottom row went under the
+     * finder's line. On 2026-11-14 that happened as the pan reached a stretch with six lit
+     * buttons in view; the count was lost for fourteen seconds, and the user panned back
+     * and forth to find it. Replayed with the 95th, that pan finds the wall in 295 lattice
+     * frames of 300 where it found 170, and the pan of 2026-11-07 in 211 of 248 where it
+     * found 142, both reading the same boards.
+     *
+     * Only the copy the finder reads is changed;
      * every button's face and colour still come off the frame as it arrived, and so does
      * the brightness the camera is steered by -- the camera should still be asked for the
      * real light, which is better than any stretch of it.
@@ -1152,18 +1164,18 @@ class WallScanner(
     private fun liftDim(luma: GrayImage): Float {
         val histogram = IntArray(256)
         for (v in luma.data) histogram[v.toInt() and 0xFF]++
-        val wanted = (luma.data.size * 0.99).toLong()
+        val wanted = (luma.data.size * LIFT_PERCENTILE).toLong()
         var seen = 0L
-        var p99 = 255
-        for (level in 0 until 256) {
-            seen += histogram[level]
+        var level = 255
+        for (l in 0 until 256) {
+            seen += histogram[l]
             if (seen >= wanted) {
-                p99 = level
+                level = l
                 break
             }
         }
-        if (p99 < MIN_LIFT_P99 || p99 >= LIFT_TARGET) return 1f
-        val gain = (LIFT_TARGET / p99.toFloat()).coerceAtMost(MAX_LIFT)
+        if (level < MIN_LIFT_LEVEL || level >= LIFT_TARGET) return 1f
+        val gain = (LIFT_TARGET / level.toFloat()).coerceAtMost(MAX_LIFT)
         val scale = IntArray(256) { (it * gain).roundToInt().coerceAtMost(255) }
         val data = luma.data
         for (i in data.indices) data[i] = scale[data[i].toInt() and 0xFF].toByte()
@@ -1321,13 +1333,16 @@ class WallScanner(
         private const val AMBIGUOUS_TINT_HIGH = 0.6f
 
         /**
-         * See [liftDim]. Swept on the pan of 2026-10-27 replayed at one to four times its
-         * light: a target of 55 found the wall in 85% of its frames as shot, 75 in 98%, and
-         * 95 in all but one at every brightness. A well-exposed frame sits far above it --
+         * See [liftDim]. Swept on the room's pans of 2026-11-14, -11-12 and -11-07: a
+         * target of 45 for the 95th percentile found the second pan of 2026-11-14 in 253
+         * lattice frames of 300, 60 in 290, 75 in 295; 90 lifted the pan of 2026-11-07 into
+         * its own noise and lost the count there. 70, used here, gives 295 and, on 2026-11-07,
+         * 211 of 248, with every board as before. A well-exposed frame sits far above it --
          * the reference pan's unlit buttons are near 190 -- and is left alone.
          */
-        private const val LIFT_TARGET = 95f
+        private const val LIFT_PERCENTILE = 0.95
+        private const val LIFT_TARGET = 70f
         private const val MAX_LIFT = 3f
-        private const val MIN_LIFT_P99 = 10
+        private const val MIN_LIFT_LEVEL = 4
     }
 }

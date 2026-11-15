@@ -283,7 +283,12 @@ class MinesController(
         // Counted from wherever the lattice frames last started. Leaving Mines turns them
         // off and coming back starts them at the default again; a count carried across
         // that would hold a second visit at the default, already counted at its limit.
+        // Taken as the new starting point there and then: left unset until the steer's
+        // first change, every frame looked like a fresh start, and on 2026-11-14 -- the
+        // default being the brightest it may go -- "wants brighter but is at its limit"
+        // went into the log 46 times in two scans instead of once.
         if (current != steeredTo) {
+            steeredTo = current
             latticeSteps = 0
             limitLogged = false
         }
