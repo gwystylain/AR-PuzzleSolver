@@ -1,6 +1,7 @@
 package com.puzzlesolver.app
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -16,6 +17,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -44,12 +46,14 @@ import com.puzzlesolver.core.puzzle.spot.SpotFinder
 import com.puzzlesolver.core.puzzle.terminal.TerminalAdapter
 import com.puzzlesolver.app.record.LogCapture
 import com.puzzlesolver.app.record.SessionStore
+import com.puzzlesolver.app.jigsaw.JigsawController
 import com.puzzlesolver.app.spell.SpellController
 import com.puzzlesolver.app.spot.SpotController
 import com.puzzlesolver.app.mines.MinesController
 import com.puzzlesolver.app.ui.LandingScreen
 import com.puzzlesolver.app.ui.PuzzleSolverTheme
 import com.puzzlesolver.app.ui.ScanScreen
+import com.puzzlesolver.app.ui.JigsawScreen
 import com.puzzlesolver.app.ui.JumbleScreen
 import com.puzzlesolver.app.ui.SequenceScreen
 import com.puzzlesolver.app.ui.SimonColour
@@ -150,6 +154,14 @@ class MainActivity : ComponentActivity() {
     private var simonLog by mutableStateOf(emptyList<SimonColour>())
 
     /**
+     * Whether Jigsaw is on screen: the floor room, on Spellinator's server and
+     * [SpellController] like Sequence, with this app's camera off. Its photos are taken with
+     * the phone's own camera app ([jigsawShot]) and read by [jigsaw].
+     */
+    private var jigsawOpen by mutableStateOf(false)
+    private lateinit var jigsaw: JigsawController
+
+    /**
      * Spot's round: the photos taken so far and, once there are six, what differs in each.
      * Kept across a trip to another room and back, like Spellinator's seat; Reset is how a
      * round is thrown away.
@@ -163,8 +175,9 @@ class MainActivity : ComponentActivity() {
      */
     private lateinit var mines: MinesController
 
-    /** A guide, Spellinator, Jumble, Sequence or Simon Says is up, so the camera is off. */
-    private val cameraFree: Boolean get() = guideRoom != null || spellOpen || jumbleOpen || sequenceOpen || simonOpen
+    /** A guide, Spellinator, Jumble, Sequence, Jigsaw or Simon Says is up, so the camera is off. */
+    private val cameraFree: Boolean
+        get() = guideRoom != null || spellOpen || jumbleOpen || sequenceOpen || jigsawOpen || simonOpen
 
     /**
      * Whether the landing page is up. True at launch, cleared by any mode choice --
@@ -445,6 +458,61 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.OpenDocument(),
     ) { uri -> uri?.let { openReplay(it) } }
 
+    /** Jigsaw: the phone's camera app, saving into the file [JigsawController.photoTarget] made. */
+    private val jigsawShot = registerForActivityResult(ActivityResultContracts.TakePicture()) { taken ->
+        jigsaw.photoTaken(taken)
+    }
+
+    /** Jigsaw: a photo already taken, from the gallery. Needs no permission. */
+    private val jigsawPick = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        uri?.let { jigsaw.photoPicked(it) }
+    }
+
+    /** The region a photo was asked for while the camera permission was being asked for. */
+    private var jigsawShotWanted: Int? = null
+
+    private val jigsawCameraPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        val region = jigsawShotWanted
+        jigsawShotWanted = null
+        when {
+            !granted -> toast("The camera permission is needed to take the photo; you can choose one instead")
+            region != null -> launchJigsawCamera(region)
+        }
+    }
+
+    /**
+     * The camera app holds the camera while it is up, so this app must have let go of it --
+     * which it has, Jigsaw being a room without the camera -- and, since the app asks for the
+     * camera itself, Android lets another app take the photo only once it has the permission.
+     */
+    private fun takeJigsawPhoto(region: Int) {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            jigsawShotWanted = region
+            jigsawCameraPermission.launch(Manifest.permission.CAMERA)
+            return
+        }
+        launchJigsawCamera(region)
+    }
+
+    private fun launchJigsawCamera(region: Int) {
+        try {
+            jigsawShot.launch(jigsaw.photoTarget(region))
+        } catch (e: ActivityNotFoundException) {
+            toast("No camera app to take it with; choose a photo instead")
+        }
+    }
+
+    private fun pickJigsawPhoto(region: Int) {
+        jigsaw.picking(region)
+        try {
+            jigsawPick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+        } catch (e: ActivityNotFoundException) {
+            toast("No gallery to choose a photo from")
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -479,6 +547,7 @@ class MainActivity : ComponentActivity() {
             "${"%.2f".format(spec.widthMetres)}m wide")
         pipeline = ScanPipeline(spec = spec, displayRotationProvider = ::currentDisplayRotation)
         spot = SpotController(this) { pipeline.takeSpotPhoto(it) }
+        jigsaw = JigsawController(this)
         mines = MinesController(this) { pipeline.tuning() }
         pipeline.minesFrames = mines::onFrame
 
@@ -501,6 +570,8 @@ class MainActivity : ComponentActivity() {
                 val spellVariant by spell.variant.collectAsState()
                 val jumbleState by spell.jumble.collectAsState()
                 val sequenceState by spell.sequence.collectAsState()
+                val jigsawState by spell.jigsaw.collectAsState()
+                val jigsawPhotos by jigsaw.state.collectAsState()
                 val spotState by spot.state.collectAsState()
                 val minesState by mines.state.collectAsState()
                 // Back from the HUD or a guide goes to the landing page, which is the
@@ -609,6 +680,25 @@ class MainActivity : ComponentActivity() {
                                     onSetServer = { spell.setServer(it) },
                                 )
                             }
+                        } else if (jigsawOpen) {
+                            {
+                                JigsawScreen(
+                                    state = jigsawState,
+                                    server = spellServer,
+                                    photos = jigsawPhotos,
+                                    onHost = { spell.hostJigsaw() },
+                                    onJoin = { spell.joinJigsaw(it) },
+                                    onLeave = { spell.leaveJigsaw() },
+                                    onTakePhoto = { takeJigsawPhoto(it) },
+                                    onPickPhoto = { pickJigsawPhoto(it) },
+                                    onDraw = { region, cells -> jigsaw.draw(region, cells) },
+                                    onSend = { region, cells -> spell.setRegion(region, cells) },
+                                    onCloseDraft = { jigsaw.closeDraft() },
+                                    onReset = { spell.resetJigsaw() },
+                                    onDismissNotice = { spell.dismissJigsawNotice(it) },
+                                    onSetServer = { spell.setServer(it) },
+                                )
+                            }
                         } else if (simonOpen) {
                             {
                                 SimonScreen(
@@ -668,6 +758,7 @@ class MainActivity : ComponentActivity() {
                         onSelectSpell = { enterSpell() },
                         onSelectJumble = { enterJumble() },
                         onSelectSequence = { enterSequence() },
+                        onSelectJigsaw = { enterJigsaw() },
                         onSelectSimon = { enterSimon() },
                         onSelectSpot = { selectPuzzleMode(SpotFinder.ID) },
                         debug = showDebugPanel,
@@ -785,6 +876,7 @@ class MainActivity : ComponentActivity() {
         closeSpell()
         closeJumble()
         closeSequence()
+        closeJigsaw()
         simonOpen = false
         guideRoom = room
         if (wasScanning) pauseScanning()
@@ -798,6 +890,7 @@ class MainActivity : ComponentActivity() {
         guideRoom = null
         closeJumble()
         closeSequence()
+        closeJigsaw()
         simonOpen = false
         spellOpen = true
         if (wasScanning) pauseScanning()
@@ -817,6 +910,7 @@ class MainActivity : ComponentActivity() {
         guideRoom = null
         closeSpell()
         closeSequence()
+        closeJigsaw()
         simonOpen = false
         jumbleOpen = true
         if (wasScanning) pauseScanning()
@@ -836,6 +930,7 @@ class MainActivity : ComponentActivity() {
         guideRoom = null
         closeSpell()
         closeJumble()
+        closeJigsaw()
         simonOpen = false
         sequenceOpen = true
         if (wasScanning) pauseScanning()
@@ -848,6 +943,26 @@ class MainActivity : ComponentActivity() {
         spell.closeSequence()
     }
 
+    private fun enterJigsaw() {
+        Log.i(TAG, "mode selected: jigsaw")
+        showLanding = false
+        val wasScanning = !cameraFree
+        guideRoom = null
+        closeSpell()
+        closeJumble()
+        closeSequence()
+        simonOpen = false
+        jigsawOpen = true
+        if (wasScanning) pauseScanning()
+        spell.openJigsaw()
+    }
+
+    private fun closeJigsaw() {
+        if (!jigsawOpen) return
+        jigsawOpen = false
+        spell.closeJigsaw()
+    }
+
     private fun enterSimon() {
         Log.i(TAG, "mode selected: simon")
         showLanding = false
@@ -856,17 +971,19 @@ class MainActivity : ComponentActivity() {
         closeSpell()
         closeJumble()
         closeSequence()
+        closeJigsaw()
         simonOpen = true
         if (wasScanning) pauseScanning()
     }
 
-    /** Back to a camera mode from a guide, Spellinator, Jumble, Sequence or Simon Says. */
+    /** Back to a camera mode from a guide, Spellinator, Jumble, Sequence, Jigsaw or Simon Says. */
     private fun leaveCameraFree() {
         if (!cameraFree) return
         guideRoom = null
         closeSpell()
         closeJumble()
         closeSequence()
+        closeJigsaw()
         simonOpen = false
         resumeScanning()
     }
@@ -896,6 +1013,7 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         spell.release()
         spot.release()
+        jigsaw.release()
         mines.release()
         probe?.close()
         pipeline.release()

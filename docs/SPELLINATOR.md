@@ -8,8 +8,9 @@ has it, as each letter is typed.
 
 It is **online**. The phones meet in a lobby on a small server you run yourself, on the
 NAS. Nothing else in the app touches the network except [Jumble](#jumble), the same word
-list played alone, and [Sequence](SEQUENCE.md), a board of numbers shared the same way, and
-all three talk only to that server.
+list played alone, [Sequence](SEQUENCE.md), a board of numbers shared the same way, and
+[Jigsaw](JIGSAW.md), a floor read from photos and shared the same way; all four talk only to
+that server.
 
 ## Playing
 
@@ -217,7 +218,7 @@ a future protocol can be served alongside this one.
 
 | Phone sends | Meaning |
 | --- | --- |
-| `browse {game}` | Send me the lobby list, now and on every change: `spellinator` (the default) or [`sequence`](SEQUENCE.md) |
+| `browse {game}` | Send me the lobby list, now and on every change: `spellinator` (the default), [`sequence`](SEQUENCE.md) or [`jigsaw`](JIGSAW.md) |
 | `host {mode}` / `join {lobby}` | Seat me; `host` opens a lobby playing `classic`, `one_and_done`, `tic_tac_toe` or `levels_6_plus` |
 | `resume {lobby, player, token}` | Give me back my seat after a dropped connection |
 | `letters {seq, letters}` | My letters are now these |
@@ -226,6 +227,7 @@ a future protocol can be served alongside this one.
 | `saved {seq, words}` | One and Done 2.0, host only: the round's saved words are now these |
 | `jumble {letters}` | Jumble: which words use exactly these letters? Needs no lobby |
 | `slot`, `count`, `reset` | [Sequence](SEQUENCE.md)'s board |
+| `region`, `reset` | [Jigsaw](JIGSAW.md)'s floor |
 | `leave`, `ping {at}` | |
 
 | Server sends | Meaning |

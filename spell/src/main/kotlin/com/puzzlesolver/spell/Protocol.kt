@@ -121,10 +121,23 @@ sealed interface ClientMessage {
     @SerialName("count")
     data class SetCount(val seq: Long, val at: Int? = null) : ClientMessage
 
-    /** Sequence, from the host only: wipe every number off the board and start the count again. */
+    /**
+     * From the host only: wipe the board. Sequence: every number, and the count starts again.
+     * Jigsaw: every region, for the next round.
+     */
     @Serializable
     @SerialName("reset")
     data class ResetBoard(val seq: Long) : ClientMessage
+
+    /**
+     * Jigsaw: [region] of the board ([JigsawBoard.BOX], [JigsawBoard.LEFT] or
+     * [JigsawBoard.RIGHT]) is now [cells], a grid as [JigsawBoard] encodes it, or has not been
+     * read when null. Anyone in the lobby may set any region; the whole grid, so a resend is
+     * harmless. The photo it was read from stays on the phone that took it.
+     */
+    @Serializable
+    @SerialName("region")
+    data class SetRegion(val seq: Long, val region: Int, val cells: String? = null) : ClientMessage
 
     /** Echoed straight back as [ServerMessage.Pong], to time the round trip and prove the link is alive. */
     @Serializable
@@ -182,6 +195,12 @@ sealed interface ClientMessage {
             else -> null
         }
         is ResetBoard -> if (seq < 0) "bad seq" else null
+        is SetRegion -> when {
+            seq < 0 -> "bad seq"
+            region !in 0 until JigsawBoard.REGIONS -> "bad region"
+            cells != null && !JigsawBoard.isValid(cells) -> "bad grid"
+            else -> null
+        }
     }
 }
 
@@ -239,6 +258,13 @@ sealed interface ServerMessage {
         val slots: List<Int?> = emptyList(),
         /** Sequence: where the count stands, as in [ClientMessage.SetCount]; null before it starts. */
         val counted: Int? = null,
+        /**
+         * Jigsaw: the board, [JigsawBoard.REGIONS] grids as [JigsawBoard] encodes them, or null
+         * where none has been read yet. Empty in every other mode.
+         */
+        val regions: List<String?> = emptyList(),
+        /** Jigsaw: who set each region last, by player number; null beside a region not set. */
+        val regionBy: List<Int?> = emptyList(),
     ) : ServerMessage
 
     /** You have left; you are browsing again. */
@@ -303,10 +329,22 @@ enum class GameMode {
      */
     @SerialName("sequence")
     SEQUENCE,
+
+    /**
+     * Not a word game either: the floor room, read from photos into the shapes inside the
+     * green box and the pieces either side of it. Listed apart. See [JigsawBoard].
+     */
+    @SerialName("jigsaw")
+    JIGSAW,
     ;
 
     /** Whose lobby list a lobby playing this appears in. */
-    val game: Game get() = if (this == SEQUENCE) Game.SEQUENCE else Game.SPELLINATOR
+    val game: Game
+        get() = when (this) {
+            SEQUENCE -> Game.SEQUENCE
+            JIGSAW -> Game.JIGSAW
+            else -> Game.SPELLINATOR
+        }
 }
 
 /**
@@ -320,6 +358,9 @@ enum class Game {
 
     @SerialName("sequence")
     SEQUENCE,
+
+    @SerialName("jigsaw")
+    JIGSAW,
 }
 
 /**
@@ -365,6 +406,48 @@ object SequenceBoard {
         at != null && slots.any { it != null } && slots.none { it != null && it >= at }
 }
 
+/**
+ * The board of a Jigsaw lobby: three photos of the floor, each read on the phone that took
+ * it into a grid of lit cells -- the shapes inside the green box ([BOX]), and the pieces on
+ * either side of it ([LEFT], [RIGHT]). The phones work out which pieces make which shape
+ * from these; the server only keeps them.
+ *
+ * A grid is its rows top to bottom, joined by [ROW_BREAK], every row the same length, each
+ * cell a colour from [COLOURS] or [OFF]: `"WW./.WB"` is two rows of three. The empty string
+ * is a region read and found to hold nothing. Green, the box itself, is never sent.
+ */
+object JigsawBoard {
+    const val BOX = 0
+    const val LEFT = 1
+    const val RIGHT = 2
+    const val REGIONS = 3
+
+    /**
+     * The most rows or columns a grid has. The floor is 16 cells across and each end of it
+     * eight deep; this leaves room for a photo that takes in more, and keeps the largest
+     * message well under the server's frame limit.
+     */
+    const val MAX_SIDE = 24
+
+    /** White, yellow, orange, red, pink, purple, blue. */
+    const val COLOURS = "WYORKPB"
+    const val OFF = '.'
+    const val ROW_BREAK = '/'
+
+    fun isValid(cells: String): Boolean {
+        if (cells.isEmpty()) return true
+        if (cells.length > MAX_SIDE * (MAX_SIDE + 1)) return false
+        val rows = cells.split(ROW_BREAK)
+        if (rows.size > MAX_SIDE) return false
+        val width = rows[0].length
+        if (width == 0 || width > MAX_SIDE) return false
+        return rows.all { row -> row.length == width && row.all { it == OFF || it in COLOURS } }
+    }
+
+    /** The rows of a valid grid, top to bottom; none for an empty one. */
+    fun rows(cells: String): List<String> = if (cells.isEmpty()) emptyList() else cells.split(ROW_BREAK)
+}
+
 /** The rule of a Tic-Tac-Toe lobby. */
 object TicTacToe {
     /** A word must have at least one of these, as a [LetterMask]. */
@@ -408,6 +491,9 @@ object ErrorCode {
     const val RESUME_FAILED = "resume_failed"
     const val NOT_IN_LOBBY = "not_in_lobby"
     const val ALREADY_IN_LOBBY = "already_in_lobby"
-    /** Only a One and Done 2.0 lobby's host saves its words, and only a Sequence lobby's host counts or resets. */
+    /**
+     * Only a One and Done 2.0 lobby's host saves its words, only a Sequence lobby's host counts
+     * or resets, and only a Jigsaw lobby's host resets.
+     */
     const val NOT_HOST = "not_host"
 }

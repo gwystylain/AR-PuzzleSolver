@@ -45,5 +45,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Jigsaw: hands the phone's camera app a file of this app's to save a photo
+             into, under files/jigsaw/, and nothing else. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.jigsaw"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/jigsaw_paths" />
+        </provider>
     </application>
 </manifest>

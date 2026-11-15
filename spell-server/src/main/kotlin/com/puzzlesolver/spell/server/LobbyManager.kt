@@ -4,6 +4,7 @@ import com.puzzlesolver.spell.ClientMessage
 import com.puzzlesolver.spell.ErrorCode
 import com.puzzlesolver.spell.Game
 import com.puzzlesolver.spell.GameMode
+import com.puzzlesolver.spell.JigsawBoard
 import com.puzzlesolver.spell.LetterMask
 import com.puzzlesolver.spell.Lexicon
 import com.puzzlesolver.spell.LobbyCode
@@ -77,6 +78,12 @@ class LobbyManager(
 
         /** Sequence: where the host's count stands; null before it starts. */
         var counted: Int? = null
+
+        /** Jigsaw: the three grids read from photos, null until read; anyone seated sets any. */
+        val regions = arrayOfNulls<String>(JigsawBoard.REGIONS)
+
+        /** Jigsaw: who set each region last. */
+        val regionBy = arrayOfNulls<Int>(JigsawBoard.REGIONS)
         val done: Boolean get() = mode == GameMode.ONE_AND_DONE && saved.size >= Rules.ONE_AND_DONE_WORDS
 
         /** Called whenever a seat is given up, so the lobby is never left without a host. */
@@ -158,16 +165,19 @@ class LobbyManager(
                 is ClientMessage.SetSaved -> save(peer, message)
                 ClientMessage.Solve -> solve(peer)
                 is ClientMessage.SetSlot -> setSlot(peer, message)
-                is ClientMessage.SetCount -> if (sequenceHost(peer, "counts")) {
+                is ClientMessage.SetCount -> if (boardHost(peer, "counts", GameMode.SEQUENCE)) {
                     change(peer, message.seq) { lobby, _ -> lobby.counted = message.at }
                 }
-                is ClientMessage.ResetBoard -> if (sequenceHost(peer, "resets")) {
+                is ClientMessage.ResetBoard -> if (boardHost(peer, "resets", GameMode.SEQUENCE, GameMode.JIGSAW)) {
                     change(peer, message.seq) { lobby, _ ->
                         lobby.slots.fill(null)
                         lobby.counted = null
+                        lobby.regions.fill(null)
+                        lobby.regionBy.fill(null)
                         log.info("lobby {}: board reset", lobby.id)
                     }
                 }
+                is ClientMessage.SetRegion -> setRegion(peer, message)
                 is ClientMessage.Ping, is ClientMessage.Jumble -> Unit
             }
         }
@@ -341,12 +351,25 @@ class LobbyManager(
         change(peer, message.seq) { lobby, _ -> lobby.slots[message.slot] = message.value }
     }
 
-    /** Whether [peer] hosts a Sequence lobby, so may do what only its host [does]; says why not when not. */
-    private fun sequenceHost(peer: Peer, does: String): Boolean {
+    /** Jigsaw: anyone seated sets any region of the board, to a grid or to nothing. */
+    private fun setRegion(peer: Peer, message: ClientMessage.SetRegion) {
+        val seat = seats[peer] ?: return error(peer, ErrorCode.NOT_IN_LOBBY, "join a lobby first")
+        if (seat.lobby.mode != GameMode.JIGSAW) return error(peer, ErrorCode.BAD_REQUEST, "this lobby has no floor")
+        change(peer, message.seq) { lobby, player ->
+            lobby.regions[message.region] = message.cells
+            lobby.regionBy[message.region] = if (message.cells == null) null else player.slot
+        }
+    }
+
+    /**
+     * Whether [peer] hosts a lobby playing one of [modes], so may do what only its host [does];
+     * says why not when not.
+     */
+    private fun boardHost(peer: Peer, does: String, vararg modes: GameMode): Boolean {
         val seat = seats[peer]
         when {
             seat == null -> error(peer, ErrorCode.NOT_IN_LOBBY, "join a lobby first")
-            seat.lobby.mode != GameMode.SEQUENCE -> error(peer, ErrorCode.BAD_REQUEST, "this lobby has no board")
+            seat.lobby.mode !in modes -> error(peer, ErrorCode.BAD_REQUEST, "this lobby has no board")
             seat.player.slot != seat.lobby.host -> error(peer, ErrorCode.NOT_HOST, "only the host $does")
             else -> return true
         }
@@ -409,8 +432,8 @@ class LobbyManager(
     private fun stateOf(lobby: Lobby): String {
         val each = lobby.players.values.map { LetterMask.of(it.letters) }.toIntArray()
         val everyone = each.fold(0) { m, p -> m or p }
-        if (lobby.mode == GameMode.SEQUENCE) {
-            // Numbers, not letters: there are no words to look for.
+        if (lobby.mode == GameMode.SEQUENCE || lobby.mode == GameMode.JIGSAW) {
+            // Numbers or a floor, not letters: there are no words to look for.
         } else if (lobby.mode == GameMode.ONE_AND_DONE) {
             // Worked out only when the host submits: see [solve].
             if (everyone == 0 || lobby.done) lobby.letGo()
@@ -449,6 +472,8 @@ class LobbyManager(
                 solved = lobby.solved,
                 slots = if (lobby.mode == GameMode.SEQUENCE) lobby.slots.toList() else emptyList(),
                 counted = lobby.counted,
+                regions = if (lobby.mode == GameMode.JIGSAW) lobby.regions.toList() else emptyList(),
+                regionBy = if (lobby.mode == GameMode.JIGSAW) lobby.regionBy.toList() else emptyList(),
             ),
         )
     }

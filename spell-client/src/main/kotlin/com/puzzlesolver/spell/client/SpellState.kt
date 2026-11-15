@@ -69,6 +69,14 @@ data class Room(
     val slots: List<Int?> = emptyList(),
     /** Sequence: where the count stands -- that number lit, every lower one shaded; null before it starts. */
     val counted: Int? = null,
+    /**
+     * Jigsaw: the floor, [com.puzzlesolver.spell.JigsawBoard.REGIONS] grids or nulls -- the
+     * box, then the pieces either side -- with this phone's changes shown before the server
+     * has them. Empty in any other lobby.
+     */
+    val regions: List<String?> = emptyList(),
+    /** Jigsaw: who read each region, by player number. */
+    val regionBy: List<Int?> = emptyList(),
 ) {
     /** Every letter anyone in the lobby has, as a [LetterMask]. */
     val everyone: Int get() = players.fold(LetterMask.of(letters)) { m, p -> m or LetterMask.of(p.letters) }

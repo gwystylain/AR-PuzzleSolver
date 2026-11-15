@@ -280,6 +280,7 @@ private val GameMode.title: String
         GameMode.TIC_TAC_TOE -> "Tic-Tac-Toe"
         GameMode.LEVELS_6_PLUS -> "Levels 6+"
         GameMode.SEQUENCE -> "Sequence"
+        GameMode.JIGSAW -> "Jigsaw"
     }
 
 /**
@@ -288,7 +289,7 @@ private val GameMode.title: String
  */
 private val GameMode.level: Int?
     get() = when (this) {
-        GameMode.CLASSIC, GameMode.LEVELS_6_PLUS, GameMode.SEQUENCE -> null
+        GameMode.CLASSIC, GameMode.LEVELS_6_PLUS, GameMode.SEQUENCE, GameMode.JIGSAW -> null
         GameMode.ONE_AND_DONE -> 4
         GameMode.TIC_TAC_TOE -> 2
     }
@@ -306,7 +307,7 @@ private val GameMode.rule: String?
 
 private val GameMode.blurb: String
     get() = when (this) {
-        GameMode.CLASSIC, GameMode.SEQUENCE -> ""
+        GameMode.CLASSIC, GameMode.SEQUENCE, GameMode.JIGSAW -> ""
         GameMode.ONE_AND_DONE -> "Three words, no letter used twice. The host submits each wave's letters and saves the word."
         GameMode.TIC_TAC_TOE -> "Only words with an O or an X in them."
         GameMode.LEVELS_6_PLUS -> "No word uses a letter twice."

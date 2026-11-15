@@ -2,6 +2,7 @@ package com.puzzlesolver.spell.server
 
 import com.puzzlesolver.spell.Game
 import com.puzzlesolver.spell.GameMode
+import com.puzzlesolver.spell.JigsawBoard
 import com.puzzlesolver.spell.SequenceBoard
 import com.puzzlesolver.spell.LetterMask
 import com.puzzlesolver.spell.Lexicon
@@ -87,9 +88,9 @@ class EndToEndTest {
     // Both wait for the lobby's state as well as the seat. The seat comes first, and until
     // the state follows a phone sees only itself in the lobby -- which a test then asking
     // "is the other player gone?" would take for yes.
-    private fun SpellSession.hostLobby(): String {
+    private fun SpellSession.hostLobby(mode: GameMode = GameMode.CLASSIC): String {
         await("connected") { it.link is Link.Online }
-        host()
+        host(mode)
         return await("seated") { it.room?.seated == true && it.room!!.current }.room!!.lobby
     }
 
@@ -246,6 +247,58 @@ class EndToEndTest {
         // Shown on the phone that typed it at once, link or no link.
         assertEquals(77, b.await("shown here") { it.room?.slots?.get(5) == 77 }.room!!.slots[5])
         a.await("arrived elsewhere", timeoutMillis = 10_000) { it.room?.slots?.get(5) == 77 }
+    }
+
+    @Test
+    fun `jigsaw through the phones - anyone reads a region, everyone sees it, the host wipes it`() {
+        val s = server()
+        val board = session(s.port, game = Game.SEQUENCE)
+        val a = session(s.port, game = Game.JIGSAW)
+        val b = session(s.port, game = Game.JIGSAW)
+        a.await("connected") { it.link is Link.Online }
+        a.host(GameMode.JIGSAW)
+        val id = a.await("hosting") { it.room?.seated == true && it.room!!.current }.room!!.lobby
+        b.joinLobby(id)
+        assertEquals(List(JigsawBoard.REGIONS) { null }, b.state.value.room!!.regions)
+        // Not listed to Sequence's phones.
+        board.await("connected") { it.link is Link.Online }
+        val sequenceLobby = session(s.port, game = Game.SEQUENCE).hostLobby(GameMode.SEQUENCE)
+        board.await("the board listed") { st -> st.lobbies.any { it.id == sequenceLobby } }
+        assertTrue(board.state.value.lobbies.none { it.id == id })
+
+        b.setRegion(JigsawBoard.BOX, "BB./.BB")
+        a.setRegion(JigsawBoard.LEFT, "BB")
+        b.setRegion(JigsawBoard.RIGHT, "")
+        for (p in listOf(a, b)) {
+            p.await("the floor") { st ->
+                st.room?.let { it.current && it.regions == listOf("BB./.BB", "BB", "") } == true
+            }
+        }
+        assertEquals(listOf(2, 1, 2), a.state.value.room!!.regionBy)
+
+        b.resetBoard() // not the host: the phone does not even ask
+        a.resetBoard()
+        for (p in listOf(a, b)) {
+            p.await("wiped") { st -> st.room?.let { r -> r.current && r.regions.all { it == null } } == true }
+        }
+    }
+
+    @Test
+    fun `a region read while the link is down goes through once it is back`() {
+        val s = server()
+        val proxy = proxy(s)
+        val a = session(s.port, game = Game.JIGSAW)
+        val b = session(proxy.port, game = Game.JIGSAW)
+        a.await("connected") { it.link is Link.Online }
+        a.host(GameMode.JIGSAW)
+        val id = a.await("hosting") { it.room?.seated == true && it.room!!.current }.room!!.lobby
+        b.joinLobby(id)
+
+        proxy.freeze()
+        b.setRegion(JigsawBoard.RIGHT, "YYY/Y..")
+        // Shown on the phone that read it at once, link or no link.
+        b.await("shown here") { it.room?.regions?.get(JigsawBoard.RIGHT) == "YYY/Y.." }
+        a.await("arrived elsewhere", timeoutMillis = 10_000) { it.room?.regions?.get(JigsawBoard.RIGHT) == "YYY/Y.." }
     }
 
     @Test

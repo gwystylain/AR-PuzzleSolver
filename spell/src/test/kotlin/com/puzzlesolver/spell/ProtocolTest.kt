@@ -34,8 +34,50 @@ class ProtocolTest {
             ClientMessage.SetCount(11, 7),
             ClientMessage.SetCount(12, null),
             ClientMessage.ResetBoard(13),
+            ClientMessage.Browse(Game.JIGSAW),
+            ClientMessage.Host(GameMode.JIGSAW),
+            ClientMessage.SetRegion(14, JigsawBoard.BOX, "WW./.WB"),
+            ClientMessage.SetRegion(15, JigsawBoard.RIGHT, ""),
+            ClientMessage.SetRegion(16, JigsawBoard.LEFT, null),
         )
         for (m in messages) assertEquals(m, Protocol.decodeClient(Protocol.encode(m)))
+    }
+
+    @Test
+    fun `a jigsaw region is rows of one length, of the room's colours, within the limit`() {
+        val good = listOf(
+            "", "W", "WW./.WB", "WYORKPB", ".......",
+            List(JigsawBoard.MAX_SIDE) { "B".repeat(JigsawBoard.MAX_SIDE) }.joinToString("/"),
+        )
+        for (g in good) {
+            assertTrue(JigsawBoard.isValid(g), g)
+            assertNull(ClientMessage.SetRegion(1, JigsawBoard.BOX, g).problem(), g)
+        }
+        val bad = listOf(
+            "WW/W", // ragged
+            "/", "W/", "//", // an empty row
+            "G", // green is the box, never a piece
+            "w", "X", "W W",
+            "B".repeat(JigsawBoard.MAX_SIDE + 1),
+            List(JigsawBoard.MAX_SIDE + 1) { "B" }.joinToString("/"),
+        )
+        for (g in bad) {
+            assertTrue(!JigsawBoard.isValid(g), g)
+            assertNotNull(ClientMessage.SetRegion(1, JigsawBoard.BOX, g).problem(), g)
+        }
+        assertNull(ClientMessage.SetRegion(1, JigsawBoard.RIGHT, null).problem())
+        assertNotNull(ClientMessage.SetRegion(1, JigsawBoard.REGIONS, "W").problem())
+        assertNotNull(ClientMessage.SetRegion(1, -1, "W").problem())
+        assertNotNull(ClientMessage.SetRegion(-1, 0, "W").problem())
+        assertEquals(listOf("WW.", ".WB"), JigsawBoard.rows("WW./.WB"))
+        assertEquals(emptyList(), JigsawBoard.rows(""))
+    }
+
+    @Test
+    fun `the largest jigsaw region fits in a frame the server reads`() {
+        val full = List(JigsawBoard.MAX_SIDE) { "W".repeat(JigsawBoard.MAX_SIDE) }.joinToString("/")
+        val text = Protocol.encode(ClientMessage.SetRegion(Long.MAX_VALUE, JigsawBoard.RIGHT, full))
+        assertTrue(text.toByteArray().size <= Rules.MAX_FRAME_BYTES, "${text.length} bytes")
     }
 
     @Test
@@ -56,6 +98,11 @@ class ProtocolTest {
                 "GHJK", 4, 5, listOf(PlayerState(1, "", true, 6)), emptyList(), 0,
                 mode = GameMode.SEQUENCE, host = 1,
                 slots = List(SequenceBoard.SLOTS) { if (it % 5 == 0) it * 4 else null }, counted = 20,
+            ),
+            ServerMessage.State(
+                "HJKL", 6, 5, listOf(PlayerState(1, "", true, 2), PlayerState(3, "", true, 1)), emptyList(), 0,
+                mode = GameMode.JIGSAW, host = 1,
+                regions = listOf("WW./.WB", null, ""), regionBy = listOf(3, null, 1),
             ),
             ServerMessage.Left,
             ServerMessage.Error(ErrorCode.LOBBY_FULL, "full"),
@@ -78,7 +125,10 @@ class ProtocolTest {
         assertEquals(ClientMessage.Browse(Game.SPELLINATOR), Protocol.decodeClient("""{"t":"browse"}"""))
         assertEquals(ClientMessage.Browse(Game.SEQUENCE), Protocol.decodeClient("""{"t":"browse","game":"sequence"}"""))
         assertEquals(Game.SEQUENCE, GameMode.SEQUENCE.game)
-        assertTrue(GameMode.entries.filter { it != GameMode.SEQUENCE }.all { it.game == Game.SPELLINATOR })
+        assertEquals(Game.JIGSAW, GameMode.JIGSAW.game)
+        assertTrue(
+            GameMode.entries.filter { it != GameMode.SEQUENCE && it != GameMode.JIGSAW }.all { it.game == Game.SPELLINATOR },
+        )
     }
 
     @Test

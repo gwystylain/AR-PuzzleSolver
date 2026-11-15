@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The one folder Jigsaw lets the camera app write a photo into: files/jigsaw/ in the
+     app's external files, where every photo is kept for replaying a round. -->
+<paths>
+    <external-files-path name="jigsaw" path="jigsaw/" />
+</paths>

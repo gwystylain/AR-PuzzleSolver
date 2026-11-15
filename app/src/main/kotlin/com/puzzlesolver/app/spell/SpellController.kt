@@ -65,6 +65,11 @@ class SpellController(context: Context) {
     private val _sequence = MutableStateFlow(SpellState())
     val sequence: StateFlow<SpellState> = _sequence.asStateFlow()
 
+    /** Jigsaw: the floor room. Its own session and seat on the same server, as Sequence has. */
+    private val jigsawPrefs: SharedPreferences = app.getSharedPreferences("jigsaw", Context.MODE_PRIVATE)
+    private val _jigsaw = MutableStateFlow(SpellState())
+    val jigsaw: StateFlow<SpellState> = _jigsaw.asStateFlow()
+
     /** The server in use: the one set in the app, else the one built in, else none. */
     private val _server = MutableStateFlow(prefs.getString(KEY_SERVER, null) ?: builtIn())
     val server: StateFlow<String?> = _server.asStateFlow()
@@ -98,8 +103,12 @@ class SpellController(context: Context) {
     private var sequenceMirror: Job? = null
     private var sequenceOpen = false
 
-    /** The network is watched while any of the three rooms is open. */
-    private val anyOpen: Boolean get() = open || jumbleOpen || sequenceOpen
+    private var jigsawSession: SpellSession? = null
+    private var jigsawMirror: Job? = null
+    private var jigsawOpen = false
+
+    /** The network is watched while any of the rooms is open. */
+    private val anyOpen: Boolean get() = open || jumbleOpen || sequenceOpen || jigsawOpen
 
     fun open() {
         if (open) return
@@ -143,13 +152,29 @@ class SpellController(context: Context) {
         watchNetwork(anyOpen)
     }
 
+    fun openJigsaw() {
+        if (jigsawOpen) return
+        jigsawOpen = true
+        jigsawFor(_server.value)?.start()
+        watchNetwork(true)
+    }
+
+    fun closeJigsaw() {
+        if (!jigsawOpen) return
+        jigsawOpen = false
+        jigsawSession?.stop()
+        watchNetwork(anyOpen)
+    }
+
     fun release() {
         close()
         closeJumble()
         closeSequence()
+        closeJigsaw()
         session?.close()
         jumbleSession?.close()
         sequenceSession?.close()
+        jigsawSession?.close()
         scope.cancel()
     }
 
@@ -192,6 +217,12 @@ class SpellController(context: Context) {
             _sequence.value = SpellState()
             val nextSequence = sequenceFor(base)
             if (sequenceOpen) nextSequence?.start()
+            jigsawSession?.close()
+            jigsawSession = null
+            jigsawMirror?.cancel()
+            _jigsaw.value = SpellState()
+            val nextJigsaw = jigsawFor(base)
+            if (jigsawOpen) nextJigsaw?.start()
         }
         return null
     }
@@ -217,6 +248,13 @@ class SpellController(context: Context) {
     fun countBack() = sequenceSession?.countBack()
     fun resetBoard() = sequenceSession?.resetBoard()
     fun dismissSequenceNotice(id: Long) = sequenceSession?.dismissNotice(id)
+
+    fun hostJigsaw() = jigsawSession?.host(GameMode.JIGSAW)
+    fun joinJigsaw(lobby: String) = jigsawSession?.join(lobby)
+    fun leaveJigsaw() = jigsawSession?.leave()
+    fun setRegion(region: Int, cells: String?) = jigsawSession?.setRegion(region, cells)
+    fun resetJigsaw() = jigsawSession?.resetBoard()
+    fun dismissJigsawNotice(id: Long) = jigsawSession?.dismissNotice(id)
 
     fun typeJumble(letter: Char) = jumbleSession?.type(letter)
     fun backspaceJumble() = jumbleSession?.backspace()
@@ -250,6 +288,22 @@ class SpellController(context: Context) {
         return created
     }
 
+    private fun jigsawFor(base: String?): SpellSession? {
+        if (base == null) return null
+        jigsawSession?.let { if (it.server == base) return it }
+        val created = SpellSession(
+            base,
+            http,
+            PrefsStore(jigsawPrefs),
+            log = { Log.i(JIGSAW_TAG, it) },
+            game = Game.JIGSAW,
+        )
+        jigsawSession = created
+        jigsawMirror?.cancel()
+        jigsawMirror = scope.launch { created.state.collect { _jigsaw.value = it } }
+        return created
+    }
+
     private fun jumbleFor(base: String?): JumbleSession? {
         if (base == null) return null
         jumbleSession?.let { if (it.server == base) return it }
@@ -277,6 +331,7 @@ class SpellController(context: Context) {
                 session?.reconnectNow()
                 jumbleSession?.reconnectNow()
                 sequenceSession?.reconnectNow()
+                jigsawSession?.reconnectNow()
             }
         }
 
@@ -287,6 +342,7 @@ class SpellController(context: Context) {
             session?.networkLost()
             jumbleSession?.networkLost()
             sequenceSession?.networkLost()
+            jigsawSession?.networkLost()
         }
     }
 
@@ -346,6 +402,7 @@ class SpellController(context: Context) {
     private companion object {
         const val TAG = "Spellinator"
         const val SEQUENCE_TAG = "Sequence"
+        const val JIGSAW_TAG = "Jigsaw"
         const val KEY_SERVER = "server"
         const val KEY_VARIANT = "mode.variant"
         /** Before Tic-Tac-Toe, when One and Done was the only variant; read once and dropped. */

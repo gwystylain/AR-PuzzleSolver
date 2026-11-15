@@ -6,7 +6,7 @@ the instant the solution becomes determined, which for some puzzle types is well
 before you have finished scanning.
 
 Native Kotlin + ARCore. Every solver is fully local: no network calls, no cloud anchors,
-no model downloads. The three online modes, Spellinator, Jumble and Sequence, talk only to a lobby server you run
+no model downloads. The four online modes, Spellinator, Jumble, Sequence and Jigsaw, talk only to a lobby server you run
 yourself. Optimised for throughput; power consumption is deliberately not a
 consideration.
 
@@ -29,9 +29,9 @@ AR][arcore] installed — an x86 emulator will not run it, since ARCore ships ar
 ABIs only. Because the APK does not come from the Play Store, Android will ask
 you to allow installing unknown apps for whichever app opened the file.
 
-Nothing leaves the device except in Spellinator, Jumble and Sequence, which connect to your own lobby server
+Nothing leaves the device except in Spellinator, Jumble, Sequence and Jigsaw, which connect to your own lobby server
 and nothing else (see [docs/SPELLINATOR.md](docs/SPELLINATOR.md)). The camera permission is
-the only one that prompts; network access, for those three, is granted at install.
+the only one that prompts; network access, for those four, is granted at install.
 
 Building it yourself, or cutting a new release, is covered in
 [docs/RELEASING.md](docs/RELEASING.md).
@@ -129,6 +129,15 @@ a row of seven slots for each wall -- north (the door), east, south, west. Anyon
 and types the one- or two-digit number they can see on a phone keypad, and the host taps
 **Count** to light the numbers one at a time, lowest first, shading each one passed, on
 every phone at once. See [docs/SEQUENCE.md](docs/SEQUENCE.md).
+
+**Jigsaw** is the floor room, on the same server with its lobbies listed apart: a green box
+on the floor holds coloured shapes, and pieces in the same colours lie at both ends of the
+room. Three photos -- the box and each end, taken by anyone with the phone's own camera app
+-- are each read on the phone that took them into a grid of lit cells, checked and touched
+up over the photo, and shared; every phone then shows which pieces make each shape,
+numbered on the box and on the ends alike. Pieces turn but never mirror, and green is only
+ever the box. The photo stays on the phone; only the grid is sent. See
+[docs/JIGSAW.md](docs/JIGSAW.md).
 
 Gems, Terminal and Spot do **not** use the AR pipeline. All three own the camera directly
 and read each frame in image space with no pose, wall fit or canvas. Gems does because

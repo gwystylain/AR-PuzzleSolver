@@ -97,6 +97,7 @@ fun LandingScreen(
     onSelectSpell: () -> Unit,
     onSelectJumble: () -> Unit,
     onSelectSequence: () -> Unit,
+    onSelectJigsaw: () -> Unit,
     onSelectSimon: () -> Unit,
     onSelectSpot: () -> Unit,
     /** Whether the HUD shows the debug panel, switched at the foot of the page. */
@@ -130,6 +131,8 @@ fun LandingScreen(
                 onSelectJumble()
             } + Entry(SEQUENCE_ID, "Sequence", camera = false, LOOKS.getValue(SEQUENCE_ID), "online -- phones join one lobby") {
                 onSelectSequence()
+            } + Entry(JIGSAW_ID, "Jigsaw", camera = false, LOOKS.getValue(JIGSAW_ID), "online -- photos taken with the camera app") {
+                onSelectJigsaw()
             } + Entry(SIMON_ID, "Simon Says", camera = false, LOOKS.getValue(SIMON_ID), null) {
                 onSelectSimon()
             }
@@ -247,6 +250,7 @@ private val LOOKS: Map<String, Look> = mapOf(
     SPELLINATOR_ID to Look(SPELL_ACCENT, "One word from everyone's letters, in their colours", 2400) { p, c -> spellGlyph(p, c) },
     JUMBLE_ID to Look(JUMBLE_ACCENT, "Every word that uses all your letters", 2600) { p, c -> jumbleGlyph(p, c) },
     SEQUENCE_ID to Look(SEQUENCE_ACCENT, "Every wall's numbers on one board, counted lowest first", 3200) { p, c -> sequenceGlyph(p, c) },
+    JIGSAW_ID to Look(JIGSAW_ACCENT, "Three photos of the floor, the pieces that make each shape", 3000) { p, c -> jigsawGlyph(p, c) },
     SIMON_ID to Look(SIMON_ACCENT, "Tap the colours as they flash, read the order back", 2500) { p, c -> simonGlyph(p, c) },
     SpotFinder.ID to Look(Color(0xFFFF3DCB), "Seven photos of the screen, every difference boxed", 2600) { p, c -> spotGlyph(p, c) },
 )
@@ -682,6 +686,46 @@ private fun DrawScope.spotGlyph(phase: Float, accent: Color) {
  * Five colour pads, lit one after another in a little sequence, each press dropping a
  * tile into the log strip underneath.
  */
+/**
+ * A green frame round an L of four, and its piece -- the same L, lying on its side outside
+ * -- turning a quarter and sliding in: the whole of what the room asks.
+ */
+private fun DrawScope.jigsawGlyph(phase: Float, accent: Color) {
+    val s = size.minDimension
+    val cell = s / 7f
+    val gap = cell * 0.14f
+    val tile = cell - gap
+    val frame = Offset(cell * 0.5f, cell * 1.5f)
+    // The frame: a ring of cells, five across and four down.
+    for (c in 0 until 5) for (r in 0 until 4) {
+        if (c in 1..3 && r in 1..2) continue
+        drawRoundRect(accent.copy(alpha = 0.55f), frame + Offset(c * cell, r * cell), Size(tile, tile), CornerRadius(tile * 0.2f))
+    }
+    val piece = Color(0xFF3D8BFF)
+    // The shape it fills, inside, faint until the piece arrives.
+    val shape = listOf(1 to 1, 2 to 1, 3 to 1, 1 to 2)
+    // Out, a beat to turn, a beat to slide, a beat to rest in place.
+    val t = (phase * 3f).coerceAtMost(2.999f)
+    val turn = (t - 0.5f).coerceIn(0f, 1f)
+    val slide = (t - 1.4f).coerceIn(0f, 1f)
+    val home = frame + Offset(cell * 2f, cell * 1.5f)
+    val start = Offset(cell * 6.3f, cell * 1.0f)
+    for ((c, r) in shape) {
+        drawRoundRect(piece.copy(alpha = 0.18f), frame + Offset(c * cell, r * cell), Size(tile, tile), CornerRadius(tile * 0.2f))
+    }
+    val centre = start + (home - start) * slide
+    val angle = (-90f + 90f * turn) * (Math.PI / 180f).toFloat()
+    val cos = kotlin.math.cos(angle)
+    val sin = kotlin.math.sin(angle)
+    for ((c, r) in shape) {
+        // About the shape's middle, (2, 1.5) in its own cells.
+        val dx = (c - 2f) * cell
+        val dy = (r - 1.5f) * cell
+        val at = centre + Offset(dx * cos - dy * sin, dx * sin + dy * cos) - Offset(tile / 2f, tile / 2f)
+        drawRoundRect(piece, at, Size(tile, tile), CornerRadius(tile * 0.2f))
+    }
+}
+
 private fun DrawScope.simonGlyph(phase: Float, @Suppress("UNUSED_PARAMETER") accent: Color) {
     val s = size.minDimension
     val colours = SimonColour.entries
