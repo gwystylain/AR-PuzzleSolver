@@ -308,7 +308,8 @@ private fun ResultCard(index: Int, shown: SpotController.Shown, onClick: () -> U
                 when {
                     shown.image == null -> "screen not found"
                     shown.note != null -> "left out: ${shown.note}"
-                    shown.differences.isEmpty() -> "no difference -- the original picture"
+                    shown.differences.isEmpty() -> "no difference found"
+                    shown.differences[0].faint -> "faint -- check it by eye"
                     shown.differences.size == 1 -> "1 difference"
                     else -> "${shown.differences.size} possible differences"
                 },

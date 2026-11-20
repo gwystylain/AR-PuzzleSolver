@@ -41,11 +41,16 @@ import java.util.Locale
  * [take] asks the camera for its next frame; the pipeline answers on its own thread, and
  * everything heavier than a hand-off runs on one worker thread of its own, so the
  * [ScreenLocator] -- which reuses its buffers -- is only ever used from one thread.
+ *
+ * [hold] keeps the camera's exposure where it is from the round's first photo until
+ * Reset, so every photo of a round is taken at the same exposure. See
+ * `ScanPipeline.spotExposureHeld` for what happened when it was not.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SpotController(
     context: Context,
     private val take: ((RgbImage?) -> Unit) -> Unit,
+    private val hold: (Boolean) -> Unit = {},
 ) {
     enum class Phase { TAKING, FINDING, DONE }
 
@@ -150,6 +155,7 @@ class SpotController(
         photos.add(frame)
         screens.add(screen)
         val number = photos.size
+        if (number == 1) hold(true)
         save(frame, number)
         Log.i(TAG, "photo $number of ${SpotFinder.PHOTOS} kept")
         _state.update { it.copy(busy = false, thumbnails = it.thumbnails + checked.thumbnail) }
@@ -187,6 +193,7 @@ class SpotController(
         photos.clear()
         screens.clear()
         round = null
+        hold(false)
         _state.value = State()
         Log.i(TAG, "reset")
     }
@@ -227,6 +234,9 @@ class SpotController(
                                 p.screen == null -> "screen not found"
                                 p.note != null -> "left out: ${p.note}"
                                 p.differences.isEmpty() -> "no difference"
+                                p.differences[0].faint -> p.differences.joinToString { d ->
+                                    "[%.3f,%.3f - %.3f,%.3f] %.0f".format(Locale.US, d.left, d.top, d.right, d.bottom, d.score)
+                                } + " faint"
                                 else -> p.differences.joinToString { d ->
                                     "[%.3f,%.3f - %.3f,%.3f] %.0f".format(Locale.US, d.left, d.top, d.right, d.bottom, d.score)
                                 }

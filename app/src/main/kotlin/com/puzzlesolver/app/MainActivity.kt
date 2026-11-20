@@ -546,7 +546,11 @@ class MainActivity : ComponentActivity() {
         Log.i(TAG, "canvas: ${"%.4f".format(spec.metresPerTexel)} m/texel, " +
             "${"%.2f".format(spec.widthMetres)}m wide")
         pipeline = ScanPipeline(spec = spec, displayRotationProvider = ::currentDisplayRotation)
-        spot = SpotController(this) { pipeline.takeSpotPhoto(it) }
+        spot = SpotController(
+            this,
+            take = { pipeline.takeSpotPhoto(it) },
+            hold = { pipeline.spotExposureHeld = it },
+        )
         jigsaw = JigsawController(this)
         mines = MinesController(this) { pipeline.tuning() }
         pipeline.minesFrames = mines::onFrame

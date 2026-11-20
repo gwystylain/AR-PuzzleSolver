@@ -206,11 +206,34 @@ class ScanPipeline(
     @Volatile
     private var liveSpotReading: String = "-"
 
+    /** A Spot photo asked for and not yet taken, and when it was asked for. */
+    private class SpotShot(val deliver: (RgbImage?) -> Unit, val askedAtMillis: Long)
+
     /**
      * A photo asked for and not yet taken. The solver thread hands the next frame it reads
-     * to this, turned upright, and clears it.
+     * to this, turned upright, and clears it -- unless an exposure change is still on its
+     * way to the sensor, when it waits for it, up to [SPOT_SETTLE_MILLIS].
      */
-    private val spotShot = AtomicReference<((RgbImage?) -> Unit)?>(null)
+    private val spotShot = AtomicReference<SpotShot?>(null)
+
+    /**
+     * Set while a Spot round is under way, from its first photo to Reset: the camera is left
+     * exactly where it is.
+     *
+     * On 2026-11-19 the meter moved the exposure two to six times a round, by half a stop to
+     * a stop, chasing each new picture's brightness. Every photo of a round is the same
+     * scene, and one taken a stop off the others carries that stop as a difference over the
+     * whole screen -- clipped sky in one, darker shadows in another -- that no evening-out
+     * afterwards can take back where the camera clipped. Those were the photos whose own
+     * difference went unfound. Neither the meter nor the blind watch moves anything while
+     * this is set.
+     */
+    @Volatile
+    var spotExposureHeld: Boolean = false
+        set(value) {
+            if (field != value) Log.i(TAG, if (value) "spot: exposure held for the round" else "spot: exposure free")
+            field = value
+        }
 
     /**
      * Where Mines' frames go: upright, half size, and whether each is a lattice frame.
@@ -1694,16 +1717,25 @@ class ScanPipeline(
             liveSpotFailure = spotLocator.lastFailure
             liveMeanLuma = meanLuma(view.luma)
             // Inside the borrow: the buffer is the camera's again the moment it is released.
-            spotShot.getAndSet(null)?.let { deliver ->
-                val turns = (((source.geometry?.rotationDegrees ?: 0) % 360) + 360) % 360 / 90
-                deliver(RgbImage.fromCanvasView(view, turns))
+            // Not while an exposure change is still reaching the sensor, though: on
+            // 2026-11-19 a round's first photo was taken in the half second between the meter
+            // asking for 1/250 s and the camera leaving its own 1/70 s, and came back a stop
+            // and a half over with the sea blown to white.
+            spotShot.get()?.let { shot ->
+                val settling = spotExposure.phase == TerminalExposure.Phase.APPLYING &&
+                    System.currentTimeMillis() - shot.askedAtMillis < SPOT_SETTLE_MILLIS
+                if (!settling && spotShot.compareAndSet(shot, null)) {
+                    val turns = (((source.geometry?.rotationDegrees ?: 0) % 360) + 360) % 360 / 90
+                    shot.deliver(RgbImage.fromCanvasView(view, turns))
+                }
             }
             liveScanMillis = (System.nanoTime() - started) / 1e6f
             val reading = screen?.let { spotMeter.measure(view.luma, it) }
             liveSpotReading = reading?.describe() ?: "no screen metered"
+            // Held for the length of a round; see [spotExposureHeld].
+            if (spotExposureHeld) return
             // After the photo, so a change this reading asks for applies to the next one
-            // rather than racing it. The comparison evens out exposure between photos, so
-            // a change mid-round costs nothing there.
+            // rather than racing it.
             spotExposure.consider(source.tuning, reading)
             if (spotCameraWatch.consider(source.tuning, screen != null)) {
                 spotExposure.reset()
@@ -2175,8 +2207,9 @@ class ScanPipeline(
         liveTerminalResult = TerminalScanner.Result.EMPTY
         liveSpotScreen = null
         gemLoadArmed = false
-        // A photo still waiting belongs to the mode being left.
-        spotShot.getAndSet(null)?.invoke(null)
+        // A photo still waiting belongs to the mode being left, and so does a held exposure.
+        spotShot.getAndSet(null)?.deliver?.invoke(null)
+        spotExposureHeld = false
         // Posted rather than called here: the scanner belongs to the solver thread, and
         // resetting it from under a scan in progress is exactly the kind of race that
         // shows up once a week and never in a test.
@@ -2203,7 +2236,7 @@ class ScanPipeline(
      * before the first is served replaces it, and the first is told null.
      */
     fun takeSpotPhoto(deliver: (RgbImage?) -> Unit) {
-        spotShot.getAndSet(deliver)?.invoke(null)
+        spotShot.getAndSet(SpotShot(deliver, System.currentTimeMillis()))?.deliver?.invoke(null)
     }
 
     /** The live camera's dials, or null when the current source has no camera. */
@@ -2473,6 +2506,13 @@ class ScanPipeline(
 
         /** Live gem scans at ~10 Hz on a 30 fps stream. Walls do not move that fast. */
         const val LIVE_SCAN_EVERY_N_FRAMES = 3L
+
+        /**
+         * Longest a Spot photo waits for an exposure change to reach the sensor. A change
+         * lands in a few hundred milliseconds; past this the photo is taken anyway, since
+         * the picture may be gone by the time the camera is.
+         */
+        const val SPOT_SETTLE_MILLIS = 1_500L
 
         /** Mines reads every other pixel each way: 960x540 off a 1080p camera. */
         const val MINES_FRAME_STEP = 2

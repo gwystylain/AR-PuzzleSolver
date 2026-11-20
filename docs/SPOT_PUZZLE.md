@@ -17,10 +17,15 @@ it is taken. One without the whole screen in it is not kept, and nor is one of t
 green screen the room shows between pictures; either way a note says so while the picture
 is still up and can be retaken. The seven slots at the bottom fill in as photos are kept.
 
+From the first photo kept until Reset, the camera's exposure is held where it is, so every
+photo of a round is taken at the same exposure; and a photo asked for while an exposure
+change is still reaching the sensor waits for it, up to a second and a half.
+
 After the seventh the photos are compared, which takes a second or two, and the answer
 replaces the camera: every photo, straightened, with a magenta box round what differs.
-Tap one to see it at full width. A photo with no box is the original picture, if the room
-showed it, though no round so far has had one. A photo left out of the comparison says
+Tap one to see it at full width. Every picture the room shows has exactly one difference,
+so every photo gets exactly one box -- the strongest thing the comparison found. A weak
+one says "faint -- check it by eye" on its card. A photo left out of the comparison says
 why on its card: no picture on the screen, or it could not be lined up with the others.
 
 Every round is kept on the phone under `files/spot/<date-time>/`: the photos as taken,
@@ -94,13 +99,27 @@ would come up as a difference. In order (`core/.../puzzle/spot/`):
    from a castle, and the photo was taken for the unchanged original in every round that
    had it. A margin of 2% inside the screen's outline is left out, which is where the
    bezel's parallax shows.
-6. **Box** what is left. The threshold is the photo's own median plus ten median absolute
-   deviations, and never below 80 of a possible 765. Pieces within a few pixels of each
-   other are merged, so a crescent and its star make one difference. A blob lying mostly
-   within 10 pixels of the compared area's edge is dropped: it is the bezel, seen from a
-   different place in that photo. Real differences near the edge have at most two fifths
-   of themselves there, and the strips three quarters or more. The strongest of what
-   remains is kept, plus any others at least a quarter as strong, up to three.
+6. **Measure how far each photo stands out from the others,** not just from the median:
+   its difference less the median of everyone else's difference at the same pixel. A
+   difference is in one photo only; what several photos differ at -- edges alignment left
+   a pixel out, glare, a stretch of sky the camera clips -- is not, and this takes it away.
+   It matters most for a photo taken at another exposure: on 2026-11-19 one came back with
+   three boxes in a clipped sky and none on the sailboat added to the shelf, which measured
+   this way is its strongest thing.
+7. **Box the one difference.** The threshold is the photo's own median plus ten median
+   absolute deviations, never below 40. Pieces within a few pixels of each other are
+   merged, so a crescent and its star make one. Two kinds of blob are not candidates:
+   - A strip along the edge of the compared area -- mostly within 10 pixels of it, and
+     either 8 pixels thick or less or three times as long as it is thick -- is the bezel
+     seen from a different place in that photo. Only strips: the rule used to drop anything
+     mostly near the edge, and so lost a moon at the top of the screen and a candle at the
+     side.
+   - Anything over 6% of the screen is the whole photo lit differently, not a thing in it.
+
+   The strongest candidate is the box. If nothing clears the threshold it is halved, twice,
+   and whatever is found then is marked faint, as is anything scoring under 2,500. There is
+   always a box: every picture has a difference, and the old rule of reporting "no
+   difference" below a score floor turned five real ones into nothing on 2026-11-19.
 
 The camera is metered on the screen alone (`ScreenMeter`), feeding the same loop that
 meters the terminal wall. The problem is the same: the phone's own metering opens up for
@@ -109,9 +128,17 @@ comparison rather than a digit. A white cloud appearing on a pale sky differs by
 levels before clipping and by none after, and one sample set has exactly that cloud. The
 target is the sample photos' own exposure: screen 98th percentile 230, median 152.
 
+Within a round the meter is stood down. On 2026-11-19 it moved the exposure two to six
+times a round, by half a stop to a stop, chasing each new picture's brightness; a photo a
+stop off the rest carries that stop as a difference across the whole screen, clipped
+where no evening-out can reach, and those were the photos whose own difference went
+unfound. One round's first photo was taken in the half second between the meter asking
+for 1/250 s and the camera leaving its own 1/70 s, and came back with the sea blown to
+white: hence the wait for a change to land before a photo is taken.
+
 ## Tested against
 
-Five rounds, hand-held, each framed a little differently, in
+Eight rounds, hand-held, each framed a little differently, in
 `core/src/test/resources/spot/`.
 
 - **Set 1**, seven photos of a harbour: a moon added, a cloud taken away, a row of windows
@@ -129,20 +156,24 @@ Five rounds, hand-held, each framed a little differently, in
   reference.
 - **Set 5**, a minute later: a desert town, with two outlines round the neon and one photo
   from twice as far off, in the answer phase.
+- **Sets 6 to 8**, three of the five seven-photo rounds taken in the room on 2026-11-19: a
+  coast with a moon at the top edge and a first photo a stop and a half over, and two
+  rounds of a studio full of small differences -- a candle, a mark on the floor, a thin
+  cloud -- with photos taken at different exposures.
 
-Sets 1 and 2 were taken on the phone's camera app and are 720x960 here; Sets 3 to 5 are the
+Sets 1 and 2 were taken on the phone's camera app and are 720x960 here; Sets 3 to 8 are the
 app's own 1080x1920, at 720x1280. Sets 4 and 5 were taken when the app still took six.
-`SpotFinderTest` runs all five, plus the two six-photo subsets of the first set: without
+`SpotFinderTest` runs all eight, plus the two six-photo subsets of the first set: without
 the windows, and without the far photo. Every photo with a picture comes back with exactly
-one box, containing the place it was checked by eye to be, and the blank screen is left
-out and says so. A whole round takes about a second on a desktop JVM. The weakest real
-difference, the missing windows in Set 1, scores 2,300 against a floor of 1,000; in the
-app's own photos it scores 9,000 to 10,000. The strongest stray that is neither on the
-edge nor beside a real difference scores about 700.
+one box, containing the place it was checked by eye to be where it could be told, and the
+blank screen is left out and says so. A whole round takes about two seconds on a desktop
+JVM.
 
-Run on the phone in the room on 2026-10-31. Both rounds that day came out wrong on the
-phone -- the blank screen and the neon outline as the reference -- and both come out right
-now, replayed.
+Of the 35 photos taken on 2026-11-19, 26 could be told by eye; the phone found 19 of those
+at the time, and the comparison as it is now finds 25. The one it misses is a rock at the
+very bottom of the screen, of which only a sliver lies inside the compared area. The nine
+that could not be told were nearly all taken while the exposure was changing, which the
+held exposure is for; most of their boxes are marked faint.
 
 ## Replaying a round
 

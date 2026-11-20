@@ -50,6 +50,12 @@ class SpotFinder(
     private val locator: ScreenLocator = ScreenLocator(),
     /** One line per step of the alignment, for the app's log and the replay tool. */
     private val log: (String) -> Unit = {},
+    /**
+     * Handed each compared photo as it was compared -- straightened, evened out and blurred,
+     * as three planes -- with its difference map and the mask it was compared in. For the
+     * replay tool, so a round can be looked at the way the finder saw it.
+     */
+    private val inspect: ((photo: Int, planes: Array<FloatArray>, diff: FloatArray, mask: BooleanArray, w: Int, h: Int) -> Unit)? = null,
 ) {
 
     /** One thing that differs, as fractions of the straightened screen, left to right and top to bottom. */
@@ -60,6 +66,12 @@ class SpotFinder(
         @JvmField val bottom: Float,
         /** How much it differs, summed over its area; only meaningful against another's. */
         @JvmField val score: Float,
+        /**
+         * Whether it barely stands out: the best there was, but weak enough that it should
+         * be checked by eye. Every picture has a difference, so a photo always gets one box,
+         * and this is how the box says it is a guess.
+         */
+        @JvmField val faint: Boolean = false,
     )
 
     class Photo(
@@ -175,12 +187,22 @@ class SpotFinder(
         for (p in stacks) for (c in 0 until 3) boxBlur(p[c], w, h)
         val median = Array(3) { c -> medianOf(stacks.map { it[c] }, n) }
 
-        val differences = HashMap<Int, List<Difference>>()
-        val diff = FloatArray(n)
+        // Every photo's difference from the median first: each is then measured against
+        // what the others show at the same place. See [uniqueness].
+        val diffs = Array(aligned.size) { FloatArray(n) }
         val back = FloatArray(n)
+        for (i in aligned.indices) difference(stacks[i], median, mask, w, h, diffs[i], back)
+        val differences = HashMap<Int, List<Difference>>()
+        val unique = FloatArray(n)
         for ((i, k) in aligned.withIndex()) {
-            difference(stacks[i], median, mask, w, h, diff, back)
-            differences[k] = blobs(diff, mask, w, h)
+            inspect?.invoke(k, stacks[i], diffs[i], mask, w, h)
+            uniqueness(diffs, i, mask, unique)
+            val best = strongest(unique, mask, w, h)
+            if (best != null) {
+                log("photo ${k + 1}: [%.3f,%.3f - %.3f,%.3f] %.0f%s".format(
+                    best.left, best.top, best.right, best.bottom, best.score, if (best.faint) " faint" else ""))
+            }
+            differences[k] = listOfNotNull(best)
         }
 
         val found = differences.values.count { it.isNotEmpty() }
@@ -829,50 +851,135 @@ class SpotFinder(
     }
 
     /**
-     * The differences in one photo's difference map.
+     * How far photo [index] stands out at each pixel beyond the typical other photo there:
+     * its difference from the median less the median of everyone else's, never below zero.
      *
-     * The threshold is the photo's own noise -- its median difference plus ten median
-     * absolute deviations -- but never under [ABSOLUTE_THRESHOLD]. The sample sets put the
-     * changed objects at 200 to 500 and alignment residue under 60, the far, soft photo of
-     * the first set worst at 40; the unchanged photo of that set has nothing over 70.
+     * A difference is in one photo and nowhere else. What several photos differ at -- the
+     * edges alignment leaves a pixel out, glare on part of the screen, a stretch of sky the
+     * camera clips -- is not, and subtracting what the others show there takes it away.
+     * That matters most for a photo taken at a different exposure from the rest: on
+     * 2026-11-19 one came back with three boxes in a clipped sky and none on the sailboat
+     * that had been added to the shelf, which measured this way is its strongest thing.
      */
-    private fun blobs(diff: FloatArray, mask: BooleanArray, w: Int, h: Int): List<Difference> {
+    private fun uniqueness(diffs: Array<FloatArray>, index: Int, mask: BooleanArray, out: FloatArray) {
+        val others = FloatArray(diffs.size - 1)
+        for (p in out.indices) {
+            if (!mask[p]) {
+                out[p] = 0f
+                continue
+            }
+            var j = 0
+            for (q in diffs.indices) if (q != index) others[j++] = diffs[q][p]
+            // Insertion sort; a handful of values.
+            for (a in 1 until others.size) {
+                val v = others[a]
+                var b = a - 1
+                while (b >= 0 && others[b] > v) {
+                    others[b + 1] = others[b]
+                    b--
+                }
+                others[b + 1] = v
+            }
+            val m = others.size
+            val typical = if (m % 2 == 1) others[m / 2] else (others[m / 2 - 1] + others[m / 2]) * 0.5f
+            out[p] = max(0f, diffs[index][p] - typical)
+        }
+    }
+
+    /**
+     * The one difference in a photo: the strongest compact thing in its [uniqueness] map.
+     *
+     * Every picture the room shows has exactly one difference, so a photo always gets a
+     * box. The threshold is the photo's own noise -- the median plus ten median absolute
+     * deviations -- but never under [ABSOLUTE_THRESHOLD]; when nothing compact clears it the
+     * threshold is halved, twice, and what is found then is marked [Difference.faint].
+     * Before 2026-11-19 a photo with nothing over the threshold was reported as the
+     * original picture, and in the room that was five photos with a real difference in.
+     *
+     * Not every blob is a candidate:
+     *
+     *  - A strip along the edge of the compared area -- thin, or long along the edge -- is
+     *    the bezel's edge, seen from a different place in this photo: parallax, not a
+     *    difference. Only strips, though. The rule used to take anything mostly near the
+     *    edge, and so dropped a moon at the top of the screen and a candle at the side.
+     *  - A blob covering more than [MAX_AREA_FRACTION] of the screen is the whole photo
+     *    being lit differently, not a thing in it.
+     */
+    private fun strongest(map: FloatArray, mask: BooleanArray, w: Int, h: Int): Difference? {
         val n = w * h
         val histogram = IntArray(HISTOGRAM_BINS)
         var total = 0
         for (i in 0 until n) {
             if (!mask[i]) continue
-            histogram[diff[i].toInt().coerceIn(0, HISTOGRAM_BINS - 1)]++
+            histogram[map[i].toInt().coerceIn(0, HISTOGRAM_BINS - 1)]++
             total++
         }
-        if (total == 0) return emptyList()
+        if (total == 0) return null
         val med = percentile(histogram, total, 0.5f)
         val deviation = IntArray(HISTOGRAM_BINS)
         for (i in 0 until n) {
             if (!mask[i]) continue
-            deviation[abs(diff[i].toInt() - med).coerceIn(0, HISTOGRAM_BINS - 1)]++
+            deviation[abs(map[i].toInt() - med).coerceIn(0, HISTOGRAM_BINS - 1)]++
         }
         val mad = percentile(deviation, total, 0.5f)
         val threshold = max(ABSOLUTE_THRESHOLD, med + NOISE_DEVIATIONS * mad).toFloat()
 
-        val core = BooleanArray(n) { mask[it] && diff[it] > threshold }
-        // Pieces of one thing -- a crescent and its star, the two halves of a sail either
-        // side of the mast -- are merged by growing each piece a little before labelling.
-        val grown = core.copyOf()
-        erodeOrDilate(grown, w, h, MERGE_DISTANCE, dilate = true)
         // What is near the edge of the compared area, for telling a difference from the
         // bezel sliding over the picture.
         val inner = mask.copyOf()
         erode(inner, w, h, EDGE_BAND)
+        val maxArea = total * MAX_AREA_FRACTION
 
-        val label = IntArray(n) { -1 }
+        var t = threshold
+        for (attempt in 0 until THRESHOLD_HALVINGS + 1) {
+            val all = candidates(map, mask, inner, w, h, t)
+            val best = all.filter { !it.strip && it.area <= maxArea }.maxByOrNull { it.score }
+            if (best != null) return best.toDifference(w, h, faint = attempt > 0 || best.score < FAINT_SCORE)
+            if (attempt == THRESHOLD_HALVINGS) {
+                // Nothing compact anywhere: the strongest of whatever there was.
+                return all.maxByOrNull { it.score }?.toDifference(w, h, faint = true)
+            }
+            t /= 2
+        }
+        return null
+    }
+
+    private class Candidate(
+        val score: Float,
+        val area: Int,
+        val strip: Boolean,
+        val x0: Int,
+        val y0: Int,
+        val x1: Int,
+        val y1: Int,
+    ) {
+        fun toDifference(w: Int, h: Int, faint: Boolean) = Difference(
+            left = x0.toFloat() / w,
+            top = y0.toFloat() / h,
+            right = (x1 + 1).toFloat() / w,
+            bottom = (y1 + 1).toFloat() / h,
+            score = score,
+            faint = faint,
+        )
+    }
+
+    /** Everything over [threshold], pieces within a few pixels of each other merged. */
+    private fun candidates(map: FloatArray, mask: BooleanArray, inner: BooleanArray, w: Int, h: Int, threshold: Float): List<Candidate> {
+        val n = w * h
+        val core = BooleanArray(n) { mask[it] && map[it] > threshold }
+        // Pieces of one thing -- a crescent and its star, the two halves of a sail either
+        // side of the mast -- are merged by growing each piece a little before labelling.
+        val grown = core.copyOf()
+        erodeOrDilate(grown, w, h, MERGE_DISTANCE, dilate = true)
+
+        val label = BooleanArray(n)
         val queue = IntArray(n)
-        val found = ArrayList<Difference>()
+        val found = ArrayList<Candidate>()
         for (start in 0 until n) {
-            if (!grown[start] || label[start] >= 0) continue
+            if (!grown[start] || label[start]) continue
             var head = 0
             var tail = 0
-            label[start] = found.size
+            label[start] = true
             queue[tail++] = start
             var score = 0.0
             var area = 0
@@ -886,7 +993,7 @@ class SpotFinder(
                 val x = i % w
                 val y = i / w
                 if (core[i]) {
-                    score += diff[i] - threshold
+                    score += map[i] - threshold
                     area++
                     if (!inner[i]) nearEdge++
                     if (x < x0) x0 = x
@@ -901,34 +1008,20 @@ class SpotFinder(
                         val nx = x + dx
                         if (nx < 0 || nx >= w) continue
                         val j = ny * w + nx
-                        if (grown[j] && label[j] < 0) {
-                            label[j] = label[start]
+                        if (grown[j] && !label[j]) {
+                            label[j] = true
                             queue[tail++] = j
                         }
                     }
                 }
             }
             if (x1 < 0) continue
-            // A strip along the edge of the compared area is the bezel's edge, seen from a
-            // different place in this photo than in the others: parallax, not a difference.
-            // Real ones near the edge -- the moon in the first set, a few pixels under the
-            // top -- have at most two fifths of themselves there; the strips are three
-            // quarters to all of it.
-            if (nearEdge > area * EDGE_FRACTION) continue
-            found.add(
-                Difference(
-                    left = x0.toFloat() / w,
-                    top = y0.toFloat() / h,
-                    right = (x1 + 1).toFloat() / w,
-                    bottom = (y1 + 1).toFloat() / h,
-                    score = score.toFloat(),
-                )
-            )
+            val thick = min(x1 - x0 + 1, y1 - y0 + 1)
+            val long = max(x1 - x0 + 1, y1 - y0 + 1)
+            val strip = nearEdge > area * EDGE_FRACTION && (thick <= EDGE_STRIP_WIDTH || long >= thick * EDGE_STRIP_ASPECT)
+            found.add(Candidate(score.toFloat(), area, strip, x0, y0, x1, y1))
         }
-        found.sortByDescending { it.score }
-        val best = found.firstOrNull()?.score ?: return emptyList()
-        val floor = max(MIN_SCORE, best * RELATIVE_SCORE)
-        return found.filter { it.score >= floor }.take(MAX_DIFFERENCES)
+        return found
     }
 
     private fun percentile(histogram: IntArray, total: Int, fraction: Float): Int {
@@ -1217,8 +1310,26 @@ class SpotFinder(
 
         /** Summed over three channels, so 0..765. */
         private const val HISTOGRAM_BINS = 766
-        private const val ABSOLUTE_THRESHOLD = 80
+        /**
+         * On the [uniqueness] map, which is a photo's difference less the typical other
+         * photo's at the same place, so lower than the plain difference's 80 it replaced.
+         */
+        private const val ABSOLUTE_THRESHOLD = 40
         private const val NOISE_DEVIATIONS = 10
+
+        /** Times the threshold is halved looking for something compact, before giving up. */
+        private const val THRESHOLD_HALVINGS = 2
+
+        /** A blob bigger than this share of the screen is the photo's lighting, not a thing in it. */
+        private const val MAX_AREA_FRACTION = 0.06f
+
+        /**
+         * An edge blob no thicker than this, in pixels, or this many times as long as it is
+         * thick, is the bezel's parallax. The moon and the candle that the edge used to hide
+         * are both about as tall as they are wide.
+         */
+        private const val EDGE_STRIP_WIDTH = 8
+        private const val EDGE_STRIP_ASPECT = 3
 
         /** Width of the band along the compared area's edge, in pixels, and how much of a difference may lie in it. */
         private const val EDGE_BAND = 10
@@ -1228,16 +1339,10 @@ class SpotFinder(
         private const val MERGE_DISTANCE = 3
 
         /**
-         * Least score a difference needs. The faintest real one, the castle's missing
-         * windows in the first set, scores about 2,300 there and 9,000 to 10,000 in the
-         * rounds taken with the app. The strongest stray that is neither on the edge nor
-         * beside a real difference scores about 700.
+         * Under this a difference is marked faint. The faintest real ones in the rounds so
+         * far -- a rock at the bottom edge, a thin cloud, castle windows three pixels wide --
+         * score 600 to 2,300; the strongest stray beside nothing, about 700.
          */
-        private const val MIN_SCORE = 1000f
-
-        /** A second difference in one photo must be at least this fraction of the first. */
-        private const val RELATIVE_SCORE = 0.25f
-
-        private const val MAX_DIFFERENCES = 3
+        private const val FAINT_SCORE = 2500f
     }
 }

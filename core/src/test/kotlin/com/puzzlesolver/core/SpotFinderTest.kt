@@ -101,6 +101,60 @@ class SpotFinderTest {
         0.806f to 0.647f,   // a flower on a bush, taken away
     )
 
+    /**
+     * Three of the five seven-photo rounds taken in the room on 2026-11-19, the first with
+     * the app at seven. Every picture has a difference; where it could not be told by eye
+     * the photo is in the round's `unknown` set and only has to come back with one box.
+     *
+     * Round 1, a coast: photo 1 was taken as the exposure was still coming down and is a
+     * stop and a half over; photo 7's moon is at the very top of the screen, and was lost
+     * to the old edge rule.
+     */
+    private val set6 = listOf(
+        null,               // over-exposed; not told by eye
+        0.913f to 0.438f,   // a chimney, added
+        0.339f to 0.672f,   // a sail, turned dark
+        0.425f to 0.624f,   // a sailboat, taken away
+        0.207f to 0.472f,   // a white wave, taken away
+        0.305f to 0.322f,   // a white wave, added
+        0.711f to 0.065f,   // a moon at the top edge, added
+    )
+
+    /** Round 4, a studio: small things, one beside the screen's edge. */
+    private val set7 = listOf(
+        null,               // taken half a stop off the rest; not told by eye
+        0.924f to 0.525f,   // a candle on the shelf, added
+        0.680f to 0.823f,   // a robot vacuum, added
+        0.886f to 0.493f,   // a shelf ornament, changed
+        0.208f to 0.870f,   // a line on the floor, taken away
+        0.226f to 0.337f,   // something by the window, added
+        null,               // taken during an exposure change; not told by eye
+    )
+
+    /** Round 5, the studio again, where nearly every photo was missed on the phone. */
+    private val set8 = listOf(
+        0.919f to 0.511f,   // a sailboat on the shelf, added -- in a photo a stop over
+        0.878f to 0.798f,   // a mark on the floor, added
+        0.418f to 0.383f,   // a thin cloud, taken away
+        0.701f to 0.449f,   // the camera on the tripod, changed
+        null, null, null,   // not told by eye
+    )
+
+    @Test
+    fun `finds the moon at the top edge and the rest of a seven photo round`() {
+        check(SpotFixture.set("set6"), set6, unknown = setOf(0))
+    }
+
+    @Test
+    fun `finds small differences in a seven photo round`() {
+        check(SpotFixture.set("set7"), set7, unknown = setOf(0, 6))
+    }
+
+    @Test
+    fun `finds the difference in a photo taken at another exposure`() {
+        check(SpotFixture.set("set8"), set8, unknown = setOf(4, 5, 6))
+    }
+
     @Test
     fun `finds the difference in each photo of a round taken with the app`() {
         check(SpotFixture.set("set3"), set3)
@@ -119,7 +173,7 @@ class SpotFinderTest {
     @Test
     fun `tells a picture from the blank screen between pictures`() {
         val locator = ScreenLocator()
-        for (name in listOf("set1", "set2", "set3", "set4", "set5")) {
+        for (name in listOf("set1", "set2", "set3", "set4", "set5", "set6", "set7", "set8")) {
             for ((i, photo) in SpotFixture.set(name).withIndex()) {
                 val screen = locator.locate(photo.luma())!!
                 val blank = name == "set4" && i == 5
@@ -160,7 +214,7 @@ class SpotFinderTest {
     @Test
     fun `finds the screen in every photo`() {
         val locator = ScreenLocator()
-        for (name in listOf("set1", "set2", "set3", "set4", "set5")) {
+        for (name in listOf("set1", "set2", "set3", "set4", "set5", "set6", "set7", "set8")) {
             for ((i, photo) in SpotFixture.set(name).withIndex()) {
                 val screen = locator.locate(photo.luma())
                 assertNotNull("$name photo ${i + 1}: ${locator.lastFailure}", screen)
@@ -241,7 +295,12 @@ class SpotFinderTest {
         assertEquals(45.0, p[1], 1e-6)
     }
 
-    private fun check(photos: List<RgbImage>, expected: List<Pair<Float, Float>?>, blank: Set<Int> = emptySet()) {
+    private fun check(
+        photos: List<RgbImage>,
+        expected: List<Pair<Float, Float>?>,
+        blank: Set<Int> = emptySet(),
+        unknown: Set<Int> = emptySet(),
+    ) {
         val result = finder.find(photos)
         println("spot: ${result.status} in ${result.millis} ms")
         for ((k, photo) in result.photos.withIndex()) {
@@ -260,6 +319,11 @@ class SpotFinderTest {
                 continue
             }
             assertNull("photo ${k + 1} was left out: ${photo.note}", photo.note)
+            if (k in unknown) {
+                // Every picture has a difference, so every photo gets one box.
+                assertEquals("photo ${k + 1}: one box", 1, photo.differences.size)
+                continue
+            }
             val want = expected[k]
             if (want == null) {
                 assertTrue("photo ${k + 1} has nothing changed and should have no box", photo.differences.isEmpty())

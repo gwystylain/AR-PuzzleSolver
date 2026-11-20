@@ -32,9 +32,29 @@ class SpotReplay {
             ?.sortedBy { it.name }
             .orEmpty()
         require(files.isNotEmpty()) { "no photos in $dir" }
-        val result = SpotFinder(log = { println("    $it") }).find(files.map { SpotFixture.read(it) })
-        println("spot: ${result.status} in ${result.millis} ms")
         val out = System.getProperty("spot.out")?.let { File(it).apply { mkdirs() } }
+        // With an output directory, each photo as it was compared and its difference map
+        // too: <name>-compared.png, and <name>-diff.f32 (width and height as little-endian
+        // ints, then the map as little-endian floats, zero off the mask).
+        val inspect = out?.let { dirOut ->
+            { k: Int, planes: Array<FloatArray>, diff: FloatArray, _: BooleanArray, w: Int, h: Int ->
+                val name = files[k].nameWithoutExtension
+                val image = java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB)
+                for (i in 0 until w * h) {
+                    val r = planes[0][i].toInt().coerceIn(0, 255)
+                    val g = planes[1][i].toInt().coerceIn(0, 255)
+                    val b = planes[2][i].toInt().coerceIn(0, 255)
+                    image.setRGB(i % w, i / w, (r shl 16) or (g shl 8) or b)
+                }
+                ImageIO.write(image, "png", File(dirOut, "$name-compared.png"))
+                val buffer = java.nio.ByteBuffer.allocate(8 + 4 * diff.size).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                buffer.putInt(w).putInt(h)
+                for (v in diff) buffer.putFloat(v)
+                File(dirOut, "$name-diff.f32").writeBytes(buffer.array())
+            }
+        }
+        val result = SpotFinder(log = { println("    $it") }, inspect = inspect).find(files.map { SpotFixture.read(it) })
+        println("spot: ${result.status} in ${result.millis} ms")
         for ((k, photo) in result.photos.withIndex()) {
             val line = when {
                 photo.screen == null -> "screen not found"
