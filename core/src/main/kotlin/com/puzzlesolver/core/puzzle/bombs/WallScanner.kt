@@ -617,7 +617,7 @@ class WallScanner(
         val lit = BooleanArray(faces.size) { k ->
             val face = faces[k] ?: return@BooleanArray false
             face.clipped >= CLIPPED_LIT ||
-                (face.brightness >= ButtonFace.MIN_VALUE && face.brightness >= typical * LIT_RATIO)
+                (face.brightness >= UNCLIPPED_LIT && face.brightness >= typical * LIT_RATIO)
         }
 
         // The panel's own colour, from between the unlit buttons. Not from round the lit
@@ -1290,6 +1290,20 @@ class WallScanner(
 
         /** A face this much brighter than the frame's typical button is lit, at a darker one. */
         private const val LIT_RATIO = 2.5f
+
+        /**
+         * And never below this, unclipped. At 1/60 s and ISO 6400 an unlit button in the
+         * room's purple light comes up at 60 to 120 on its brightest channel -- unclipped,
+         * a reflection, and on a dark frame two and a half times the typical button. With
+         * the bar at the colour reading's 60, that made it lit. On 2026-11-19 the pan
+         * reached a stretch of wall with nothing lit, the replay read 629 such buttons
+         * lit, and frame after frame was refused because those "lit" buttons sat where
+         * the count had recorded dark ones: tracked to column 23, lost for good after it.
+         * A real lit button at this exposure clips. On the room's pans of 2026-11-07, -12,
+         * -14 and -19 the unclipped faces at 150 or more were the faces of lit LEDs,
+         * the reflections 119 or less; with the bar here every board reads as before.
+         */
+        private const val UNCLIPPED_LIT = 150f
 
         /** Margin from the frame edge for a cell to be read at all, in pitches. */
         private const val EDGE_MARGIN = 0.3f

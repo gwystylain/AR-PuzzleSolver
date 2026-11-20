@@ -309,10 +309,40 @@ perfect, and said the second lost track and struggled to solve.
   it took the lattice exposure as unsteered until its first change, and at the brightest
   default there never is one.
 
+### In the room, 2026-11-19
+
+One scan, on the build with the 95th-percentile lift; frames and log in
+`testVideos/phone-backup/2026-11-19/`. The user reported it lost track part way, on the
+unlit part of the wall.
+
+- **The wall was mostly dark**: three lit buttons in the first sixteen columns, then
+  nothing for a long stretch. The scan tracked to column 23 in five seconds, and then
+  refused nearly every lattice frame for a minute -- "lit buttons disagree with the
+  count" -- until it was finished by hand at 31 columns. The 64-second scan also reached
+  the 1,200 saved frames the app keeps, so its last four seconds are not on the phone.
+- **Nothing there was lit.** The lattice frames, at 1/60 s and ISO 6400, had the unlit
+  buttons at about 20, and the room's purple light caught on the ones passing one part
+  of the screen: 60 to 120 on the brightest channel, never clipped. A lattice frame
+  called a button lit at 60 and two and a half times its typical button, so those glints
+  were lit -- 629 of them in the replay -- and each sat on a button the count had just
+  recorded dark. Two such in a frame, against no real lit button to agree with, and the
+  frame was refused.
+- A real lit button at the lattice exposure clips. Across the room's pans of 2026-11-07,
+  -12, -14 and -19, the unclipped faces read lit at 150 or more were the faces of lit
+  LEDs, the glints 119 or less, so an unclipped face now needs 150. A few saturated
+  blues at 133-138 on 2026-11-14 -- a blue LED's spill, or the dim edge of one -- now fall
+  short of it, and no board changes for it. Replayed, the scan
+  of 2026-11-19 places 513 lattice frames of 601 where it placed 262, tracking through
+  the dark stretch to column 30 before the frames turn to the user panning back and forth
+  after the loss; the second scan of 2026-11-14 tracks all 300; every other board reads
+  as before. `WallScanPanTest` renders a dark wall with forty unlit columns and glints on
+  its buttons: the old bar loses the count there, the new one reads it exactly.
+
 ### Not yet verified
 
 - **The white/blue split in the room** beyond the first scan of 2026-11-14.
-- **The 95th-percentile lift on the phone.** Measured on the replayed scans.
+- **The 95th-percentile lift on the phone**, and the 150 bar for an unclipped lit button.
+  Measured on the replayed scans.
 - **White balance itself** is still whatever the camera began with. A fixed preset for the
   colour frames would take the tint away at the source; it changes every colour the face
   vote sees, so it wants a visit to the room.

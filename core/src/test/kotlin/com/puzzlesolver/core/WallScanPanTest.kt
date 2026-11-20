@@ -92,10 +92,23 @@ class WallScanPanTest {
         extraRow: Boolean = false,
         swallowBottom: Boolean = false,
         palette: (Int) -> IntArray? = ::ledAtColourExposure,
+        wall: BombBoard = truth,
+        darkRoom: Boolean = false,
     ): RgbImage {
         val img = RgbImage(width, height)
-        val panel = if (colourFrame) intArrayOf(2, 2, 3) else intArrayOf(45, 43, 78)
-        val unlit = if (colourFrame) intArrayOf(5, 5, 6) else intArrayOf(176, 166, 196)
+        val panel = when {
+            colourFrame -> intArrayOf(2, 2, 3)
+            darkRoom -> intArrayOf(4, 4, 6)
+            else -> intArrayOf(45, 43, 78)
+        }
+        val unlit = when {
+            colourFrame -> intArrayOf(5, 5, 6)
+            darkRoom -> intArrayOf(20, 18, 32)
+            else -> intArrayOf(176, 166, 196)
+        }
+        // The room's purple light caught on an unlit button, where the angle is right:
+        // a band of the screen, so every button passing through it takes its turn.
+        val glint = intArrayOf(55, 50, 95)
         val cr = cos(roll)
         val sr = sin(roll)
         val face = pitch * 0.26f
@@ -112,17 +125,18 @@ class WallScanPanTest {
                 var rgb = panel
                 if (extraRow && onExtraRow(wx, wy, face)) {
                     rgb = unlit
-                } else if (swallowBottom && !colourFrame && row == truth.rows - 1 && col % 3 == 0 &&
-                    col in 0 until truth.cols && truth.kindAt(truth.index(col, row)) == Button.EMPTY
+                } else if (swallowBottom && !colourFrame && row == wall.rows - 1 && col % 3 == 0 &&
+                    col in 0 until wall.cols && wall.kindAt(wall.index(col, row)) == Button.EMPTY
                 ) {
                     // Lost in a neighbour's glare, as the bottom row was on 2026-11-07.
                     rgb = panel
-                } else if (col in 0 until truth.cols && row in 0 until truth.rows) {
+                } else if (col in 0 until wall.cols && row in 0 until wall.rows) {
                     val d = hypot(wx - col * pitch, wy - row * pitch)
-                    val kind = truth.kindAt(truth.index(col, row))
+                    val kind = wall.kindAt(wall.index(col, row))
                     val led = palette(kind)
+                    val glinting = darkRoom && !colourFrame && row <= 1 && x in (width * 0.55f).toInt()..(width * 0.8f).toInt()
                     rgb = when {
-                        led == null -> if (d <= face) unlit else panel
+                        led == null -> if (d > face) panel else if (glinting) glint else unlit
                         colourFrame -> if (d <= face) led else panel
                         d <= face -> intArrayOf(255, 255, 255)
                         d <= glow -> {
@@ -201,6 +215,49 @@ class WallScanPanTest {
         // split they all read blue, as the room's did.
         assertTrue(wall.warnings.any { it.startsWith("Whites and blues told apart") })
         assertEquals(expected, wall.describe().trim())
+    }
+
+    @Test
+    fun `a dark wall with nothing lit for forty columns and glints on its buttons is counted to the end`() {
+        // The room on 2026-11-19: lattice frames at 1/60 s ISO 6400 with unlit buttons at
+        // 20, a long stretch of wall with nothing lit, and the room's purple light caught
+        // on the buttons passing one part of the screen. Read as lit -- bright enough at
+        // 95 and four times the typical button -- those glints sat where the count had
+        // recorded dark buttons a moment before, and every frame was refused.
+        val wall = BombBoard.parse(
+            """
+            ....W...........................................W.........R.....
+            ............W.......................................W...........
+            G..W............................................................
+            ..................................................B........W....
+            .........R...............................................W......
+            .......B......................................................W.
+            ......W........................................R................
+            """
+        )
+        val scanner = WallScanner(log = { if (it.contains("unplaced") || it.contains("relocated")) println("  $it") })
+        val frameNanos = 33_333_333L
+        val startX = width / 2f - pitch * 1.5f
+        val endX = wall.cols * pitch + width / 2f - pitch * 2f
+        val rowsCentre = (wall.rows - 1) * pitch / 2f
+        var t = 0L
+        var n = 0
+        while (true) {
+            val x = startX + t / 1e9f * 4f * pitch
+            if (x > endX) break
+            val colour = n % 2 == 1
+            val frame = render(x, rowsCentre, 0f, colour, wall = wall, darkRoom = true)
+            scanner.offer(frame, if (colour) WallScanner.Exposure.COLOUR else WallScanner.Exposure.LATTICE, t)
+            t += frameNanos
+            n++
+        }
+        val read = scanner.result()
+        assertNotNull("the green was never found", read)
+        println(read!!.describe())
+        read.warnings.forEach { println("warning: $it") }
+        assertTrue("lost the count", read.endSeen)
+        assertEquals(wall.cols, read.cols)
+        assertEquals(wall.toString().trim(), read.describe().trim())
     }
 
     @Test
