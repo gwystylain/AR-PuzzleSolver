@@ -58,6 +58,16 @@ ROOMS = {
 
 DIR = {"up": "U", "down": "D", "left": "L", "right": "R"}
 
+# Where the room disagrees with the Gridlock transcription, checked on the floor: stage
+# tag -> board -> (row, col) as the site has it -> (row, col) as the room has it. The
+# sources stay as fetched; if the site corrects one, the assert in gridlock_stages says
+# so and the entry can go.
+GRIDLOCK_BLUE_FIXES = {
+    # Photographed 2026-11-20: the blue below the top gun at x=19 is two tiles in front
+    # of it, in the gun's own column, not one column to the left.
+    "Level 3-4": {"B": {(2, 7): (2, 8)}},
+}
+
 
 def scores_stages(level):
     j = json.load(open(os.path.join(SOURCES, f"activate-scores-level-{level}.json")))
@@ -164,8 +174,13 @@ def gridlock_stages(level):
         for side, off in sides:
             for g in s[side]["oranges"]:
                 lines.append(f"gun {off + g['c']},{g['r']},{DIR[g['dir']]}")
+        fixes = GRIDLOCK_BLUE_FIXES.get(s["tag"], {})
         for side, off in sides:
-            for r, c in s[side]["blue"]:
+            blue = [tuple(b) for b in s[side]["blue"]]
+            for was, now in fixes.get(side, {}).items():
+                assert was in blue, f"{s['tag']} {side}: no blue at {was} to move -- has the site fixed it?"
+                blue[blue.index(was)] = now
+            for r, c in blue:
                 lines.append(f"target {off + c},{r}")
         for side, off in sides:
             for r, c in s[side]["purple"]:
