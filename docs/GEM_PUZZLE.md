@@ -317,19 +317,45 @@ on the centre dot.
 | --- | --- | --- |
 | red | 352° | |
 | yellow | 66° | a bright yellow ring desaturates toward white; there is no fifth colour |
-| green | 146° | |
-| blue | 198° | measures **cyan**, not blue |
+| green | 146° | moves with the white balance, 131–170° at the preset -- see below |
+| blue | 208° | measured 198° (**cyan**, not blue) on the reference clip, 219–223° at the preset |
 
-From 50 hand-labelled rings. Using textbook blue at 240° instead would put every blue
-reading nearer green than blue.
+From 50 hand-labelled rings, except blue, which was moved off its measurement for the
+reason below. Using textbook blue at 240° would put every reference-clip blue nearer green
+than blue.
+
+**Green moves with the white balance, and the camera does not hold that still between
+visits.** The preset locks the white balance rather than setting it, so each visit keeps
+whatever the camera's own had settled on when Gems was picked. Red and blue barely notice;
+green does. The raw hue of green outer rings at the preset:
+
+| visit | green | blue |
+| --- | --- | --- |
+| 2026-10-22, 10-31, 11-14 | 131–137° | 219–223° |
+| 2026-11-12 | 157° | (stage 1 only) |
+| 2026-11-19 | 169–170°, centre dots 172° | (stage 1 only) |
+
+With blue at 198° the green/blue boundary was 172°, so on 2026-11-19 green sat on it. In a
+stage with no blue in it at all, a third of the wall's green centre dots read blue, and the
+red/green/green target read red/green/blue in two frames of four and matched at 0.11 in a
+third: the ring needs two matching scans in three, and the user saw the app pan straight
+past it. Blue at 208° puts the boundary at 177°. That reads the 2026-11-19 frames with no
+blue and the target at 0.60–0.96, and changes no ring at the preset on any other visit;
+at 212° the reference clip's cyan-blue middle rings start reading green and
+`RealGemFrameTest` fails. `GemGreenDriftTest` holds a frame of that wall.
+
+Five degrees is not much margin against a white balance that moved thirteen between two
+visits. The fix that would hold is a white balance that does not move, which Mines needs
+too (see the 2026-11-12 white LEDs that read blue in [BOMB_PUZZLE.md](BOMB_PUZZLE.md)),
+but the hues under it have to be measured at the wall before the palette can follow.
 
 **There is no purple.** The palette had one, centred at 326°, from rings labelled purple
 on the early clips. Looked at again, every one of them is a red ring under the glow of a
 cyan one — red light plus cyan light is magenta — and the user confirmed the game has no
 purple gem. It was a fifth bucket for red to leak into,
 26° from red, the closest pair on the palette. Its arc now splits between its
-neighbours at 275°, the old fixtures' purple labels are red, and the closest pair is
-green and cyan at 52°.
+neighbours at 280°, the old fixtures' purple labels are red, and the closest pair is
+green and blue at 62°.
 
 ### Light adds, so a ring is read through the glow of the ring outside it
 
@@ -544,6 +570,21 @@ second burst does not overwrite the first, and that the bytes written parse as t
 fixture loader parses them. All four are mistakes that produce files of a plausible size
 and are discovered by trying to use them, which is the one moment going back is no longer
 possible.
+
+A burst can also be read again whole. `GemReplay` runs a directory of captures through the
+scanner and prints, per frame, how many rings of each colour it read at each depth and which
+gems matched -- every gem's reading too with `gems.verbose`, in the sidecar's layout -- so a
+reader change can be held against every visit at once rather than one labelled frame:
+
+```bash
+./gradlew :core:test --tests '*GemReplay*' -Dgems.frames=/path/to/captures \
+    -Dgems.targets=red/green/green,red/red/green -Dgems.verbose=true
+```
+
+`-Dgems.hues=352,66,146,208` tries other hue centroids against the same frames. Each
+frame's reading is close to the phone's but not identical, since the capture is RGB
+rebuilt from the frame the phone read; a ring that reads differently is one that was
+on a boundary.
 
 ## Telling this wall from the mines wall
 

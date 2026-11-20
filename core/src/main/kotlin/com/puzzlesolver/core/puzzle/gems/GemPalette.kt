@@ -166,13 +166,28 @@ object GemPalette {
     /**
      * Measured hue centroids, in degrees, in [GemColour.ALL] order.
      *
-     * Note how far blue is from its name: the wall's "blue" measures 198 degrees, which
-     * is cyan. Using textbook 240 instead would put every blue reading nearer green than
-     * blue. These come from 50 hand-labelled rings.
+     * Note how far blue is from its name: on the reference clip the wall's "blue"
+     * measured 198 degrees, which is cyan, and textbook 240 would put every blue reading
+     * nearer green than blue. The first three come from 50 hand-labelled rings.
+     *
+     * **Blue sits at 208 rather than the 198 it measured, because green does not stay
+     * put.** The preset locks the white balance wherever the camera's own had settled when
+     * Gems was picked, and that is different on every visit -- and green is the colour it
+     * moves. Raw hue of green outer rings at the preset: 131-137 degrees on 2026-10-22,
+     * 10-31 and 11-14, 157 on 11-12, and 169-170 on 11-19, with the centre dots at 172 --
+     * which was exactly the green/blue boundary halfway between 146 and 198. That day a
+     * third of the green centres on the wall read blue in a stage with no blue in it, and
+     * a red/green/green target went unringed as its centre flipped between the two. Blue
+     * itself measured 219-223 on every visit at the preset that showed it, so the
+     * boundary has room to move: at 208 it sits at 177, and 11-19 reads with no blue at
+     * all while no ring at the preset on any other visit changes. At 212 the reference
+     * clip's cyan-blue middles start reading green. Five degrees is not much of a margin
+     * against a white balance that moved thirteen between two visits; the real fix is a
+     * white balance that does not move.
      *
      * There is no purple. The arc it used to own, 262 to 339 degrees, is magenta, and on
      * this wall magenta is a red ring with a cyan glow over it -- so the part of that arc
-     * nearer red now votes red, and the boundary with blue sits at 275, halfway between
+     * nearer red now votes red, and the boundary with blue sits at 280, halfway between
      * the two centroids. See [GemColour].
      */
     @JvmField
@@ -180,7 +195,7 @@ object GemPalette {
         352f,   // red
         66f,    // yellow
         146f,   // green
-        198f,   // blue
+        208f,   // blue: measured 198 on the reference clip, 219-223 at the preset -- see above
     )
 
     /** Below this on the brightest channel, a texel is unlit panel rather than gem. */

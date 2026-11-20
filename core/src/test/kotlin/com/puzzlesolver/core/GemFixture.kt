@@ -271,6 +271,80 @@ object GemFixture {
     /** The 2026-10-31 stage-3 frame. See [FOUR_LABELLED]. */
     fun loadFour(): CanvasView = load("gems-wall-four.ppm.gz")
 
+    /**
+     * A stage-1 wall from the run of 2026-11-19, with green where the white balance left it.
+     *
+     * The preset locks the white balance wherever the camera's own had settled, and that
+     * day it put green at 170 degrees -- 172 on the centre dots, which was then the
+     * green/blue boundary. Red and green are the only colours in stage 1, and still a
+     * third of the green centres on the wall read blue, and the red/green/green target
+     * here read red/green/blue on the phone and went unringed. See GemPalette.HUES.
+     *
+     * gem-0105 of the second capture, cropped to the wall from x = 400. Every gem is one of
+     * four decoys -- red/green/red, green/red/green, green/green/red, red/red/red -- or the
+     * one target, at (667.8, 408.4). Rings labelled by eye; the two gems cut off by the top
+     * edge are left out.
+     */
+    val DRIFT_LABELLED = listOf(
+        Labelled(803.1f, 25.1f, "red", "green", "red"),
+        Labelled(924.4f, 33.2f, "red", "green", "red"),
+        Labelled(141.0f, 120.1f, "green", "red", "green"),
+        Labelled(280.5f, 127.0f, "red", "green", "red"),
+        Labelled(414.5f, 134.8f, "green", "green", "red"),
+        Labelled(545.1f, 141.8f, "green", "green", "red"),
+        Labelled(671.6f, 148.7f, "green", "red", "green"),
+        Labelled(793.2f, 155.5f, "green", "red", "green"),
+        Labelled(913.0f, 162.3f, "red", "green", "red"),
+        Labelled(140.9f, 256.0f, "green", "green", "red"),
+        Labelled(278.9f, 261.8f, "red", "green", "red"),
+        Labelled(413.5f, 267.7f, "red", "red", "red"),
+        Labelled(543.8f, 273.5f, "red", "red", "red"),
+        Labelled(669.8f, 278.0f, "red", "green", "red"),
+        Labelled(792.7f, 282.5f, "green", "red", "green"),
+        Labelled(911.7f, 287.0f, "red", "red", "red"),
+        Labelled(139.0f, 393.9f, "green", "green", "red"),
+        Labelled(277.6f, 398.3f, "green", "red", "green"),
+        Labelled(413.0f, 401.6f, "red", "red", "red"),
+        Labelled(542.8f, 405.6f, "green", "green", "red"),
+        Labelled(667.8f, 408.4f, "red", "green", "green"),
+        Labelled(790.4f, 411.7f, "green", "green", "red"),
+        Labelled(910.5f, 413.6f, "green", "green", "red"),
+        Labelled(137.7f, 530.4f, "green", "green", "red"),
+        Labelled(277.6f, 531.8f, "green", "red", "green"),
+        Labelled(411.9f, 532.7f, "green", "red", "green"),
+        Labelled(540.9f, 533.8f, "red", "green", "red"),
+        Labelled(665.0f, 535.0f, "green", "green", "red"),
+        Labelled(788.4f, 536.2f, "green", "red", "green"),
+        Labelled(909.4f, 538.9f, "red", "green", "red"),
+        Labelled(134.0f, 664.2f, "green", "red", "green"),
+        Labelled(274.8f, 663.1f, "green", "red", "green"),
+        Labelled(412.9f, 661.8f, "red", "green", "red"),
+        Labelled(544.5f, 660.1f, "red", "red", "red"),
+        Labelled(672.7f, 659.8f, "red", "red", "red"),
+        Labelled(798.2f, 659.6f, "green", "red", "green"),
+        Labelled(919.6f, 659.6f, "red", "red", "red"),
+        Labelled(938.4f, 787.2f, "red", "red", "red"),
+        Labelled(683.1f, 793.1f, "green", "green", "red"),
+        Labelled(812.4f, 790.1f, "red", "red", "red"),
+        Labelled(550.8f, 794.5f, "red", "green", "red"),
+        Labelled(271.3f, 800.6f, "green", "red", "green"),
+        Labelled(413.6f, 797.8f, "green", "green", "red"),
+        Labelled(124.5f, 804.0f, "green", "red", "green"),
+        Labelled(957.3f, 928.4f, "red", "green", "red"),
+        Labelled(827.7f, 931.9f, "red", "red", "red"),
+        Labelled(693.6f, 936.5f, "green", "red", "green"),
+        Labelled(556.6f, 941.3f, "green", "red", "green"),
+        Labelled(413.4f, 946.7f, "red", "red", "red"),
+        Labelled(266.5f, 951.3f, "red", "red", "red"),
+        Labelled(112.6f, 958.1f, "green", "red", "green"),
+    )
+
+    /** The four targets loaded that round, slots 1 to 4. */
+    val DRIFT_TARGETS = listOf("red/green/green", "red/red/green", "green/green/green", "green/red/red")
+
+    /** The 2026-11-19 frame. See [DRIFT_LABELLED]. */
+    fun loadDrift(): CanvasView = load("gems-wall-drift.ppm.gz")
+
     fun load(): CanvasView = load("gems-wall.ppm")
 
     /** The 2026-10-22 target row. See [TARGETS_TYPED]. */

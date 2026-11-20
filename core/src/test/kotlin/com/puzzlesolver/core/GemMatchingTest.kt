@@ -135,8 +135,12 @@ class GemMatchingTest {
         assertEquals(1, GemPalette.nearestColour(60f))      // yellow
         assertEquals(2, GemPalette.nearestColour(140f))     // green
         assertEquals(3, GemPalette.nearestColour(200f))     // blue, which measures cyan
+        assertEquals(3, GemPalette.nearestColour(221f))     // blue at the preset
+        // Green as the locked white balance left it on 2026-11-19: outer rings 170,
+        // centre dots 172, which was the green/blue boundary before blue moved to 208.
+        assertEquals(2, GemPalette.nearestColour(172f))
         // Magenta is a red ring under a cyan glow, not a colour of its own: the arc
-        // purple used to own splits between its neighbours at 275 degrees.
+        // purple used to own splits between its neighbours at 280 degrees.
         assertEquals(0, GemPalette.nearestColour(325f))     // magenta reads red
         assertEquals(3, GemPalette.nearestColour(265f))     // violet reads blue
     }
