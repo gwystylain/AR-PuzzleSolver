@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -267,6 +268,11 @@ private fun StagePage(
         selected >= 0 -> laneGroupOf(team, selected).frame
         else -> team.lanes.firstOrNull { it.groups.isNotEmpty() }?.groups?.first()?.frame ?: 0
     }
+    // The board above is drawn with them gone, so the blues the press has to wait for
+    // would otherwise not show at all.
+    val inTheWay = remember(plan, selected, frame) {
+        if (selected < 0) emptySet() else plan.bluesInTheWay(selected, team.ancestors(selected), frame)
+    }
 
     val lanes = remember(team) { lanesAt.value.position(team).let { (i, o) -> LazyListState(i, o) } }
     LaunchedEffect(lanes) {
@@ -313,6 +319,7 @@ private fun StagePage(
                 state = state,
                 frame = frame,
                 highlight = if (selected >= 0) selected else null,
+                inTheWay = inTheWay,
                 columns = columns,
                 cell = cell,
             )
@@ -513,6 +520,8 @@ private val COLOUR_WALL = Color(0xFF3A3F45)
 private val COLOUR_GUN = Color(0xFFFF8C00)
 private val COLOUR_GUN_SPENT = Color(0xFF5A4630)
 private val COLOUR_TARGET = Color(0xFF2E6BFF)
+/** A third of the way from an empty tile to a blue one, under blue stripes: a blue to wait for. */
+private val COLOUR_TARGET_WAIT = Color(0xFF243E77)
 private val COLOUR_MIRROR = Color(0xFF9B59B6)
 private val COLOUR_RED = Color(0xFFE0262A)
 private val COLOUR_LABEL = Color(0xFF1A1200)
@@ -520,7 +529,8 @@ private val COLOUR_LABEL_SPENT = Color(0xFFB9A98F)
 
 /**
  * The board in [state] on [frame], every gun in its player's colour, the gun of
- * [highlight] ringed and its shot drawn to where it lands. The whole floor in one piece,
+ * [highlight] ringed and its shot drawn to where it lands, across the blues it waits for
+ * -- [inTheWay], gone from [state] -- drawn striped. The whole floor in one piece,
  * drawing only [columns] -- which leaves out the wall between two boards where it is not
  * part of what the team sees.
  */
@@ -531,6 +541,7 @@ private fun Board(
     state: BoardState,
     frame: Int,
     highlight: Int?,
+    inTheWay: Set<Cell>,
     columns: List<Int>,
     cell: Dp,
 ) {
@@ -542,6 +553,7 @@ private fun Board(
             state = state,
             frame = frame,
             highlight = highlight,
+            inTheWay = inTheWay,
             columns = columns,
             modifier = Modifier
                 .width(cell * columns.size)
@@ -557,6 +569,7 @@ private fun Panel(
     state: BoardState,
     frame: Int,
     highlight: Int?,
+    inTheWay: Set<Cell>,
     columns: List<Int>,
     modifier: Modifier,
 ) {
@@ -603,6 +616,7 @@ private fun Panel(
                 val fill = when {
                     c in reds -> COLOUR_RED
                     c in state.targets || c in moving -> COLOUR_TARGET
+                    c in inTheWay -> COLOUR_TARGET_WAIT
                     c in state.mirrors -> COLOUR_MIRROR
                     live && owner[gunIndex] > 0 -> PLAYER_COLOURS[owner[gunIndex] - 1]
                     live -> COLOUR_GUN
@@ -610,6 +624,15 @@ private fun Panel(
                     else -> COLOUR_EMPTY
                 }
                 drawRect(fill, Offset(left, top), Size(cw, ch))
+                if (fill == COLOUR_TARGET_WAIT) clipRect(left, top, left + cw, top + ch) {
+                    // Stripes rising to the right, four to a tile.
+                    val gap = small / 4
+                    var k = -ch
+                    while (k < cw) {
+                        drawLine(COLOUR_TARGET, Offset(left + k, top + ch), Offset(left + k + ch, top), strokeWidth = gap * 0.45f)
+                        k += gap
+                    }
+                }
                 drawRect(COLOUR_LINE, Offset(left, top), Size(cw, ch), style = Stroke(1.dp.toPx()))
                 if (gunIndex >= 0 && c !in reds) {
                     val dir = stage.guns[gunIndex].direction

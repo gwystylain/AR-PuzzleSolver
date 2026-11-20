@@ -87,6 +87,37 @@ class StrategyPlan(
      */
     fun stateAfter(done: Set<Int>): BoardState = replay { it in done }.last()
 
+    /**
+     * The blue tiles in [shot]'s line of fire, short of where it lands, that the shots in
+     * [done] clear. Had one of them still been standing the shot would have landed on it
+     * instead, so they are what the press waits for: on the floor, don't fire until
+     * they have gone. A moving target counts where it stands on [frame].
+     */
+    fun bluesInTheWay(shot: Int, done: Set<Int>, frame: Int): Set<Cell> {
+        val s = shots[shot]
+        val g = stage.guns[s.gun]
+        val path = HashSet<Cell>()
+        var x = g.x + g.direction.dx
+        var y = g.y + g.direction.dy
+        while (x in 0 until stage.width && y in 0 until stage.height) {
+            val c = Cell(x, y)
+            if (c == s.cell) break
+            path += c
+            x += g.direction.dx
+            y += g.direction.dy
+        }
+        val moving = stage.movingTargets
+        val at = stage.targetsAt(frame)
+        return done.mapNotNullTo(HashSet()) { i ->
+            val d = shots[i]
+            when {
+                d.hit != Hit.TARGET -> null
+                moving != null && d.hitIndex < stage.targetCount -> at[moving.ids[d.hitIndex]]
+                else -> d.cell
+            }?.takeIf { it in path }
+        }
+    }
+
     private fun replay(include: (Int) -> Boolean): List<BoardState> {
         val out = ArrayList<BoardState>(shots.size + 1)
         var guns = stage.guns.indices.toSet()

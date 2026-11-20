@@ -1,5 +1,6 @@
 package com.puzzlesolver.core
 
+import com.puzzlesolver.core.puzzle.strategy.Cell
 import com.puzzlesolver.core.puzzle.strategy.StrategyRoom
 import com.puzzlesolver.core.puzzle.strategy.StrategySolver
 import com.puzzlesolver.core.puzzle.strategy.StrategySplits
@@ -100,6 +101,51 @@ class StrategySplitsTest {
             val rows = lane.shots.map { gun(it).y }
             assertTrue("P${lane.player} crosses the board: $rows", !(0 in rows && s.stage.height - 1 in rows))
             assertEquals("P${lane.player} hunts mid-row", 0, lane.middles)
+        }
+    }
+
+    @Test
+    fun `Gridlock 3-4 shows each press the blue the one before it clears`() {
+        // One chain, so every press but the first fires across the blue the press before
+        // it takes: (0,2) right waits for (9,2) to go, then lands on (19,2).
+        val s = bundled.getValue(StrategyRoom.GRIDLOCK).first { it.stage.level == 3 && it.stage.index == 4 }
+        val expected = mapOf(
+            Cell(21, 7) to emptySet(),
+            Cell(9, 9) to setOf(Cell(9, 7)),
+            Cell(0, 2) to setOf(Cell(9, 2)),
+            Cell(19, 0) to setOf(Cell(19, 2)),
+            Cell(21, 6) to setOf(Cell(19, 6)),
+            Cell(2, 9) to setOf(Cell(2, 6)),
+        )
+        for (players in StrategySplits.TEAM_SIZES) {
+            val team = s.forPlayers(players)
+            val got = team.plan.shots.indices.associate { shot ->
+                s.stage.guns[team.plan.shots[shot].gun].cell to team.plan.bluesInTheWay(shot, team.ancestors(shot), 0)
+            }
+            assertEquals("$players players", expected, got)
+        }
+    }
+
+    @Test
+    fun `every blue a press would hit first is shown in its way`() {
+        // On a stage whose targets stand still, a blue between a gun and where its shot
+        // lands can only be passed because a press it waits on took it, so all of them
+        // are in the way -- and nothing off that stretch of the line is.
+        for (s in bundled.values.flatten()) {
+            if (s.stage.movingTargets != null) continue
+            for (players in StrategySplits.TEAM_SIZES) {
+                val team = s.forPlayers(players)
+                for ((shot, p) in team.plan.shots.withIndex()) {
+                    val g = s.stage.guns[p.gun]
+                    val path = generateSequence(Cell(g.x + g.direction.dx, g.y + g.direction.dy)) {
+                        Cell(it.x + g.direction.dx, it.y + g.direction.dy)
+                    }.takeWhile { it.x in 0 until s.stage.width && it.y in 0 until s.stage.height && it != p.cell }.toSet()
+                    val inTheWay = team.plan.bluesInTheWay(shot, team.ancestors(shot), 0)
+                    val where = "${s.stage} for $players, ${p.label}"
+                    assertTrue("$where: $inTheWay off its line", path.containsAll(inTheWay))
+                    assertTrue("$where: misses ${s.stage.targets.filter { it in path } - inTheWay}", inTheWay.containsAll(s.stage.targets.filter { it in path }))
+                }
+            }
         }
     }
 

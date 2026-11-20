@@ -55,7 +55,10 @@ anything that is not the answer is clutter over the board. What it shows:
   reds allow.
 - **Tap any chip** to see the board at that press: everything it waits on already gone,
   the reds where they are for that shot, and where it lands. That is how to find your
-  place again after looking away.
+  place again after looking away. A blue between the gun and where it lands, that an
+  earlier press clears, is drawn striped: on the floor it is still lit until that press
+  lands, and firing before then hits it instead, so don't step on the gun until it has
+  gone.
 
 ## Playing as a team
 
