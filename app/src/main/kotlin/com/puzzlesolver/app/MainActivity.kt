@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.opengl.GLSurfaceView
@@ -21,6 +22,7 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,6 +42,7 @@ import com.puzzlesolver.app.pipeline.ScanPipeline
 import com.puzzlesolver.core.canvas.CanvasSpec
 import com.puzzlesolver.core.puzzle.gems.GemAdapter
 import com.puzzlesolver.core.puzzle.bombs.BombAdapter
+import com.puzzlesolver.core.puzzle.bombs.ScannedWall
 import com.puzzlesolver.core.puzzle.gems.GemColour
 import com.puzzlesolver.core.puzzle.gems.GemPattern
 import com.puzzlesolver.core.puzzle.spot.SpotFinder
@@ -385,6 +388,16 @@ class MainActivity : ComponentActivity() {
                 mines.rescan()
                 Log.i(TAG, "debug: mines rescan")
             }
+            // A board to show as the answer, rows separated by '/', in board.txt's letters:
+            // the answer screen can then be looked at without a wall to scan.
+            intent.getStringExtra("minesboard")?.let { rows ->
+                try {
+                    mines.showBoard(ScannedWall.parse(rows.replace('/', '\n')))
+                    Log.i(TAG, "debug: mines board")
+                } catch (e: IllegalArgumentException) {
+                    Log.w(TAG, "debug: mines board not read: ${e.message}")
+                }
+            }
         }
     }
 
@@ -578,6 +591,21 @@ class MainActivity : ComponentActivity() {
                 val jigsawPhotos by jigsaw.state.collectAsState()
                 val spotState by spot.state.collectAsState()
                 val minesState by mines.state.collectAsState()
+                // Mines is held sideways, whatever the rotation lock says. The wall is 7
+                // buttons by 64: sideways the camera sees about 15 columns at a time
+                // against 9 upright, each stays in view nearly twice as long, and twice
+                // as many lit buttons are there to find the place again by. The answer is
+                // the same shape. Either way up: the camera follows the display, and the
+                // half turn between the two is caught per frame. Every other mode goes
+                // back to the manifest's choice.
+                val minesOnScreen = uiState.isMinesMode && !showLanding && !cameraFree
+                LaunchedEffect(minesOnScreen) {
+                    requestedOrientation = if (minesOnScreen) {
+                        ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    } else {
+                        ActivityInfo.SCREEN_ORIENTATION_FULL_USER
+                    }
+                }
                 // Back from the HUD or a guide goes to the landing page, which is the
                 // one place a room is picked: there is no menu to swipe in any more.
                 BackHandler(enabled = !showLanding) { showLanding = true }

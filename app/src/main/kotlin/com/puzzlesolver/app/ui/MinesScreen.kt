@@ -6,17 +6,20 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -43,7 +46,9 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.coerceIn
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.puzzlesolver.app.mines.MinesController
@@ -55,8 +60,14 @@ import com.puzzlesolver.core.puzzle.bombs.ScannedWall
  * Mines: aim at the green button, tap Scan, pan the wall, and get the answer on a board
  * of the app's own.
  *
- * While aiming and scanning the camera is behind this, with the count running at the top
- * and the wall filling in on a strip as it is read. Once the end is reached the camera is
+ * Laid out sideways: MainActivity holds the screen in landscape while Mines is up, because
+ * the wall is seven buttons by sixty-four and the camera sees nearly twice as much of it
+ * that way. While aiming and scanning the camera is behind this, and everything on top of
+ * it is in a rail down the right-hand side: sideways the screen's height is what the seven
+ * rows need, and the preview already loses a tenth of the frame top and bottom to fill a
+ * screen wider than the camera's 16:9. Strips across the top and bottom took two fifths
+ * of the height and would have sat on the top and bottom rows. The count, and the wall
+ * filling in as it is read, run in the rail. Once the end is reached the camera is
  * covered by the answer: every button on the wall, numbered from the green, in the
  * wall's own two-column panels, with each button to mine ringed and numbered by the
  * detonation it belongs to.
@@ -94,87 +105,82 @@ private fun Scanning(
     Box(Modifier.fillMaxSize()) {
         Column(
             Modifier
-                .align(Alignment.TopCenter)
-                .fillMaxWidth()
-                .systemBarsPadding()
+                .align(Alignment.CenterEnd)
+                .fillMaxHeight()
+                .width(RAIL)
+                .safeDrawingPadding()
+                .padding(8.dp)
+                .background(PANEL, RoundedCornerShape(12.dp))
                 .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Panel {
-                Text(
-                    if (scanning && state.greenFound) "Mines  ·  column ${state.columns} of ${state.expectedColumns}"
-                    else "Mines",
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 17.sp,
-                )
-                Spacer(Modifier.height(4.dp))
-                if (!scanning) {
-                    Text(
-                        "Stand at the green button with all seven rows in view. Tap Scan, then pan slowly right " +
-                            "to the end of the wall.",
-                        color = SUBTLE,
-                        fontSize = 13.sp,
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Chip("All rows in view", state.wallInView)
-                        Chip("Green in view", state.greenFound)
-                    }
-                } else {
-                    LinearProgressIndicator(
-                        progress = { (state.columns.toFloat() / state.expectedColumns).coerceIn(0f, 1f) },
-                        modifier = Modifier.fillMaxWidth(),
-                        color = if (state.lostTrack) AMBER else GO,
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        state.message,
-                        color = if (state.lostTrack) AMBER else Color.White,
-                        fontSize = 14.sp,
-                        fontWeight = if (state.lostTrack) FontWeight.SemiBold else FontWeight.Normal,
-                    )
-                    state.wall?.let { wall ->
-                        Spacer(Modifier.height(8.dp))
-                        Overview(wall, null, state.expectedColumns, Modifier.fillMaxWidth())
-                    }
+            Text(
+                if (scanning && state.greenFound) "Column ${state.columns} of ${state.expectedColumns}" else "Mines",
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 16.sp,
+            )
+            if (!scanning) {
+                // Side by side and short: the rail is narrow, and its height is the
+                // screen's, which the phone's own text size eats into.
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Chip("All rows", state.wallInView)
+                    Chip("Green", state.greenFound)
                 }
-                if (!scanning) {
-                    Spacer(Modifier.height(6.dp))
-                    Text(state.message, color = Color.White, fontSize = 13.sp)
+                Text(
+                    if (state.wallInView && state.greenFound) {
+                        "Ready: tap Scan, then pan slowly right."
+                    } else {
+                        state.message
+                    },
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            } else {
+                LinearProgressIndicator(
+                    progress = { (state.columns.toFloat() / state.expectedColumns).coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth(),
+                    color = if (state.lostTrack) AMBER else GO,
+                )
+                Text(
+                    state.message,
+                    color = if (state.lostTrack) AMBER else Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = if (state.lostTrack) FontWeight.SemiBold else FontWeight.Normal,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                state.wall?.let { wall ->
+                    Overview(wall, null, state.expectedColumns, Modifier.fillMaxWidth(), height = 22.dp)
                 }
             }
-        }
-
-        Column(
-            Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .systemBarsPadding()
-                .padding(12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            if (!scanning) CameraRow(state.camera, onNudgeLattice)
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (scanning) {
-                    OutlinedButton(onClick = onCancel) { Text("Cancel", color = Color.White) }
-                    Button(
-                        onClick = onFinish,
-                        enabled = state.greenFound,
-                        colors = ButtonDefaults.buttonColors(containerColor = GO),
-                    ) { Text("Finish here", color = Color.Black) }
-                } else {
-                    Button(
-                        onClick = onScan,
-                        modifier = Modifier.width(200.dp).height(56.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = GO),
-                    ) { Text("Scan", color = Color.Black, fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+            Spacer(Modifier.weight(1f))
+            if (scanning) {
+                Button(
+                    onClick = onFinish,
+                    enabled = state.greenFound,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = GO),
+                ) { Text("Finish here", color = Color.Black) }
+                OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
+                    Text("Cancel", color = Color.White)
                 }
+            } else {
+                CameraRow(state.camera, onNudgeLattice)
+                Button(
+                    onClick = onScan,
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = GO),
+                ) { Text("Scan", color = Color.Black, fontSize = 18.sp, fontWeight = FontWeight.Bold) }
             }
         }
     }
 }
+
+/** The rail the controls sit in, down the right-hand side while aiming and scanning. */
+private val RAIL = 240.dp
 
 /**
  * Both exposures, and a step either way for the lattice's. Normally left alone: the
@@ -187,19 +193,13 @@ private fun Scanning(
  */
 @Composable
 private fun CameraRow(camera: String, onNudgeLattice: (Boolean) -> Unit) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .background(PANEL, RoundedCornerShape(12.dp))
-            .padding(10.dp),
-    ) {
-        Text(camera, color = SUBTLE, fontSize = 11.sp)
-        Spacer(Modifier.height(6.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Lattice", color = Color.White, fontSize = 12.sp)
             Small("-") { onNudgeLattice(false) }
             Small("+") { onNudgeLattice(true) }
         }
+        Text(camera, color = SUBTLE, fontSize = 9.sp, lineHeight = 11.sp, maxLines = 4, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -226,23 +226,27 @@ private fun Answer(state: MinesController.State, onRescan: () -> Unit, onCorrect
     val wall = state.wall ?: return
     val plan = state.plan
     val rounds = remember(plan, wall) { roundsByCell(plan, wall.cols * wall.rows) }
-    Box(
+    BoxWithConstraints(
         Modifier
             .fillMaxSize()
-            .background(Color(0xFF0B0E11)),
+            .background(Color(0xFF0B0E11))
+            .safeDrawingPadding(),
     ) {
+        // Sideways it is the board's seven rows that have to fit the screen, under one
+        // header row; warnings and the plan in words scroll on below. 26 to 40dp a
+        // button, so around twenty columns show at once against nine upright.
+        val cell = ((maxHeight - 150.dp) / wall.rows).coerceIn(26.dp, 40.dp)
         Column(
             Modifier
                 .fillMaxSize()
-                .systemBarsPadding()
                 .padding(horizontal = 12.dp)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Spacer(Modifier.height(4.dp))
             Panel {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Column(Modifier.widthIn(max = 220.dp)) {
                         Text("Mines", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
                         Spacer(Modifier.height(2.dp))
                         Text(
@@ -252,9 +256,9 @@ private fun Answer(state: MinesController.State, onRescan: () -> Unit, onCorrect
                             fontWeight = FontWeight.SemiBold,
                         )
                     }
+                    Overview(wall, rounds, wall.cols, Modifier.weight(1f), height = 56.dp)
                     if (state.phase == MinesController.Phase.PLANNING) {
                         CircularProgressIndicator(Modifier.size(24.dp), color = GO, strokeWidth = 3.dp)
-                        Spacer(Modifier.width(12.dp))
                     }
                     Button(
                         onClick = onRescan,
@@ -277,9 +281,9 @@ private fun Answer(state: MinesController.State, onRescan: () -> Unit, onCorrect
                 }
             }
 
-            Overview(wall, rounds, wall.cols, Modifier.fillMaxWidth())
+            Board(wall, rounds, onCorrect, cell)
 
-            Board(wall, rounds, onCorrect)
+            if (plan != null) Rounds(plan, wall)
 
             Text(
                 "Columns count from the green button's, rows from the top. Tap a button to correct it; " +
@@ -287,8 +291,6 @@ private fun Answer(state: MinesController.State, onRescan: () -> Unit, onCorrect
                 color = SUBTLE,
                 fontSize = 12.sp,
             )
-
-            if (plan != null) Rounds(plan, wall)
             Spacer(Modifier.height(16.dp))
         }
     }
@@ -337,13 +339,19 @@ private fun Rounds(plan: BombPlan, wall: ScannedWall) {
  * and the mines to place as dots in their round's colour. A map, not something to tap.
  */
 @Composable
-private fun Overview(wall: ScannedWall, rounds: IntArray?, expectedColumns: Int, modifier: Modifier) {
+private fun Overview(
+    wall: ScannedWall,
+    rounds: IntArray?,
+    expectedColumns: Int,
+    modifier: Modifier,
+    height: Dp = 54.dp,
+) {
     val cols = maxOf(wall.cols, expectedColumns)
     Canvas(
         modifier
             .background(Color(0xFF14191F), RoundedCornerShape(8.dp))
             .padding(6.dp)
-            .height(54.dp),
+            .height(height),
     ) {
         val cell = minOf(size.width / cols, size.height / wall.rows)
         val r = cell * 0.38f
@@ -368,9 +376,8 @@ private fun Overview(wall: ScannedWall, rounds: IntArray?, expectedColumns: Int,
 
 /** The wall, big enough to read and tap: scrolls sideways, two columns to a panel. */
 @Composable
-private fun Board(wall: ScannedWall, rounds: IntArray, onCorrect: (Int, Int) -> Unit) {
+private fun Board(wall: ScannedWall, rounds: IntArray, onCorrect: (Int, Int) -> Unit, cell: Dp) {
     val measurer = rememberTextMeasurer()
-    val cell: Dp = 40.dp
     val header: Dp = 18.dp
     val gap: Dp = 6.dp
     val density = LocalDensity.current

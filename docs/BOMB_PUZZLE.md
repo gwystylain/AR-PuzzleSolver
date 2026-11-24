@@ -29,6 +29,46 @@ camera. It is replaced by something much smaller, for three reasons:
   button the user can walk to. The wall's two-column panels, drawn the same way on the
   board, make the count easy.
 
+### Held sideways
+
+From 2026-11-24 the screen is held in landscape while Mines is up, either way round and
+whatever the rotation lock says; every other mode goes back to the manifest's choice. The
+wall is 7 buttons by 64, and every room visit until then was scanned upright, with the
+buttons about 62 px apart in a 540x960 frame:
+
+| | upright | sideways, same distance |
+|---|---|---|
+| Columns in view | about 9 | about 15 |
+| Time a column stays in view at 3.5 columns a second | 2.5 s | 4.4 s |
+| Height the seven rows take | 40% | 70% |
+
+So the count gets nearly twice the looks at every button and twice the lit buttons to
+find its place again by -- on the second scan of 2026-11-14 one or none were in view in
+42% of the lattice frames. The price is room above and below: if 70% is too tight to
+hold steady, standing a sixth further back still shows 18 columns at 60%. The frame is
+the same 518,400 pixels either way, so a frame costs what it did. Nothing in the
+scanner cared which way up it was -- its rendered pans were always wide frames -- and
+the camera follows the display, a half turn between the two landscapes included.
+
+While aiming and scanning, everything on the camera sits in a rail down the right-hand
+side, about a quarter of the screen's width, leaving the preview its full height for the
+seven rows. Strips across the top and bottom were tried first and took two fifths of the
+height -- and the preview, filling a screen wider than the camera's 16:9, already loses
+a tenth of the frame top and bottom -- so the top and bottom rows would have sat under
+them.
+
+The answer is the wall's shape too: the whole-wall map sits beside the title, and the
+board's buttons are sized so all seven rows fit the screen's height, between 26 and
+40dp each.
+
+Seen on the phone at a desk on 2026-11-24: picking Mines turns the screen sideways and
+Back turns it upright again; the rail fits with the phone's own text size; and the first
+scan of 2026-11-14, shown as the answer, has all seven rows on screen with 26 columns at
+once where upright showed about nine. A board can be put on the answer screen without a
+wall, for exactly that: `adb shell am broadcast -a com.puzzlesolver.app.DEBUG -p
+com.puzzlesolver.app --es minesboard "<row 1>/<row 2>/.../<row 7>"`, in `board.txt`'s
+letters. It is planned as a scan would be, and filed with no scan.
+
 ### Two exposures, alternating
 
 Gems' exposure (1/250 s at floor ISO, white balance locked) keeps an LED's face in
@@ -340,6 +380,9 @@ unlit part of the wall.
 
 ### Not yet verified
 
+- **Scanning sideways in the room.** Nothing has been scanned that way yet: the lift's
+  95th percentile now falls on a frame the wall fills more of, and the rows have less
+  room above and below.
 - **The white/blue split in the room** beyond the first scan of 2026-11-14.
 - **The 95th-percentile lift on the phone**, and the 150 bar for an unclipped lit button.
   Measured on the replayed scans.

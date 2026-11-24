@@ -164,6 +164,18 @@ class MinesController(
         plan(corrected)
     }
 
+    /**
+     * Shows [wall] as though it had just been scanned, and plans it. For looking at the
+     * answer away from the wall: there is no other way to get a board on screen. Kept out
+     * of every scan's folder, so a board typed in is never filed with one read off a wall.
+     */
+    fun showBoard(wall: ScannedWall) {
+        cancelRequested.set(true)
+        scanDir = null
+        Log.i(TAG, "board shown by hand: ${wall.cols} columns")
+        plan(wall)
+    }
+
     /** Hands the lattice exposure to the user, or back to the scan. */
     fun nudgeLattice(brighter: Boolean) {
         autoLattice = false
