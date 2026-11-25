@@ -24,6 +24,11 @@ import kotlin.math.min
  *  2. **Unless it leaks.** If the flood reaches the edge of the frame it has got through the
  *     bezel into the neon somewhere, and the level is raised and the flood run again.
  *  3. **Holes are filled**, so a dark boat in the middle is screen too.
+ *  3a. **Unless it got into the neon anyway.** Seeds landing on the neon round a small or
+ *     off-centre screen, or a bezel glowing just over the level, join the neon on without
+ *     the flood reaching the frame's edge. So it is flooded again from the very middle, and
+ *     failing that once higher; if that sits well inside the first outline on all four
+ *     sides, the first was the neon's.
  *  4. **Each side is voted for.** Every row gives a left and right extent and every column
  *     a top and bottom one. Each set is put to a Hough-style vote over lines within 19
  *     degrees of the axis, which is what keeps out the cut corners: a chamfer is a line
@@ -93,7 +98,10 @@ class ScreenLocator {
     private var bright = BooleanArray(0)
     private var inside = BooleanArray(0)
     private var outside = BooleanArray(0)
+    private var saved = BooleanArray(0)
     private var queue = IntArray(0)
+    /** The screen mask's bounding box -- x0, x1, y0, y1 -- and its pixel count. */
+    private val extent = IntArray(5)
     private val histogram = IntArray(256)
     private val votes = IntArray(VOTE_BINS)
 
@@ -113,6 +121,7 @@ class ScreenLocator {
             bright = BooleanArray(n)
             inside = BooleanArray(n)
             outside = BooleanArray(n)
+            saved = BooleanArray(n)
             queue = IntArray(n)
         }
 
@@ -139,22 +148,43 @@ class ScreenLocator {
 
         // Holes: whatever the outside cannot reach from the frame's edge is screen.
         fillHoles(sw, sh)
-        var count = 0
-        var x0 = sw
-        var x1 = -1
-        var y0 = sh
-        var y1 = -1
-        for (y in 0 until sh) {
-            for (x in 0 until sw) {
-                if (!inside[y * sw + x]) continue
-                count++
-                if (x < x0) x0 = x
-                if (x > x1) x1 = x
-                if (y < y0) y0 = y
-                if (y > y1) y1 = y
+        measure(sw, sh)
+
+        // The neon round the screen, joined on without the flood reaching the frame's
+        // edge. The seeds reach a tenth of the frame out from the middle, and with the screen
+        // small or off-centre some land on the neon itself; or the bezel glows just over the
+        // level all the way along. Then the outline is the neon's, the picture a third of
+        // what is compared and the neon's parallax boxed as differences -- every photo of
+        // one round on 2026-11-24, the first photo of three others. Flooding again from the
+        // very middle, at the same level and then once higher, leaves the screen on its own.
+        // The sign it was the neon is that what is left sits inside the first outline on all
+        // four sides; dark art along an edge -- a hill, a trunk -- moves one side at most.
+        val outer = extent.copyOf()
+        inside.copyInto(saved, 0, 0, n)
+        var ring = false
+        for (attempt in 0..1) {
+            val again = if (attempt == 0) threshold else threshold * LEAK_RAISE
+            for (i in 0 until n) bright[i] = (small.data[i].toInt() and 0xFF) >= again
+            val reachX = max(1, sw / MIDDLE_SEED)
+            val reachY = max(1, sh / MIDDLE_SEED)
+            if (floodFromCentre(sw, sh, cx, cy, reachX, reachY) != 0) continue
+            fillHoles(sw, sh)
+            measure(sw, sh)
+            if (within(outer, n)) {
+                ring = true
+                threshold = again
+                break
             }
         }
-        if (count < n * MIN_AREA_FRACTION) return fail("the bright patch is too small to be the screen")
+        if (!ring) {
+            saved.copyInto(inside, 0, 0, n)
+            outer.copyInto(extent)
+        }
+        val x0 = extent[0]
+        val x1 = extent[1]
+        val y0 = extent[2]
+        val y1 = extent[3]
+        if (extent[4] < n * MIN_AREA_FRACTION) return fail("the bright patch is too small to be the screen")
 
         // Extent samples, one per row and column of the screen's box.
         val rows = y1 - y0 + 1
@@ -252,19 +282,26 @@ class ScreenLocator {
     }
 
     /**
-     * Floods [bright] from seeds near the centre into [inside].
+     * Floods [bright] into [inside] from seeds within [reachX] and [reachY] of the centre.
      *
      * @return 0 when it stayed inside the frame, 1 when it reached the frame's edge, and
      *         -1 when there was nothing to start from.
      */
-    private fun floodFromCentre(sw: Int, sh: Int, cx: Int, cy: Int): Int {
+    private fun floodFromCentre(
+        sw: Int,
+        sh: Int,
+        cx: Int,
+        cy: Int,
+        reachX: Int = sw / 10,
+        reachY: Int = sh / 10,
+    ): Int {
         java.util.Arrays.fill(inside, 0, sw * sh, false)
         var head = 0
         var tail = 0
-        var y = cy - sh / 10
-        while (y < cy + sh / 10) {
-            var x = cx - sw / 10
-            while (x < cx + sw / 10) {
+        var y = cy - reachY
+        while (y < cy + reachY) {
+            var x = cx - reachX
+            while (x < cx + reachX) {
                 val i = y * sw + x
                 if (bright[i] && !inside[i]) {
                     inside[i] = true
@@ -287,6 +324,38 @@ class ScreenLocator {
             if (yy < sh - 1) tail = push(i + sw, tail, bright, inside)
         }
         return touched
+    }
+
+    /** [inside]'s bounding box and pixel count, into [extent]. */
+    private fun measure(sw: Int, sh: Int) {
+        var x0 = sw
+        var x1 = -1
+        var y0 = sh
+        var y1 = -1
+        var count = 0
+        for (y in 0 until sh) {
+            for (x in 0 until sw) {
+                if (!inside[y * sw + x]) continue
+                count++
+                if (x < x0) x0 = x
+                if (x > x1) x1 = x
+                if (y < y0) y0 = y
+                if (y > y1) y1 = y
+            }
+        }
+        extent[0] = x0; extent[1] = x1; extent[2] = y0; extent[3] = y1; extent[4] = count
+    }
+
+    /**
+     * Whether [extent] sits inside [outer] by [RING_INSET] of its size on every side and is
+     * still big enough to be the screen.
+     */
+    private fun within(outer: IntArray, n: Int): Boolean {
+        val w = outer[1] - outer[0] + 1
+        val h = outer[3] - outer[2] + 1
+        return extent[4] >= n * MIN_AREA_FRACTION &&
+            extent[0] - outer[0] >= w * RING_INSET && outer[1] - extent[1] >= w * RING_INSET &&
+            extent[2] - outer[2] >= h * RING_INSET && outer[3] - extent[3] >= h * RING_INSET
     }
 
     private fun push(i: Int, tail: Int, allowed: BooleanArray, seen: BooleanArray): Int {
@@ -504,6 +573,16 @@ class ScreenLocator {
 
         /** The screen must cover at least this much of the frame. */
         const val MIN_AREA_FRACTION = 0.04f
+
+        /**
+         * How far inside the first outline, on every side, the flood from the very middle
+         * must sit for the first to have been the neon round the screen. The neon adds 6 to
+         * 22% a side; dark art along an edge takes 2% or less off the others.
+         */
+        const val RING_INSET = 0.03
+
+        /** Seeds for flooding again from the very middle reach 1/40 of the frame out. */
+        const val MIDDLE_SEED = 40
 
         /** Samples a side needs, before and after voting. */
         const val MIN_SIDE_SAMPLES = 8

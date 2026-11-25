@@ -180,9 +180,9 @@ there end to end** — 32 displays found, the two lowest numbers outlined on the
 panels, the ranking steady on every heartbeat — against the reference clip played back on
 a monitor. Nothing has yet been pointed at any of the three rooms themselves.
 
-- `./gradlew :core:test` — 270 tests, 270 passing, including a whole terminal wall read
-  off a real frame and eight rounds of Spot
-- `./gradlew :app:testDebugUnitTest` — 61 tests, 61 passing (camera tuning, the
+- `./gradlew :core:test` — 279 tests, 279 passing, including a whole terminal wall read
+  off a real frame and nine rounds of Spot
+- `./gradlew :app:testDebugUnitTest` — 62 tests, 62 passing (camera tuning, the
   auto-exposure loop and the preview geometry, all pure state machines and maths)
 - `./gradlew :spell:test :spell-client:test :spell-server:test` — 118 tests, 118 passing
   (one more skips unless pointed at a deployed server), including the phone's connection

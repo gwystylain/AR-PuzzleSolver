@@ -17,6 +17,13 @@ import com.puzzlesolver.core.puzzle.terminal.DisplayMeter
  * app and compare cleanly: across thirteen photos the screen's 98th percentile of luma
  * sat at 225 to 239 and its median at 146 to 163. Only the far, first photo of the first
  * set was brighter, at 249, and it was the one photo whose noise floor was raised.
+ *
+ * In the room the 98th percentile is always clipped -- the pictures are white-skied -- so
+ * it is the median that counts, and it aims a quarter of a stop under those photos, at
+ * 140. A round is held at one exposure, and on 2026-11-24 the room showed one picture of
+ * every round 0.45 to 0.8 stops brighter than the rest: with the others at a median of
+ * about 158, 8% of the picture was clipped white and 16% of that one; at about 182, 17% and
+ * 32%.
  */
 class ScreenMeter {
 
@@ -77,7 +84,7 @@ class ScreenMeter {
 
     companion object {
         const val TARGET_BRIGHT = 230
-        const val TARGET_FACE = 152
+        const val TARGET_FACE = 140
         const val CLIP_LEVEL = 245
 
         private const val BRIGHT_PERCENTILE = 0.98f

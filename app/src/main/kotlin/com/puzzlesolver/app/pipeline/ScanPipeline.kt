@@ -192,7 +192,7 @@ class ScanPipeline(
      * a lit thing in a dark room, which the camera's own metering over-exposes -- is the
      * same, and so is the answer.
      */
-    val spotExposure = TerminalExposure()
+    val spotExposure = TerminalExposure(deadbandStops = TerminalExposure.SPOT_DEADBAND_STOPS)
 
     /** Gives Spot's camera back to its own exposure when the screen is lost too long. */
     private val spotCameraWatch = SpotCameraWatch()
@@ -231,9 +231,21 @@ class ScanPipeline(
     @Volatile
     var spotExposureHeld: Boolean = false
         set(value) {
-            if (field != value) Log.i(TAG, if (value) "spot: exposure held for the round" else "spot: exposure free")
+            if (field != value) {
+                Log.i(
+                    TAG,
+                    if (value) "spot: exposure held for the round (${liveSpotReading})" else "spot: exposure free",
+                )
+            }
             field = value
         }
+
+    /**
+     * Whether the camera will stay where it is: held for a round, or the meter done moving
+     * it -- on target, at the end of the dials, or not in charge. A round's first photo waits
+     * for this, and until it is true the screen says the exposure is still being set.
+     */
+    private fun spotExposureSettled(): Boolean = spotExposureHeld || spotExposure.phase !in SPOT_UNSETTLED
 
     /**
      * Where Mines' frames go: upright, half size, and whether each is a lattice frame.
@@ -634,6 +646,11 @@ class ScanPipeline(
         val spotOutline: List<Float> = emptyList(),
         /** One line on what the Spot camera sees: the screen, or why not. */
         val spotStatus: String = "",
+        /**
+         * Whether Spot's exposure will stay put. False while the meter may still move it,
+         * which is when a round's first photo would wait.
+         */
+        val spotExposureSettled: Boolean = true,
         /** One line on what the auto-exposure loop is doing. */
         val autoExposure: String? = null,
         /**
@@ -1720,9 +1737,12 @@ class ScanPipeline(
             // Not while an exposure change is still reaching the sensor, though: on
             // 2026-11-19 a round's first photo was taken in the half second between the meter
             // asking for 1/250 s and the camera leaving its own 1/70 s, and came back a stop
-            // and a half over with the sea blown to white.
+            // and a half over with the sea blown to white. And a round's first photo waits for
+            // the meter to have settled, since the round is held where that photo was taken:
+            // on 2026-11-24 two first photos came a second and a half after the camera's own
+            // exposure, one change into the meter's two, and held their rounds over.
             spotShot.get()?.let { shot ->
-                val settling = spotExposure.phase == TerminalExposure.Phase.APPLYING &&
+                val settling = !spotExposureSettled() &&
                     System.currentTimeMillis() - shot.askedAtMillis < SPOT_SETTLE_MILLIS
                 if (!settling && spotShot.compareAndSet(shot, null)) {
                     val turns = (((source.geometry?.rotationDegrees ?: 0) % 360) + 360) % 360 / 90
@@ -1855,6 +1875,7 @@ class ScanPipeline(
                 terminalOverlay = emptyList(),
                 spotOutline = outline,
                 spotStatus = if (screen != null) "Screen in view" else "Looking for the screen: $liveSpotFailure",
+                spotExposureSettled = spotExposureSettled(),
                 wallDescription = "live camera, no wall fitting",
                 wallConverged = true,
                 wallIssue = null,
@@ -2508,11 +2529,15 @@ class ScanPipeline(
         const val LIVE_SCAN_EVERY_N_FRAMES = 3L
 
         /**
-         * Longest a Spot photo waits for an exposure change to reach the sensor. A change
-         * lands in a few hundred milliseconds; past this the photo is taken anyway, since
-         * the picture may be gone by the time the camera is.
+         * Longest a Spot photo waits for the meter to settle. A change lands in a few
+         * hundred milliseconds, but the meter allows two seconds between changes, and a
+         * first move from the camera's own exposure is often one short. Past this the photo
+         * is taken anyway, since the picture may be gone by the time the camera is.
          */
-        const val SPOT_SETTLE_MILLIS = 1_500L
+        const val SPOT_SETTLE_MILLIS = 3_500L
+
+        /** The Spot meter's phases that may yet move the exposure. */
+        val SPOT_UNSETTLED = setOf(TerminalExposure.Phase.MEASURING, TerminalExposure.Phase.APPLYING)
 
         /** Mines reads every other pixel each way: 960x540 off a 1080p camera. */
         const val MINES_FRAME_STEP = 2

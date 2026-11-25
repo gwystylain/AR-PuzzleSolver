@@ -112,10 +112,16 @@ private fun Taking(
                     fontSize = 13.sp,
                 )
                 if (!finding) {
+                    // Before the first photo only: from then on the exposure is held.
+                    val setting = seen && taken == 0 && !camera.spotExposureSettled
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        if (seen) "Screen in view" else "Looking for the screen",
-                        color = if (seen) OUTLINE else Color(0xFFFFD166),
+                        when {
+                            !seen -> "Looking for the screen"
+                            setting -> "Screen in view  ·  setting the exposure"
+                            else -> "Screen in view"
+                        },
+                        color = if (seen && !setting) OUTLINE else Color(0xFFFFD166),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
                     )

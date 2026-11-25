@@ -293,6 +293,24 @@ class TerminalExposureTest {
     }
 
     @Test
+    fun `Spot's tolerance corrects what the wall's leaves alone`() {
+        // On 2026-11-24 a Spot round was held 0.4 to 0.55 stops over throughout: on target
+        // for the wall, and not for a comparison of seven photos at one exposure.
+        val clock = FakeClock()
+        val wallLoop = TerminalExposure(clock::now)
+        assertFalse(scans(wallLoop, camera(4_000_000L, 2691), clock, wall(0.45f), 10))
+        assertEquals(TerminalExposure.Phase.ON_TARGET, wallLoop.phase)
+
+        val spotLoop = TerminalExposure(clock::now, TerminalExposure.SPOT_DEADBAND_STOPS)
+        val tuning = camera(4_000_000L, 2691)
+        assertTrue(scans(spotLoop, tuning, clock, wall(0.45f), 10))
+        assertEquals(TerminalExposure.Phase.APPLYING, spotLoop.phase)
+        arrive(tuning)
+        assertFalse(scans(spotLoop, tuning, clock, wall(0.1f), 5))
+        assertEquals(TerminalExposure.Phase.ON_TARGET, spotLoop.phase)
+    }
+
+    @Test
     fun `it lands on target and then stays there`() {
         // A phone whose real curve is steeper than the meter's: every correction does
         // half again what was intended. The loop must still converge and then sit still.

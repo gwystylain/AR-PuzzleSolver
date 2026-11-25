@@ -63,6 +63,11 @@ import kotlin.math.roundToLong
 class TerminalExposure(
     /** Wall-clock, injectable so the timings can be tested without waiting them out. */
     private val clock: () -> Long = System::currentTimeMillis,
+    /**
+     * How far off the target is still on target, in stops. Half a stop for the wall; Spot
+     * holds whatever this lands on for a whole round, and wants it closer.
+     */
+    private val deadbandStops: Float = DEADBAND_STOPS,
 ) {
 
     enum class Phase {
@@ -228,7 +233,7 @@ class TerminalExposure(
         }
         val error = median()
         val sign = if (error > 0f) 1 else -1
-        if (abs(error) <= DEADBAND_STOPS) {
+        if (abs(error) <= deadbandStops) {
             // The last move landed. A move later on in the other direction is the wall
             // or the room changing, not this one having overshot.
             lastMoveSign = 0
@@ -360,6 +365,14 @@ class TerminalExposure(
          * half from either edge.
          */
         const val DEADBAND_STOPS = 0.5f
+
+        /**
+         * Spot's: a quarter of a stop. A round is held at whatever the loop lands on, and on
+         * 2026-11-24 four of five rounds were held 0.4 to 0.9 stops over -- inside the
+         * wall's half stop, or one change short of it -- with 13 to 38% of the picture
+         * clipped white. The one held at +0.15 got every difference.
+         */
+        const val SPOT_DEADBAND_STOPS = 0.25f
 
         /** Consecutive readings whose median is acted on. */
         const val AGREE_READINGS = 3

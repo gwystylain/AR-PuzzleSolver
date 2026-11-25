@@ -256,8 +256,11 @@ class SpotController(
     private companion object {
         const val TAG = "SpotController"
 
-        /** Long enough for a camera mid-retune; short enough that a dead one is noticed. */
-        const val SHOT_TIMEOUT_MS = 3_000L
+        /**
+         * Long enough for a camera mid-retune, and for a round's first photo to wait out the
+         * meter (3.5 s at most); short enough that a dead one is noticed.
+         */
+        const val SHOT_TIMEOUT_MS = 5_000L
 
         const val THUMBNAIL_WIDTH = 320
         const val JPEG_QUALITY = 92

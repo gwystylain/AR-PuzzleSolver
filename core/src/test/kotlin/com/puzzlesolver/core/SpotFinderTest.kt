@@ -63,14 +63,19 @@ class SpotFinderTest {
      * along one side, and only one difference -- the wrong one -- was found. Its fifth photo
      * is the one whose missing windows showed that the comparison could not see a small
      * thing taken away.
+     *
+     * Since 2026-11-25 the locator floods again from the very middle when its first outline
+     * may be the neon's, and here, in set 4 and in set 5 that put those outlines on the
+     * screen, and the compared area -- which had reached into the bezel and the neon -- on
+     * the picture alone. The places below are where each thing is in that, checked by eye.
      */
     private val set3 = listOf(
-        0.877f to 0.294f,   // the airship
-        0.554f to 0.585f,   // the small lighthouse, taken away
-        0.352f to 0.780f,   // the middle boat, taken away
-        0.480f to 0.780f,   // the big boat's mast, taken away
-        0.190f to 0.528f,   // the castle's windows, taken away
-        0.258f to 0.172f,   // the cloud, taken away
+        0.924f to 0.225f,   // the airship
+        0.572f to 0.510f,   // the small lighthouse, taken away
+        0.357f to 0.752f,   // the middle boat, taken away
+        0.509f to 0.737f,   // the big boat's mast, taken away
+        0.179f to 0.474f,   // the castle's windows, taken away
+        0.260f to 0.102f,   // the cloud, taken away
     )
 
     /**
@@ -80,11 +85,11 @@ class SpotFinderTest {
      * blank one was the biggest screen, so it became the reference and nothing lined up.
      */
     private val set4 = listOf(
-        0.279f to 0.790f,   // the umbrella and sun lounger, taken away
-        0.650f to 0.520f,   // a swimmer, taken away
-        0.659f to 0.255f,   // a bird, added (ringed)
-        0.315f to 0.220f,   // a flag on the lighthouse, added
-        0.323f to 0.184f,   // a plane, added (ringed)
+        0.259f to 0.805f,   // the umbrella and sun lounger, taken away
+        0.631f to 0.535f,   // a swimmer, taken away
+        0.637f to 0.229f,   // a bird, added (ringed)
+        0.298f to 0.164f,   // a flag on the lighthouse, added
+        0.300f to 0.128f,   // a plane, added (ringed)
         null,               // no picture
     )
 
@@ -93,12 +98,12 @@ class SpotFinderTest {
      * two outlines went round the neon, and on the phone one of them was the reference.
      */
     private val set5 = listOf(
-        0.542f to 0.695f,   // the walker on the path, taken away (ringed)
-        0.884f to 0.411f,   // the palm on the wall, taken away
-        0.458f to 0.212f,   // a moon, added
-        0.272f to 0.665f,   // something in the bushes, added
-        0.600f to 0.809f,   // a second walker, added
-        0.806f to 0.647f,   // a flower on a bush, taken away
+        0.512f to 0.685f,   // the walker on the path, taken away (ringed)
+        0.931f to 0.368f,   // the palm on the wall, taken away
+        0.404f to 0.093f,   // a moon, added
+        0.195f to 0.614f,   // something in the bushes, added
+        0.585f to 0.829f,   // a second walker, added
+        0.838f to 0.647f,   // a flower on a bush, taken away
     )
 
     /**
@@ -140,6 +145,21 @@ class SpotFinderTest {
         null, null, null,   // not told by eye
     )
 
+    /**
+     * The first round of 2026-11-24, the studio again. In every photo the locator's flood
+     * crossed the bezel's glow into the neon round the screen, so the screen was compared
+     * as the middle third of the neon and four of the seven boxes were on the neon. Photo
+     * 6 is the room's brighter picture of the round.
+     */
+    private val set9 = listOf(
+        0.749f to 0.607f,   // a creature behind the tripod, added
+        0.227f to 0.342f,   // a lamp arm by the window, taken away
+        0.104f to 0.817f,   // the floor lamp's base, taken away
+        0.169f to 0.525f,   // the plant pot, turned white
+        0.549f to 0.632f,   // a phone on the table, added
+        null, null,         // not told by eye
+    )
+
     @Test
     fun `finds the moon at the top edge and the rest of a seven photo round`() {
         check(SpotFixture.set("set6"), set6, unknown = setOf(0))
@@ -153,6 +173,37 @@ class SpotFinderTest {
     @Test
     fun `finds the difference in a photo taken at another exposure`() {
         check(SpotFixture.set("set8"), set8, unknown = setOf(4, 5, 6))
+    }
+
+    @Test
+    fun `finds the differences in a round whose every outline went round the neon`() {
+        check(SpotFixture.set("set9"), set9, unknown = setOf(5, 6))
+    }
+
+    @Test
+    fun `the outline is the screen and not the neon round it`() {
+        // Each checked by eye, 2026-11-25. The first is set 9's first photo, where the
+        // bezel glowed just over the flood's level all round. The other two are first
+        // photos of rounds that day with the screen small and low in the frame, where the
+        // flood's seeds reached the neon itself. Every one was outlined round the neon,
+        // 100 to 170 pixels out on each side.
+        val cases = listOf(
+            "set9/1.jpg" to floatArrayOf(216f, 769f, 783f, 768f, 776f, 1069f, 236f, 1094f),
+            "neon/round2-1.jpg" to floatArrayOf(169f, 699f, 873f, 693f, 853f, 1086f, 188f, 1090f),
+            "neon/round4-1.jpg" to floatArrayOf(244f, 693f, 882f, 678f, 868f, 1037f, 261f, 1037f),
+        )
+        val locator = ScreenLocator()
+        for ((name, want) in cases) {
+            val stream = javaClass.classLoader.getResourceAsStream("spot/$name")!!
+            val screen = locator.locate(SpotFixture.read(stream).luma())
+            assertNotNull("$name: ${locator.lastFailure}", screen)
+            for (k in 0 until 8) {
+                assertTrue(
+                    "$name corner ${k / 2} at ${screen!!.corners.joinToString(" ") { "%.0f".format(it) }}",
+                    abs(screen.corners[k] - want[k]) <= 30f,
+                )
+            }
+        }
     }
 
     @Test
@@ -173,7 +224,7 @@ class SpotFinderTest {
     @Test
     fun `tells a picture from the blank screen between pictures`() {
         val locator = ScreenLocator()
-        for (name in listOf("set1", "set2", "set3", "set4", "set5", "set6", "set7", "set8")) {
+        for (name in listOf("set1", "set2", "set3", "set4", "set5", "set6", "set7", "set8", "set9")) {
             for ((i, photo) in SpotFixture.set(name).withIndex()) {
                 val screen = locator.locate(photo.luma())!!
                 val blank = name == "set4" && i == 5
@@ -214,7 +265,7 @@ class SpotFinderTest {
     @Test
     fun `finds the screen in every photo`() {
         val locator = ScreenLocator()
-        for (name in listOf("set1", "set2", "set3", "set4", "set5", "set6", "set7", "set8")) {
+        for (name in listOf("set1", "set2", "set3", "set4", "set5", "set6", "set7", "set8", "set9")) {
             for ((i, photo) in SpotFixture.set(name).withIndex()) {
                 val screen = locator.locate(photo.luma())
                 assertNotNull("$name photo ${i + 1}: ${locator.lastFailure}", screen)
