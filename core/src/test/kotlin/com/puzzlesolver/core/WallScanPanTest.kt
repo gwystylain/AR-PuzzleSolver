@@ -94,16 +94,20 @@ class WallScanPanTest {
         palette: (Int) -> IntArray? = ::ledAtColourExposure,
         wall: BombBoard = truth,
         darkRoom: Boolean = false,
+        brightRoom: Boolean = false,
+        bow: Float = 0f,
     ): RgbImage {
         val img = RgbImage(width, height)
         val panel = when {
             colourFrame -> intArrayOf(2, 2, 3)
             darkRoom -> intArrayOf(4, 4, 6)
+            brightRoom -> intArrayOf(12, 12, 18)
             else -> intArrayOf(45, 43, 78)
         }
         val unlit = when {
             colourFrame -> intArrayOf(5, 5, 6)
             darkRoom -> intArrayOf(20, 18, 32)
+            brightRoom -> intArrayOf(50, 48, 70)
             else -> intArrayOf(176, 166, 196)
         }
         // The room's purple light caught on an unlit button, where the angle is right:
@@ -119,7 +123,14 @@ class WallScanPanTest {
                 val dx = x - width / 2f
                 val dy = y - height / 2f
                 val wx = dx * cr + dy * sr + cameraX
-                val wy = -dx * sr + dy * cr + cameraY
+                var wy = -dx * sr + dy * cr + cameraY
+                if (bow != 0f) {
+                    // A curved wall seen at an angle: every row sags toward the frame's
+                    // edges, the lower rows more, the bottom one by [bow] pitches.
+                    val down = (wy / pitch / (wall.rows - 1)).coerceIn(0f, 1f)
+                    val edge = dx / (width / 2f)
+                    wy -= bow * pitch * down * edge * edge
+                }
                 val col = Math.round(wx / pitch)
                 val row = Math.round(wy / pitch)
                 var rgb = panel
@@ -138,6 +149,9 @@ class WallScanPanTest {
                     rgb = when {
                         led == null -> if (d > face) panel else if (glinting) glint else unlit
                         colourFrame -> if (d <= face) led else panel
+                        // A brighter room's LED, held sideways and further off: clipped
+                        // only at its middle, the rest of the face short of 150.
+                        brightRoom && d <= face -> if (d <= face * 0.5f) intArrayOf(255, 255, 255) else intArrayOf(110, 105, 125)
                         d <= face -> intArrayOf(255, 255, 255)
                         d <= glow -> {
                             // A white bloom, the same for every colour.
@@ -258,6 +272,55 @@ class WallScanPanTest {
         assertTrue("lost the count", read.endSeen)
         assertEquals(wall.cols, read.cols)
         assertEquals(wall.toString().trim(), read.describe().trim())
+    }
+
+    /** A pan of [truth] at four columns a second with [render]'s options, read to the end. */
+    private fun pan(render: (x: Float, y: Float, colour: Boolean) -> RgbImage): com.puzzlesolver.core.puzzle.bombs.ScannedWall {
+        val scanner = WallScanner(log = { if (it.contains("unplaced") || it.contains("none")) println("  $it") })
+        val frameNanos = 33_333_333L
+        val startX = width / 2f - pitch * 1.5f
+        val endX = truth.cols * pitch + width / 2f - pitch * 2f
+        val rowsCentre = (truth.rows - 1) * pitch / 2f
+        var t = 0L
+        var n = 0
+        while (true) {
+            val x = startX + t / 1e9f * 4f * pitch
+            if (x > endX) break
+            val colour = n % 2 == 1
+            scanner.offer(render(x, rowsCentre, colour), if (colour) WallScanner.Exposure.COLOUR else WallScanner.Exposure.LATTICE, t)
+            t += frameNanos
+            n++
+        }
+        val wall = scanner.result()
+        assertNotNull("the green was never found", wall)
+        println(wall!!.describe())
+        wall.warnings.forEach { println("warning: $it") }
+        return wall
+    }
+
+    @Test
+    fun `rows that bow across a wide frame are followed to the frame's edges`() {
+        // 2026-11-24, held sideways: sixteen columns in view of a curved wall seen at an
+        // angle, the bottom row sagging more than a pitch at the frame's edges. On
+        // straight rows the bottom row's buttons near the edges were read off the panel
+        // beside them -- a lit one read dark, refusing the frame -- and lit buttons in
+        // the bottom rows were missed outright: three across the scans that reached the
+        // end that evening. Straight, this pan reads a wrong board.
+        val wall = pan { x, y, colour -> render(x, y, 0f, colour, bow = 1.1f) }
+        assertTrue(wall.endSeen)
+        assertEquals(expected, wall.describe().trim())
+    }
+
+    @Test
+    fun `lit buttons clipped only at their middle are lit`() {
+        // 2026-11-24 again: a brighter room, unlit buttons at 50, and the LEDs' faces
+        // clipped over a third of the disc with the rest near 110. Lit took half the face
+        // clipped, or a face of 150 and two and a half times the typical button; these
+        // were neither, read dark where the count had them lit, and four scans of five
+        // were lost.
+        val wall = pan { x, y, colour -> render(x, y, 0f, colour, brightRoom = true) }
+        assertTrue(wall.endSeen)
+        assertEquals(expected, wall.describe().trim())
     }
 
     @Test

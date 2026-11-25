@@ -378,14 +378,44 @@ unlit part of the wall.
   as before. `WallScanPanTest` renders a dark wall with forty unlit columns and glints on
   its buttons: the old bar loses the count there, the new one reads it exactly.
 
+### In the room, 2026-11-24
+
+The first visit held sideways: five scans, frames and log in
+`testVideos/phone-backup/2026-11-24/`. The user called one good and said the rest lost
+track however carefully the camera was held. Every scan stood about as far back --
+buttons 47-52 px apart, 16-17 columns in view -- and panned at 100-250 px/s.
+
+- **Lit LEDs read dark.** The room was brighter than on 2026-11-19 (unlit buttons at 50,
+  not 20), and the LEDs' faces in the lattice frames came up at 100-150 with a fifth to
+  two fifths of them clipped: short of the half clipped that made a face lit outright, and
+  of the 150 bar added for the glints of 2026-11-19. Read dark where the count had them
+  lit, two at once refused the frame ("lit buttons disagree with the count") and the scan
+  was lost within seconds. Joined to the boards, every lit LED clips at least partly and
+  nothing else does, so lit is now a tenth of the face clipped; the 2026-11-19 glints,
+  never clipped, stay unlit. A frame bright enough for its unlit buttons to sit near
+  clipping still takes half a face -- the reference footage, where they sat at 190 and a
+  lit LED's glare partly clips its neighbours -- and the room's frames, at 20 to 90, are
+  nowhere near. A lit face's colour now comes off its glow, never the face
+  itself, which at this exposure is washed toward white.
+- **The rows bow.** Sixteen columns of a curved wall, seen at an angle, put more than a
+  pitch of sag in the bottom row across a frame, and straight rows put the buttons near
+  the frame's edges beside their discs. That refused frames too -- and it lost lit
+  buttons from the boards of the scans that did reach the end: (35, 7) on the good one,
+  (22, 7) and (40, 6) on the other, each plain in frames where it sat mid-screen. Rows
+  are now fitted as curves wherever six or more discs span six pitches (see
+  `WallScanner.fitRow`), with up to two pitches of bend.
+- **Replayed**, the five scans place 435 of 435, 295 of 303, 600 of 600, 332 of 336 and
+  427 of 427 lattice frames, where they placed 395, 171, 320, 330 and 176; all three that
+  were panned to the end reach it, and the other two follow the pan as far as the user
+  went. Every earlier room scan reads its board as before. `WallScanPanTest` has a pan of
+  a brighter wall with half-clipped LEDs and one of rows bowing 1.1 pitches; the old
+  scanner fails both.
+
 ### Not yet verified
 
-- **Scanning sideways in the room.** Nothing has been scanned that way yet: the lift's
-  95th percentile now falls on a frame the wall fills more of, and the rows have less
-  room above and below.
 - **The white/blue split in the room** beyond the first scan of 2026-11-14.
-- **The 95th-percentile lift on the phone**, and the 150 bar for an unclipped lit button.
-  Measured on the replayed scans.
+- **The lit and curved-row changes of 2026-11-25 on the phone.** Measured on the replayed
+  scans.
 - **White balance itself** is still whatever the camera began with. A fixed preset for the
   colour frames would take the tint away at the source; it changes every colour the face
   vote sees, so it wants a visit to the room.

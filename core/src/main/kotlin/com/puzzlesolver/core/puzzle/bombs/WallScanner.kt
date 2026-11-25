@@ -593,12 +593,14 @@ class WallScanner(
     /**
      * Reads every button the lattice frame models.
      *
-     * Lit means one of two things. At the lattice exposure a lit button clips its face:
-     * all three channels for a white one, only its own for a green or a red, which is
-     * why the test is any channel rather than all of them. At anything dark enough for
-     * the face to keep its colour, a lit button is simply far brighter than the frame's
-     * typical button, which is unlit. The colour is then read off whichever survives:
-     * the glow round a clipped face, or the face itself.
+     * Lit means some of the face is clipped: [LIT_CLIPPED] of it (more in a bright frame;
+     * see [BRIGHT_FRAME_BUTTONS]), on any channel -- all
+     * three for a white LED, only its own for a green or a red. At the lattice exposure a
+     * lit LED clips and nothing else does: not an unlit button however the room's light
+     * catches it, nor one in a lit neighbour's glare. The colour is then read off the glow
+     * round the face, never the face: what is left of it unclipped at this exposure is
+     * washed toward white, and voted as a face it would outvote the colour frames, which
+     * exist to read it. The glow's vote counts only where the colour frames have none.
      */
     private fun readLatticeCells(image: RgbImage, lattice: FrameLattice): List<Look?> {
         val pitch = lattice.pitch
@@ -608,17 +610,16 @@ class WallScanner(
         }
         val brightness = faces.mapNotNull { it?.brightness }
         if (brightness.isEmpty()) return faces.map { null }
-        val typical = median(brightness)
         // The lower quartile, not the median, for the camera to be steered by: a quarter
         // of the buttons would have to be lit before a lit one could stand in for the
         // unlit ones, where half will do it to a median.
         buttonBrightness = brightness.sorted()[brightness.size / 4]
 
-        val lit = BooleanArray(faces.size) { k ->
-            val face = faces[k] ?: return@BooleanArray false
-            face.clipped >= CLIPPED_LIT ||
-                (face.brightness >= UNCLIPPED_LIT && face.brightness >= typical * LIT_RATIO)
-        }
+        // A frame bright enough for its unlit buttons to sit near clipping -- the reference
+        // footage, at the camera's own exposure, had them at 190 -- clips the neighbours
+        // of a lit LED partly too, so there it takes half a face.
+        val litClipped = if (median(brightness) < BRIGHT_FRAME_BUTTONS) LIT_CLIPPED else LIT_CLIPPED_BRIGHT
+        val lit = BooleanArray(faces.size) { k -> (faces[k]?.clipped ?: 0f) >= litClipped }
 
         // The panel's own colour, from between the unlit buttons. Not from round the lit
         // one being read: a green or blue LED lights its whole neighbourhood, so the
@@ -641,10 +642,8 @@ class WallScanner(
         val halo = FloatArray(3)
         return lattice.cells.mapIndexed { k, c ->
             val face = faces[k] ?: return@mapIndexed null
-            val clipped = face.clipped >= CLIPPED_LIT
             when {
                 !lit[k] -> Look(false, -1, 0f, false)
-                !clipped -> Look(true, face.button, face.confidence * FACE_WEIGHT, true, "face $face")
                 panel == null -> Look(true, -1, 0f, false, "clipped, no panel to measure the glow against")
                 !inside(image, c.x, c.y, pitch * ButtonPalette.HALO_OUTER_FRACTION + 1f) ->
                     Look(true, -1, 0f, false, "clipped, glow off the frame")
@@ -859,7 +858,8 @@ class WallScanner(
 
         val rowA = FloatArray(ROWS)
         val rowB = FloatArray(ROWS)
-        if (!findRows(columns, xr, yr, pitch, rowA, rowB)) return null
+        val rowC = FloatArray(ROWS)
+        if (!findRows(columns, xr, yr, pitch, rowA, rowB, rowC)) return null
 
         // Every disc onto its row; a column keeps only discs that sit on one.
         val cells = ArrayList<LocalCell>()
@@ -880,7 +880,7 @@ class WallScanner(
                 var bestR = -1
                 var bestD = Float.MAX_VALUE
                 for (r in 0 until ROWS) {
-                    val d = abs(yr[i] - (rowA[r] + rowB[r] * xr[i]))
+                    val d = abs(yr[i] - rowY(rowA[r], rowB[r], rowC[r], xr[i]))
                     if (d < bestD) {
                         bestD = d
                         bestR = r
@@ -908,11 +908,15 @@ class WallScanner(
             fitLine(xs.toFloatArray(), ys.toFloatArray(), pitch, colA, colB, 0)
 
             for (r in 0 until ROWS) {
-                // Intersect the column line x = cA + cB*y with the row line y = rA + rB*x.
-                val denom = 1f - rowB[r] * colB[0]
-                if (abs(denom) < 1e-3f) continue
-                val y = (rowA[r] + rowB[r] * colA[0]) / denom
-                val x = colA[0] + colB[0] * y
+                // Where the column line x = cA + cB*y meets the row's curve. The column is
+                // all but upright once the roll is off, so a few rounds of each in turn
+                // settle it.
+                var x = colA[0]
+                var y = rowY(rowA[r], rowB[r], rowC[r], x)
+                repeat(4) {
+                    x = colA[0] + colB[0] * y
+                    y = rowY(rowA[r], rowB[r], rowC[r], x)
+                }
                 cells.add(LocalCell(localIndex[k], r, x * cr - y * sr, x * sr + y * cr, atRow[r] >= 0))
             }
             if (localIndex[k] > lastColumn) {
@@ -940,9 +944,10 @@ class WallScanner(
     private class Link(val distance: Float, val disc: Int, val chain: Int)
 
     /**
-     * The seven rows, found across the whole frame, into [rowA] and [rowB] as lines
-     * `y = a + b*x` in de-rolled coordinates, top row first. False, with [lastFailure]
-     * set, when the frame does not show exactly seven.
+     * The seven rows, found across the whole frame, into [rowA], [rowB] and [rowC] as
+     * curves `y = a + b*x + c*x*x` in de-rolled coordinates, top row first (see [fitRow]
+     * for why curves). False, with [lastFailure] set, when the frame does not show
+     * exactly seven.
      *
      * Every disc is linked to the disc level with it in the column before -- or the one
      * before that, past a disc lost in a neighbour's glare -- and the chains that form are
@@ -970,6 +975,7 @@ class WallScanner(
         pitch: Float,
         rowA: FloatArray,
         rowB: FloatArray,
+        rowC: FloatArray,
     ): Boolean {
         val tolerance = ROW_TOLERANCE * pitch
         val chains = ArrayList<ArrayList<Int>>()
@@ -1046,14 +1052,15 @@ class WallScanner(
         val m = candidates.size
         val a = FloatArray(m)
         val b = FloatArray(m)
-        for ((r, c) in candidates.withIndex()) {
-            val xs = FloatArray(chains[c].size) { xr[chains[c][it]] }
-            val ys = FloatArray(chains[c].size) { yr[chains[c][it]] }
-            fitLine(xs, ys, pitch, a, b, r)
+        val c = FloatArray(m)
+        for ((r, chain) in candidates.withIndex()) {
+            val xs = FloatArray(chains[chain].size) { xr[chains[chain][it]] }
+            val ys = FloatArray(chains[chain].size) { yr[chains[chain][it]] }
+            fitRow(xs, ys, pitch, a, b, c, r)
         }
         val middle = median(columns.map { col -> median(col.map { xr[it] }) })
-        val order = (0 until m).sortedBy { a[it] + b[it] * middle }
-        val heights = order.map { a[it] + b[it] * middle }
+        val order = (0 until m).sortedBy { rowY(a[it], b[it], c[it], middle) }
+        val heights = order.map { rowY(a[it], b[it], c[it], middle) }
 
         // The seven adjacent candidates, evenly spaced, that run through the most columns.
         var best = -1
@@ -1076,8 +1083,55 @@ class WallScanner(
             val i = order[best + r]
             rowA[r] = a[i]
             rowB[r] = b[i]
+            rowC[r] = c[i]
         }
         return true
+    }
+
+    private fun rowY(a: Float, b: Float, c: Float, x: Float): Float = a + b * x + c * x * x
+
+    /**
+     * One row of discs as a curve `y = a + b*x + c*x*x`, or a line where a curve is not
+     * called for.
+     *
+     * The wall is curved, and seen at an angle its rows bow. Upright the frame held nine
+     * columns and a line was close enough. Sideways, from 2026-11-24, it holds sixteen or
+     * more, and the bottom row of a frame that day sagged two thirds of a pitch below the
+     * line through its ends: discs at the ends fell outside a row's tolerance and the
+     * rows came out unevenly spaced, and a button placed on the line at the edge of the
+     * frame landed on its neighbour -- reading a lit one dark, or a lit neighbour into a
+     * dark one, either of which refuses the frame. A row needs [CURVE_SPAN] pitches of
+     * discs for its bend to be trusted, and a bend of more than [MAX_SAG] of a pitch across
+     * them is a fit gone wrong rather than the wall, and falls back to the line.
+     */
+    private fun fitRow(xs: FloatArray, ys: FloatArray, pitch: Float, a: FloatArray, b: FloatArray, c: FloatArray, slot: Int) {
+        fitLine(xs, ys, pitch, a, b, slot)
+        c[slot] = 0f
+        val n = xs.size
+        val spread = xs.max() - xs.min()
+        if (n < CURVE_DISCS || spread < CURVE_SPAN * pitch) return
+        // Least squares in x about its mean, for conditioning.
+        val mx = xs.average()
+        var s1 = 0.0; var s2 = 0.0; var s3 = 0.0; var s4 = 0.0
+        var t0 = 0.0; var t1 = 0.0; var t2 = 0.0
+        for (i in 0 until n) {
+            val u = xs[i] - mx
+            val u2 = u * u
+            s1 += u; s2 += u2; s3 += u2 * u; s4 += u2 * u2
+            t0 += ys[i]; t1 += u * ys[i]; t2 += u2 * ys[i]
+        }
+        // Solve [n s1 s2; s1 s2 s3; s2 s3 s4] [p q r] = [t0 t1 t2] by Cramer's rule.
+        val det = n * (s2 * s4 - s3 * s3) - s1 * (s1 * s4 - s3 * s2) + s2 * (s1 * s3 - s2 * s2)
+        if (abs(det) < 1e-9) return
+        val p = (t0 * (s2 * s4 - s3 * s3) - s1 * (t1 * s4 - s3 * t2) + s2 * (t1 * s3 - s2 * t2)) / det
+        val q = (n * (t1 * s4 - s3 * t2) - t0 * (s1 * s4 - s3 * s2) + s2 * (s1 * t2 - t1 * s2)) / det
+        val r = (n * (s2 * t2 - t1 * s3) - s1 * (s1 * t2 - t1 * s2) + t0 * (s1 * s3 - s2 * s2)) / det
+        val half = spread / 2.0
+        if (abs(r) * half * half > MAX_SAG * pitch) return
+        // Back to y = a + b*x + c*x*x.
+        c[slot] = r.toFloat()
+        b[slot] = (q - 2 * r * mx).toFloat()
+        a[slot] = (p - q * mx + r * mx * mx).toFloat()
     }
 
     /**
@@ -1285,25 +1339,32 @@ class WallScanner(
         private const val END_CLEARANCE = 1.5f
         private const val END_FRAMES = 3
 
-        /** A face this much clipped is lit, at the lattice exposure. */
-        private const val CLIPPED_LIT = 0.45f
-
-        /** A face this much brighter than the frame's typical button is lit, at a darker one. */
-        private const val LIT_RATIO = 2.5f
+        /**
+         * A face this much clipped is lit, at the lattice exposure.
+         *
+         * Brightness alone could not do it. A lit face used to need nearly half of itself
+         * clipped, or failing that to be two and a half times the frame's typical button
+         * and, from 2026-11-20, at least 150 on its brightest channel: the room's purple
+         * light catching unlit buttons on 2026-11-19 had come up at 60 to 120, read lit,
+         * and lost the count. On 2026-11-24, held sideways and in a brighter room -- unlit
+         * buttons at 50, not 20 -- the lit LEDs' faces came up at 100 to 150 with a fifth
+         * to two fifths of them clipped, short of both tests. Read dark where the count had
+         * them lit, they refused frame after frame, and four scans of five were lost.
+         *
+         * The reflections never clip; the LEDs always do, at least partly. Joined to the
+         * boards the room's scans read, from 2026-11-07 to -24: at a tenth, the lit LEDs
+         * read dark on the last of those scans fall from 167 looks to 4, and from 5 to 0,
+         * 8 to 0 and 9 to 5 on 2026-11-14, -12 and -07; the reflections of 2026-11-19 stay
+         * unlit.
+         */
+        private const val LIT_CLIPPED = 0.10f
 
         /**
-         * And never below this, unclipped. At 1/60 s and ISO 6400 an unlit button in the
-         * room's purple light comes up at 60 to 120 on its brightest channel -- unclipped,
-         * a reflection, and on a dark frame two and a half times the typical button. With
-         * the bar at the colour reading's 60, that made it lit. On 2026-11-19 the pan
-         * reached a stretch of wall with nothing lit, the replay read 629 such buttons
-         * lit, and frame after frame was refused because those "lit" buttons sat where
-         * the count had recorded dark ones: tracked to column 23, lost for good after it.
-         * A real lit button at this exposure clips. On the room's pans of 2026-11-07, -12,
-         * -14 and -19 the unclipped faces at 150 or more were the faces of lit LEDs,
-         * the reflections 119 or less; with the bar here every board reads as before.
+         * Where the frame's typical button is this bright, [LIT_CLIPPED_BRIGHT] instead. The
+         * room's lattice frames have had it at 20 to 90; the reference footage at 190.
          */
-        private const val UNCLIPPED_LIT = 150f
+        private const val BRIGHT_FRAME_BUTTONS = 120f
+        private const val LIT_CLIPPED_BRIGHT = 0.45f
 
         /** Margin from the frame edge for a cell to be read at all, in pitches. */
         private const val EDGE_MARGIN = 0.3f
@@ -1320,6 +1381,11 @@ class WallScanner(
         private const val MIN_MARGIN = 0.15f
 
         private const val MAX_ROLL = 0.35f
+
+        /** See [fitRow]: the discs, and the span in pitches, a row needs for its bend to count. */
+        private const val CURVE_DISCS = 6
+        private const val CURVE_SPAN = 6f
+        private const val MAX_SAG = 2.0f
 
         /**
          * See [splitWhiteBlue]. The groups' middles must be this many times apart in red
