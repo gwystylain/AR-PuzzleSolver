@@ -134,6 +134,14 @@ else
   echo "  no mines scans -- tap Scan in Mines mode"
 fi
 
+# 5c. Link scans, kept the same way. LinkReplay reads a folder as it stands.
+if MSYS_NO_PATHCONV=1 "$ADB" shell ls "$REMOTE/link" >/dev/null 2>&1; then
+  MSYS_NO_PATHCONV=1 "$ADB" pull "$REMOTE/link" "$OUT/link" >/dev/null 2>&1
+  echo "  link/ ($(ls -d "$OUT"/link/*/ 2>/dev/null | wc -l | tr -d ' ') scans)"
+else
+  echo "  no link scans -- tap Scan in Link mode"
+fi
+
 # 6. The Log button's files. The same heartbeat as logcat-app.txt, but written on the
 #    phone as it happened, so it is complete however long ago the run was -- the ring
 #    buffer behind logcat-app.txt wraps in minutes. Since the Export button went, this

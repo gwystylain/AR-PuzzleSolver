@@ -45,6 +45,8 @@ import com.puzzlesolver.core.puzzle.bombs.BombAdapter
 import com.puzzlesolver.core.puzzle.bombs.ScannedWall
 import com.puzzlesolver.core.puzzle.gems.GemColour
 import com.puzzlesolver.core.puzzle.gems.GemPattern
+import com.puzzlesolver.core.puzzle.link.LinkScanner
+import com.puzzlesolver.core.puzzle.link.LinkWall
 import com.puzzlesolver.core.puzzle.spot.SpotFinder
 import com.puzzlesolver.core.puzzle.terminal.TerminalAdapter
 import com.puzzlesolver.app.record.LogCapture
@@ -53,7 +55,9 @@ import com.puzzlesolver.app.jigsaw.JigsawController
 import com.puzzlesolver.app.spell.SpellController
 import com.puzzlesolver.app.spot.SpotController
 import com.puzzlesolver.app.mines.MinesController
+import com.puzzlesolver.app.link.LinkController
 import com.puzzlesolver.app.ui.LandingScreen
+import com.puzzlesolver.app.ui.LinkScreen
 import com.puzzlesolver.app.ui.PuzzleSolverTheme
 import com.puzzlesolver.app.ui.ScanScreen
 import com.puzzlesolver.app.ui.JigsawScreen
@@ -177,6 +181,9 @@ class MainActivity : ComponentActivity() {
      * Rescan is how it is thrown away.
      */
     private lateinit var mines: MinesController
+
+    /** Link: the wall read in one pan while it is lit, and the pairs' pressing order. Kept like Mines'. */
+    private lateinit var link: LinkController
 
     /** A guide, Spellinator, Jumble, Sequence, Jigsaw or Simon Says is up, so the camera is off. */
     private val cameraFree: Boolean
@@ -388,6 +395,28 @@ class MainActivity : ComponentActivity() {
                 mines.rescan()
                 Log.i(TAG, "debug: mines rescan")
             }
+            // Link's, the same way, and a board typed in: rows separated by '/', a letter
+            // (R Y G B P) for every lit button and '.' for every dark one.
+            if (intent.getBooleanExtra("linkscan", false)) {
+                link.startScan()
+                Log.i(TAG, "debug: link scan")
+            }
+            if (intent.getBooleanExtra("linkfinish", false)) {
+                link.finishScan()
+                Log.i(TAG, "debug: link finish")
+            }
+            if (intent.getBooleanExtra("linkrescan", false)) {
+                link.rescan()
+                Log.i(TAG, "debug: link rescan")
+            }
+            intent.getStringExtra("linkboard")?.let { rows ->
+                try {
+                    link.showBoard(LinkWall.parse(rows))
+                    Log.i(TAG, "debug: link board")
+                } catch (e: IllegalArgumentException) {
+                    Log.w(TAG, "debug: link board not read: ${e.message}")
+                }
+            }
             // A board to show as the answer, rows separated by '/', in board.txt's letters:
             // the answer screen can then be looked at without a wall to scan.
             intent.getStringExtra("minesboard")?.let { rows ->
@@ -567,6 +596,8 @@ class MainActivity : ComponentActivity() {
         jigsaw = JigsawController(this)
         mines = MinesController(this) { pipeline.tuning() }
         pipeline.minesFrames = mines::onFrame
+        link = LinkController(this) { pipeline.tuning() }
+        pipeline.linkFrames = link::onFrame
 
         glView = GLSurfaceView(this).apply {
             preserveEGLContextOnPause = true
@@ -591,16 +622,18 @@ class MainActivity : ComponentActivity() {
                 val jigsawPhotos by jigsaw.state.collectAsState()
                 val spotState by spot.state.collectAsState()
                 val minesState by mines.state.collectAsState()
+                val linkState by link.state.collectAsState()
                 // Mines is held sideways, whatever the rotation lock says. The wall is 7
                 // buttons by 64: sideways the camera sees about 15 columns at a time
                 // against 9 upright, each stays in view nearly twice as long, and twice
                 // as many lit buttons are there to find the place again by. The answer is
                 // the same shape. Either way up: the camera follows the display, and the
-                // half turn between the two is caught per frame. Every other mode goes
-                // back to the manifest's choice.
-                val minesOnScreen = uiState.isMinesMode && !showLanding && !cameraFree
-                LaunchedEffect(minesOnScreen) {
-                    requestedOrientation = if (minesOnScreen) {
+                // half turn between the two is caught per frame. Link is the same wall's
+                // shape -- two bands of panels some sixty buttons long -- and goes sideways
+                // too. Every other mode goes back to the manifest's choice.
+                val sidewaysOnScreen = (uiState.isMinesMode || uiState.isLinkMode) && !showLanding && !cameraFree
+                LaunchedEffect(sidewaysOnScreen) {
+                    requestedOrientation = if (sidewaysOnScreen) {
                         ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                     } else {
                         ActivityInfo.SCREEN_ORIENTATION_FULL_USER
@@ -780,6 +813,22 @@ class MainActivity : ComponentActivity() {
                                     onNudgeLattice = { mines.nudgeLattice(it) },
                                 )
                             }
+                        } else if (uiState.isLinkMode) {
+                            // Like Mines: the camera behind it while scanning, the answer over it.
+                            {
+                                LinkScreen(
+                                    state = linkState,
+                                    onScan = { link.startScan() },
+                                    onFinish = { link.finishScan() },
+                                    onRescan = { link.rescan() },
+                                    onCorrect = { panel, cell -> link.correctCell(panel, cell) },
+                                    onStart = { link.setStart(it) },
+                                    onNext = { link.nextStep() },
+                                    onBack = { link.previousStep() },
+                                    onJump = { link.jumpToPanel(it) },
+                                    onNudgeExposure = { link.nudgeExposure(it) },
+                                )
+                            }
                         } else null,
                     )
                     LandingScreen(
@@ -793,6 +842,7 @@ class MainActivity : ComponentActivity() {
                         onSelectJigsaw = { enterJigsaw() },
                         onSelectSimon = { enterSimon() },
                         onSelectSpot = { selectPuzzleMode(SpotFinder.ID) },
+                        onSelectLink = { selectPuzzleMode(LinkScanner.ID) },
                         debug = showDebugPanel,
                         onToggleDebug = { showDebugPanel = !showDebugPanel },
                     )
@@ -817,7 +867,7 @@ class MainActivity : ComponentActivity() {
                 // discovered afterwards is not one to leave to memory. An explicit Stop
                 // is respected.
                 val liveMode = uiState.isGemsMode || uiState.isTerminalMode || uiState.isSpotMode ||
-                    uiState.isMinesMode
+                    uiState.isMinesMode || uiState.isLinkMode
                 if (liveMode && !cameraFree && !loggingSuppressed && !logCapture.isRunning) {
                     startLogging()
                 }
@@ -1047,6 +1097,7 @@ class MainActivity : ComponentActivity() {
         spot.release()
         jigsaw.release()
         mines.release()
+        link.release()
         probe?.close()
         pipeline.release()
         pipeline.frameSource.get()?.close()
@@ -1089,7 +1140,7 @@ class MainActivity : ComponentActivity() {
         leaveCameraFree()
         pipeline.selectPuzzleMode(id)
         val wantsLiveCamera = id == GemAdapter.ID || id == TerminalAdapter.ID || id == SpotFinder.ID ||
-            id == BombAdapter.ID
+            id == BombAdapter.ID || id == LinkScanner.ID
         if (wantsLiveCamera != usingLiveCamera) {
             usingLiveCamera = wantsLiveCamera
             startLiveSource()

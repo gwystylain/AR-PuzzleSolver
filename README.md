@@ -72,9 +72,9 @@ supports that, though no puzzle in the app uses it since the sudoku and nonogram
 were removed. Mines waits for the whole wall: it is scanned in one pan, from the green
 button to the end, and only then planned.
 
-## The three rooms
+## The lit walls
 
-Three of the puzzle types are not printed puzzles at all but walls of lit panels in a
+Four of the puzzle types are not printed puzzles at all but walls of lit panels in a
 darkened room, and each needed its own detection path because none of them has a line
 drawn anywhere on it.
 
@@ -89,6 +89,12 @@ drawn anywhere on it.
   takes the lowest number showing and that display clears, over and over until the wall
   is empty. The app outlines the lowest number in green and the second lowest in yellow.
   See [docs/TERMINAL_PUZZLE.md](docs/TERMINAL_PUZZLE.md).
+- **Link** — the Gems and Mines buttons lit in 3x3 panels, two bands of them, every
+  pattern twice; press a panel and then its twin, and the whole wall goes dark at the first
+  press. Tap Scan at one end and pan to the other; the app pairs every panel and shows the
+  shortest order to press the pairs in, stepped through one pair at a time. Any number of
+  pairs -- the practice game has 14 or 16, the room's easier levels 8 or 12. See
+  [docs/LINK_PUZZLE.md](docs/LINK_PUZZLE.md).
 
 **Spot** is a fourth camera room, and not a wall at all: a screen shows one picture after
 another, each with one thing changed. You take seven photos, one per picture, and the app
@@ -178,9 +184,9 @@ the probe that isolates it, and what would have to change are in
 the exposure plumbing have all been exercised on a CPH2655, and **Terminal has been run
 there end to end** — 32 displays found, the two lowest numbers outlined on the right
 panels, the ranking steady on every heartbeat — against the reference clip played back on
-a monitor. Nothing has yet been pointed at any of the three rooms themselves.
+a monitor. Nothing has yet been pointed at the room's Link wall.
 
-- `./gradlew :core:test` — 279 tests, 279 passing, including a whole terminal wall read
+- `./gradlew :core:test` — 298 tests, 298 passing, including a whole terminal wall read
   off a real frame and nine rounds of Spot
 - `./gradlew :app:testDebugUnitTest` — 62 tests, 62 passing (camera tuning, the
   auto-exposure loop and the preview geometry, all pure state machines and maths)
@@ -260,6 +266,8 @@ core/                      pure JVM, no Android -- unit-testable in milliseconds
                            -- see docs/GEM_PUZZLE.md
     terminal/              the number wall, also read per frame with no pose
                            -- see docs/TERMINAL_PUZZLE.md
+    link/                  the panel wall: read in one pan, paired, and the shortest
+                           walk through the pairs -- see docs/LINK_PUZZLE.md
     strategy/              the orange-tile rooms, Strategy and Gridlock: bundled stages,
                            the pressing-order search and the split between players, no
                            camera -- see docs/STRATEGY_PUZZLE.md

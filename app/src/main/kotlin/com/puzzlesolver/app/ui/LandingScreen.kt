@@ -61,6 +61,7 @@ import androidx.compose.ui.unit.sp
 import com.puzzlesolver.app.pipeline.ScanPipeline
 import com.puzzlesolver.core.puzzle.bombs.BombAdapter
 import com.puzzlesolver.core.puzzle.gems.GemAdapter
+import com.puzzlesolver.core.puzzle.link.LinkScanner
 import com.puzzlesolver.core.puzzle.spot.SpotFinder
 import com.puzzlesolver.core.puzzle.strategy.StrategyRoom
 import com.puzzlesolver.core.puzzle.terminal.TerminalAdapter
@@ -100,6 +101,7 @@ fun LandingScreen(
     onSelectJigsaw: () -> Unit,
     onSelectSimon: () -> Unit,
     onSelectSpot: () -> Unit,
+    onSelectLink: () -> Unit,
     /** Whether the HUD shows the debug panel, switched at the foot of the page. */
     debug: Boolean,
     onToggleDebug: () -> Unit,
@@ -123,6 +125,9 @@ fun LandingScreen(
                 // Not from the registry: Spot has no adapter, because it reads no wall --
                 // it compares photos. It is picked like any other camera room.
                 onSelectSpot()
+            } + Entry(LinkScanner.ID, "Link", camera = true, LOOKS.getValue(LinkScanner.ID), "live camera -- no AR, no replay") {
+                // Not from the registry either: Link is read by a pan of its own, like Mines.
+                onSelectLink()
             } + StrategyRoom.entries.map { r ->
                 Entry(r.id, r.displayName, camera = false, LOOKS[r.id] ?: PLAIN, null) { onSelectGuide(r) }
             } + Entry(SPELLINATOR_ID, "Spellinator", camera = false, LOOKS.getValue(SPELLINATOR_ID), "online -- phones join one lobby") {
@@ -253,6 +258,7 @@ private val LOOKS: Map<String, Look> = mapOf(
     JIGSAW_ID to Look(JIGSAW_ACCENT, "Three photos of the floor, the pieces that make each shape", 3000) { p, c -> jigsawGlyph(p, c) },
     SIMON_ID to Look(SIMON_ACCENT, "Tap the colours as they flash, read the order back", 2500) { p, c -> simonGlyph(p, c) },
     SpotFinder.ID to Look(Color(0xFFFF3DCB), "Seven photos of the screen, every difference boxed", 2600) { p, c -> spotGlyph(p, c) },
+    LinkScanner.ID to Look(LINK_ACCENT, "Every pair found, and the shortest order to press them", 2800) { p, c -> linkGlyph(p, c) },
 )
 
 private val PLAIN = Look(Color(0xFF9AA6B2), "", 1000) { _, c -> plainGlyph(c) }
@@ -654,6 +660,43 @@ private fun DrawScope.sequenceGlyph(phase: Float, accent: Color) {
  * Two copies of a little picture, a sun appearing in the second, then boxed -- which is
  * the whole of what the mode does.
  */
+/**
+ * Four little 3x3 panels, two pairs; a line draws itself from each panel to its twin in
+ * turn, and the pair it joins lights.
+ */
+private fun DrawScope.linkGlyph(phase: Float, accent: Color) {
+    val s = size.minDimension
+    val tile = s * 0.36f
+    val dot = tile / 3f
+    // Top-left pairs with bottom-right, top-right with bottom-left.
+    val corners = listOf(Offset(0f, 0f), Offset(s - tile, 0f), Offset(0f, s - tile), Offset(s - tile, s - tile))
+    val patterns = listOf(
+        listOf(0xFFFF3B3B, 0xFFFFE03B, 0xFF3B8FFF),
+        listOf(0xFF4DFF6E, 0xFFB94DFF, 0xFFFF3B3B),
+        listOf(0xFF4DFF6E, 0xFFB94DFF, 0xFFFF3B3B),
+        listOf(0xFFFF3B3B, 0xFFFFE03B, 0xFF3B8FFF),
+    )
+    val pairs = listOf(0 to 3, 1 to 2)
+    val active = (phase * 2f).toInt().coerceIn(0, 1)
+    val draw = (phase * 2f - active).coerceIn(0f, 1f)
+    for ((i, corner) in corners.withIndex()) {
+        val lit = pairs[active].first == i || pairs[active].second == i
+        for (k in 0 until 9) {
+            val colour = Color(patterns[i][(k / 3 + k % 3) % 3])
+            drawCircle(
+                colour.copy(alpha = if (lit) 1f else 0.35f),
+                dot * 0.36f,
+                Offset(corner.x + (k % 3) * dot + dot / 2f, corner.y + (k / 3) * dot + dot / 2f),
+            )
+        }
+    }
+    val (a, b) = pairs[active]
+    val from = corners[a] + Offset(tile / 2f, tile / 2f)
+    val to = corners[b] + Offset(tile / 2f, tile / 2f)
+    val end = Offset(from.x + (to.x - from.x) * draw, from.y + (to.y - from.y) * draw)
+    drawLine(accent, from, end, strokeWidth = s * 0.05f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+}
+
 private fun DrawScope.spotGlyph(phase: Float, accent: Color) {
     val s = size.minDimension
     val gap = s * 0.08f
