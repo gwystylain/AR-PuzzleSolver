@@ -12,13 +12,14 @@ exact twin, the scan finishes by itself (or tap **Done**). The answer covers the
 
 - the whole wall, every panel where it is, each named as the practice game's E labels name
   them -- **T** for the top band, **B** for the bottom, and the slot from the left;
-- the walk drawn on it: each pair's number on both of its panels (in a filled disc on the
-  one to press first, a ring on its twin), a line from one to the other, and a dashed line
-  on to the next pair;
-- a bar with the pair to press now -- "T5 then B9" -- and **Next** to step on, so the place
-  is kept however dark the wall goes. A tap on a panel jumps to its pair;
-- **Start**: where the walk begins. It defaults to the end the scan finished at, which is
-  where whoever held the phone is standing; *Anywhere* gives the shortest walk of all;
+- the walk numbered on it: each pair's number on both of its panels (in a filled disc on
+  the one to press first, a ring on its twin), and one line, with an arrow along its middle,
+  from the pair to press now's first panel to its twin -- the only line on the board, which
+  is crowded enough with sixteen pairs' numbers;
+- **Next** at the top right to step on to the next pair (and **Back**), so the place is
+  kept however dark the wall goes, and **Rescan** at the top left. A tap on a panel jumps to
+  its pair. The walk is always the shortest there is, starting at whichever pair makes it
+  so -- the walk to the first pair is not counted;
 - **Colours** shows the panels as read, to check against the wall *before* the first
   press -- the last moment the wall can be looked at. With **Fix** on, a tap steps a button
   through the five colours and the pairs and walk are worked out again.
@@ -104,7 +105,8 @@ survive it and only the board shows it wrong.
 **Pairs** (`LinkPairer`): panels with the same pattern, where exactly two share it, are
 twins. The rest are paired to differ in as few buttons as possible, weighted by how sure
 each reading was, exactly (a search over subsets) up to twenty of them. A pair that is not
-exact is outlined on the board and named in a warning; an odd panel out is left unpaired.
+exact is outlined on the board (and named in a warning in the log and `board.txt`); an odd
+panel out is left unpaired, outlined the same way.
 
 **The walk** (`LinkPlanner`): any pair may go next, so the round is a walk visiting every
 panel with each pair's two back to back. The walk inside a pair is the same whatever the
@@ -156,7 +158,7 @@ in `board.txt`'s letters (R Y G B P, `.` for dark). `linkscan`, `linkfinish` and
   the screen sideways and the camera takes the preset (1/250 s, ISO 100, white balance
   locked, honoured), reading about 23 frames a second at 9 ms of scan each; the practice
   board, put on the answer with `linkboard`, plans in 345 ms, and Next, Colours and Fix
-  all work, with the header, the step bar and the whole board on screen at once. Nothing
+  all work, with the header and the whole board on screen at once. Nothing
   has been scanned with it yet, even off a monitor.
 - **The cost of a step.** The walk counts a button of reaching up or down the same as a
   button of walking sideways.

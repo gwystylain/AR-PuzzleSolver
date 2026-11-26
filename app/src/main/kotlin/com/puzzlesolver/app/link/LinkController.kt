@@ -67,11 +67,8 @@ class LinkController(
         val wall: LinkWall? = null,
         val pairing: LinkPairing? = null,
         val path: LinkPlanner.Path? = null,
-        val start: LinkPlanner.Start = LinkPlanner.Start.ANYWHERE,
         /** The pair being pressed now, from 0; the path's length once every pair is done. */
         val step: Int = 0,
-        /** One line on the plan, or why there is none. */
-        val summary: String? = null,
         /** What the camera is doing. */
         val camera: String = "",
     )
@@ -98,10 +95,6 @@ class LinkController(
     private val startRequested = AtomicBoolean(false)
     private val finishRequested = AtomicBoolean(false)
     private val cancelRequested = AtomicBoolean(false)
-
-    /** A start the user picked, kept for later scans; null to start where each scan ends. */
-    @Volatile
-    private var chosenStart: LinkPlanner.Start? = null
 
     @Volatile
     private var planGeneration = 0
@@ -151,15 +144,7 @@ class LinkController(
         val corrected = wall.withCell(panel, cell, next)
         Log.i(TAG, "${wall.label(panel)} button ${cell + 1} set by hand: ${LinkColour.name(current)} -> ${LinkColour.name(next)}")
         scanDir?.let { appendBoard(it, "corrected ${wall.label(panel)} button ${cell + 1} to ${LinkColour.name(next)}", corrected, null, null) }
-        plan(corrected, s.start)
-    }
-
-    /** Where the walk starts. Kept for later scans too. */
-    fun setStart(start: LinkPlanner.Start) {
-        val s = _state.value
-        chosenStart = start
-        val wall = s.wall ?: return
-        if (s.phase == Phase.DONE && s.start != start) plan(wall, start)
+        plan(corrected)
     }
 
     fun nextStep() = _state.update { s -> s.copy(step = (s.step + 1).coerceAtMost(s.path?.steps?.size ?: 0)) }
@@ -178,7 +163,7 @@ class LinkController(
         scanDir = null
         scanWarnings = wall.warnings
         Log.i(TAG, "board shown by hand: ${wall.size} panels")
-        plan(wall, chosenStart ?: LinkPlanner.Start.ANYWHERE)
+        plan(wall)
     }
 
     /** One stop either way on the camera, for a room the preset gets wrong. */
@@ -253,31 +238,25 @@ class LinkController(
                 closeScan()
                 return
             }
-            // Start where the scan ended: that is where whoever holds the phone is standing.
-            val place = scanner.lastPlace
-            val start = chosenStart ?: when {
-                place.isNaN() -> LinkPlanner.Start.ANYWHERE
-                place >= 0.5f -> LinkPlanner.Start.RIGHT
-                else -> LinkPlanner.Start.LEFT
-            }
-            Log.i(TAG, "scan ${if (done) "read the whole wall" else "finished by hand"}: ${result.size} panels, start $start")
+            Log.i(TAG, "scan ${if (done) "read the whole wall" else "finished by hand"}: ${result.size} panels")
             scanDir?.let { appendBoard(it, if (done) "scanned end to end" else "finished by hand", result, null, null) }
             closeFrames()
             scanWarnings = result.warnings
-            plan(result, start)
+            plan(result)
         }
     }
 
     // --- Planning ----------------------------------------------------------------
 
-    private fun plan(wall: LinkWall, start: LinkPlanner.Start) {
+    /** Pairs [wall] and works out the shortest walk over the pairs, starting at whichever pair makes it shortest. */
+    private fun plan(wall: LinkWall) {
         val generation = ++planGeneration
-        _state.update { it.copy(phase = Phase.PLANNING, wall = wall, start = start, summary = "Working out the shortest walk...") }
+        _state.update { it.copy(phase = Phase.PLANNING, wall = wall) }
         scope.launch {
             val (pairing, path, millis) = withContext(Dispatchers.Default) {
                 val t0 = System.nanoTime()
                 val pairing = LinkPairer.pair(wall)
-                val path = LinkPlanner.plan(wall, pairing, start)
+                val path = LinkPlanner.plan(wall, pairing, LinkPlanner.Start.ANYWHERE)
                 Triple(pairing, path, (System.nanoTime() - t0) / 1_000_000)
             }
             if (generation != planGeneration) return@launch
@@ -298,17 +277,18 @@ class LinkController(
             val summary = "${pairing.pairs.size} pair${if (pairing.pairs.size == 1) "" else "s"}, " +
                 "%.0f buttons of walking between them".format(path.between) +
                 if (path.optimal) " (shortest)" else " (best found)"
-            Log.i(TAG, "plan in ${millis}ms: $summary from ${start.label}")
-            scanDir?.let { appendBoard(it, "plan: $summary from ${start.label}", wall, pairing, path) }
+            Log.i(TAG, "plan in ${millis}ms: $summary")
+            // Not on the screen -- the board outlines doubtful panels -- so kept here.
+            warnings.forEach { Log.w(TAG, it) }
+            val warned = wall.withWarnings(warnings)
+            scanDir?.let { appendBoard(it, "plan: $summary", warned, pairing, path) }
             _state.update {
                 it.copy(
                     phase = Phase.DONE,
-                    wall = wall.withWarnings(warnings),
+                    wall = warned,
                     pairing = pairing,
                     path = path,
-                    start = start,
                     step = 0,
-                    summary = summary,
                 )
             }
         }

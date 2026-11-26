@@ -8,8 +8,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,9 +20,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -41,7 +37,6 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -73,9 +68,10 @@ import kotlin.math.sin
  * Held sideways, as Mines is: the wall is two bands of panels and some sixty buttons long.
  * While aiming and scanning the camera is behind this and the controls are in a rail down
  * the right. Once the wall is read the camera is covered by the answer: the whole wall at
- * once, every panel where it is, with the walk drawn on it -- each pair's number on both
- * its panels, a line from the first press to its twin, a dashed one on to the next pair --
- * and a bar with the pair to press now, stepped on with Next. The wall goes dark at the
+ * once, every panel where it is, with the walk numbered on it -- each pair's number on both
+ * its panels, and a line with an arrow from the first press of the pair to press now to its
+ * twin -- under a header with Rescan at the left and Next, to step on, at the right. The
+ * walk is the shortest there is, from whichever pair makes it so. The wall goes dark at the
  * first press, so after that this board is the only copy of it there is.
  *
  * **Colours** shows the panels as read instead of the path, to check against the wall
@@ -89,7 +85,6 @@ fun LinkScreen(
     onFinish: () -> Unit,
     onRescan: () -> Unit,
     onCorrect: (Int, Int) -> Unit,
-    onStart: (LinkPlanner.Start) -> Unit,
     onNext: () -> Unit,
     onBack: () -> Unit,
     onJump: (Int) -> Unit,
@@ -99,7 +94,7 @@ fun LinkScreen(
         LinkController.Phase.AIMING, LinkController.Phase.SCANNING ->
             Scanning(state, onScan, onFinish, onRescan, onNudgeExposure)
         LinkController.Phase.PLANNING, LinkController.Phase.DONE ->
-            Answer(state, onRescan, onCorrect, onStart, onNext, onBack, onJump)
+            Answer(state, onRescan, onCorrect, onNext, onBack, onJump)
     }
 }
 
@@ -221,7 +216,6 @@ private fun Answer(
     state: LinkController.State,
     onRescan: () -> Unit,
     onCorrect: (Int, Int) -> Unit,
-    onStart: (LinkPlanner.Start) -> Unit,
     onNext: () -> Unit,
     onBack: () -> Unit,
     onJump: (Int) -> Unit,
@@ -238,9 +232,9 @@ private fun Answer(
             .safeDrawingPadding(),
     ) {
         // Sized to the wall's own shape: a button is the width over the columns, and the
-        // height is the rows plus room for the names above and below. Sideways, the header,
-        // the step bar and the board then all fit the screen's height at once, held still;
-        // only the warnings and the steps in words scroll, below them.
+        // height is the rows plus room for the names above and below. Sideways, the header
+        // and the board then both fit the screen's height at once, and nothing else is shown:
+        // a pair that is not exact is outlined on the board itself.
         val boardWidth = maxWidth - 24.dp - 16.dp
         val button = boardWidth / (wall.cols.coerceAtLeast(LinkPanel.SIZE) + 1)
         val boardHeight = (button * (wall.rows.coerceAtLeast(LinkPanel.SIZE) + 3)).coerceIn(90.dp, 260.dp)
@@ -253,17 +247,12 @@ private fun Answer(
             Spacer(Modifier.height(2.dp))
             Panel {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Link", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-                        Text(
-                            state.summary ?: "",
-                            color = if (path != null) GO else AMBER,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
+                    Button(
+                        onClick = onRescan,
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB3261E)),
+                    ) { Text("Rescan", fontSize = 14.sp) }
+                    Spacer(Modifier.weight(1f))
                     if (state.phase == LinkController.Phase.PLANNING) {
                         CircularProgressIndicator(Modifier.size(24.dp), color = GO, strokeWidth = 3.dp)
                     }
@@ -271,23 +260,23 @@ private fun Answer(
                     Toggle("Colours", showColours) { showColours = true }
                     if (showColours) {
                         Toggle(if (fixing) "Fix: tap a button" else "Fix", fixing) { fixing = !fixing }
-                    } else {
-                        Spacer(Modifier.width(4.dp))
-                        Text("Start", color = SUBTLE, fontSize = 12.sp)
-                        for (s in LinkPlanner.Start.entries) {
-                            Toggle(START_LABELS.getValue(s), state.start == s) { onStart(s) }
-                        }
                     }
-                    Spacer(Modifier.width(4.dp))
-                    Button(
-                        onClick = onRescan,
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB3261E)),
-                    ) { Text("Rescan", fontSize = 14.sp) }
+                    if (path != null) {
+                        // Stepping is for the path; on Colours the pair being stepped to is not shown.
+                        val canBack = !showColours && state.step > 0
+                        Spacer(Modifier.width(4.dp))
+                        OutlinedButton(onClick = onBack, enabled = canBack) {
+                            Text("Back", color = if (canBack) Color.White else SUBTLE)
+                        }
+                        Button(
+                            onClick = onNext,
+                            enabled = !showColours && state.step < path.steps.size,
+                            modifier = Modifier.widthIn(min = 120.dp).height(52.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = GO),
+                        ) { Text("Next", color = Color.Black, fontSize = 18.sp, fontWeight = FontWeight.Bold) }
+                    }
                 }
             }
-
-            if (path != null && !showColours) StepBar(wall, path, state.step, onNext, onBack)
 
             Board(
                 wall = wall,
@@ -303,88 +292,6 @@ private fun Answer(
                     }
                 },
             )
-
-            Column(
-                Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                for (w in wall.warnings) Text(w, color = AMBER, fontSize = 13.sp)
-                if (path != null) Steps(wall, path, state.step, onJump)
-                Text(
-                    "Panels are named as the practice game's E labels name them: T for the top band, B for the bottom, " +
-                        "and the slot counted from the left. Tap a panel on the path to jump to its pair.",
-                    color = SUBTLE,
-                    fontSize = 12.sp,
-                )
-                Spacer(Modifier.height(12.dp))
-            }
-        }
-    }
-}
-
-/** The start choices, short enough for the header. */
-private val START_LABELS = mapOf(
-    LinkPlanner.Start.ANYWHERE to "Anywhere",
-    LinkPlanner.Start.LEFT to "Left",
-    LinkPlanner.Start.RIGHT to "Right",
-)
-
-/** The pair to press now, big, with Back and Next. */
-@Composable
-private fun StepBar(wall: LinkWall, path: LinkPlanner.Path, step: Int, onNext: () -> Unit, onBack: () -> Unit) {
-    Panel {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            OutlinedButton(onClick = onBack, enabled = step > 0) { Text("Back", color = Color.White) }
-            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                if (step < path.steps.size) {
-                    val s = path.steps[step]
-                    Text("Pair ${step + 1} of ${path.steps.size}", color = SUBTLE, fontSize = 13.sp)
-                    Text(
-                        "${wall.label(s.first)}  then  ${wall.label(s.second)}",
-                        color = NOW,
-                        fontSize = 26.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                } else {
-                    Text("Every pair matched", color = GO, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                }
-            }
-            Button(
-                onClick = onNext,
-                enabled = step < path.steps.size,
-                modifier = Modifier.widthIn(min = 120.dp).height(52.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = GO),
-            ) { Text("Next", color = Color.Black, fontSize = 18.sp, fontWeight = FontWeight.Bold) }
-        }
-    }
-}
-
-/** Every step in words, the current one lit. */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun Steps(wall: LinkWall, path: LinkPlanner.Path, step: Int, onJump: (Int) -> Unit) {
-    Panel {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            path.steps.forEachIndexed { n, s ->
-                val colour = when {
-                    n == step -> NOW
-                    n < step -> Color(0xFF55606B)
-                    else -> Color.White
-                }
-                Text(
-                    "${n + 1}. ${wall.label(s.first)}>${wall.label(s.second)}",
-                    color = colour,
-                    fontSize = 14.sp,
-                    fontWeight = if (n == step) FontWeight.Bold else FontWeight.Normal,
-                    modifier = Modifier
-                        .background(if (n == step) Color(0x33FF8800) else Color.Transparent, RoundedCornerShape(6.dp))
-                        .clickable { onJump(s.first) }
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                )
-            }
         }
     }
 }
@@ -392,8 +299,9 @@ private fun Steps(wall: LinkWall, path: LinkPlanner.Path, step: Int, onJump: (In
 /**
  * The wall, every panel where it is on it. On the path, each panel carries its pair's
  * number over its colours, dimmed; the first of each pair to press has the number in a
- * filled disc, its twin in a ring. A line joins each pair, and a dashed one walks on to
- * the next. The pair to press now is in orange, and pairs done are faded.
+ * filled disc, its twin in a ring. The pair to press now is in orange, joined by the one
+ * line on the board, with an arrow along its middle (clear of the numbers); pairs done are
+ * faded.
  */
 @Composable
 private fun Board(
@@ -478,29 +386,15 @@ private fun Board(
 
             if (path == null || showColours) return@Canvas
 
-            // The walk: dashed from one pair to the next, solid within a pair.
-            val dash = PathEffect.dashPathEffect(floatArrayOf(b * 0.4f, b * 0.3f))
-            for (n in 1 until path.steps.size) {
-                val from = centre(path.steps[n - 1].second)
-                val to = centre(path.steps[n].first)
-                val done = n <= step
-                drawLine(
-                    if (done) Color(0x33FFFFFF) else Color(0x99B9C4CF),
-                    from, to,
-                    strokeWidth = b * 0.12f,
-                    pathEffect = dash,
-                )
-            }
-            for ((n, s) in path.steps.withIndex()) {
+            // One line, the pair to press now's, with an arrow; the numbers give the rest of
+            // the order, and their disc and ring which way round.
+            val r = b * 1.05f
+            path.steps.getOrNull(step)?.let { s ->
                 val from = centre(s.first)
                 val to = centre(s.second)
-                val colour = when {
-                    n == step -> NOW
-                    n < step -> Color(0x33FFFFFF)
-                    else -> Color(0xCCFFFFFF)
-                }
-                drawLine(colour, from, to, strokeWidth = if (n == step) b * 0.32f else b * 0.16f, cap = StrokeCap.Round)
-                arrowHead(from, to, colour, b * (if (n == step) 0.9f else 0.6f))
+                drawLine(NOW, from, to, strokeWidth = b * 0.32f, cap = StrokeCap.Round)
+                val discs = wall.panels.indices.filter { stepOf[it] >= 0 }.map(::centre)
+                arrowHead(from, to, discs, r, NOW, b * 0.9f)
             }
             // Numbers on top of everything.
             for (i in wall.panels.indices) {
@@ -512,7 +406,6 @@ private fun Board(
                     n < step -> Color(0xFF55606B)
                     else -> Color.White
                 }
-                val r = b * 1.05f
                 if (firstOf[i]) {
                     drawCircle(colour, r, c)
                     label(measurer, "${n + 1}", c, Color.Black, (b * 1.05f).toSp())
@@ -538,18 +431,57 @@ private fun geometry(wall: LinkWall, width: Float, height: Float): Geometry {
     return Geometry(b, x0, y0)
 }
 
-private fun DrawScope.arrowHead(from: Offset, to: Offset, colour: Color, length: Float) {
+/**
+ * An arrowhead on the line from [from] to [to], as near halfway along as it can be with
+ * none of it under a number disc ([discs], radius [r]) -- those are drawn over it, and a
+ * line along a band runs through the middle of every panel it passes. Halfway when nowhere
+ * is clear; none on a line too short to carry one.
+ */
+private fun DrawScope.arrowHead(from: Offset, to: Offset, discs: List<Offset>, r: Float, colour: Color, length: Float) {
     val d = hypot(to.x - from.x, to.y - from.y)
     if (d < length * 3f) return
-    // Stopped short of the twin's number disc, which sits on top of the line's end.
-    val back = length * 1.4f
-    val tip = Offset(to.x - (to.x - from.x) / d * back, to.y - (to.y - from.y) / d * back)
-    val angle = atan2(to.y - from.y, to.x - from.x)
-    val spread = 0.5f
-    val a = Offset(tip.x - length * cos(angle - spread), tip.y - length * sin(angle - spread))
-    val c = Offset(tip.x - length * cos(angle + spread), tip.y - length * sin(angle + spread))
+    val ux = (to.x - from.x) / d
+    val uy = (to.y - from.y) / d
+    val angle = atan2(uy, ux)
+    fun tipAt(along: Float) = Offset(from.x + ux * along, from.y + uy * along)
+    val reach = r + length * 0.2f
+    fun clear(tip: Offset): Boolean {
+        val (a, c) = arms(tip, angle, length)
+        return discs.all { p -> distanceToSegment(p, tip, a) > reach && distanceToSegment(p, tip, c) > reach }
+    }
+    // The tip half an arrow past halfway puts the arrow's middle at halfway; then step out
+    // either side of that, nearer first.
+    val middle = d / 2f + length / 2f
+    val stride = length / 8f
+    var tip = tipAt(middle)
+    search@ for (k in 0..(d / stride).toInt()) {
+        for (along in floatArrayOf(middle + k * stride, middle - k * stride)) {
+            if (along !in length..d) continue
+            if (clear(tipAt(along))) {
+                tip = tipAt(along)
+                break@search
+            }
+        }
+    }
+    val (a, c) = arms(tip, angle, length)
     drawLine(colour, tip, a, strokeWidth = length * 0.3f, cap = StrokeCap.Round)
     drawLine(colour, tip, c, strokeWidth = length * 0.3f, cap = StrokeCap.Round)
+}
+
+private const val ARROW_SPREAD = 0.5f
+
+/** The ends of an arrowhead's two arms, back from [tip] pointing at [angle]. */
+private fun arms(tip: Offset, angle: Float, length: Float) = Pair(
+    Offset(tip.x - length * cos(angle - ARROW_SPREAD), tip.y - length * sin(angle - ARROW_SPREAD)),
+    Offset(tip.x - length * cos(angle + ARROW_SPREAD), tip.y - length * sin(angle + ARROW_SPREAD)),
+)
+
+private fun distanceToSegment(p: Offset, a: Offset, b: Offset): Float {
+    val dx = b.x - a.x
+    val dy = b.y - a.y
+    val len2 = dx * dx + dy * dy
+    val t = if (len2 == 0f) 0f else (((p.x - a.x) * dx + (p.y - a.y) * dy) / len2).coerceIn(0f, 1f)
+    return hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
 }
 
 private fun DrawScope.label(measurer: TextMeasurer, text: String, centre: Offset, colour: Color, size: TextUnit) {

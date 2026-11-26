@@ -492,20 +492,6 @@ class LinkScanner(private val log: (String) -> Unit = {}) {
         return Progress(phase, read.panels.size, tracks.size, twinned, left, right, message)
     }
 
-    /**
-     * Where along the wall the last placed frame was: 0 at the leftmost panel, 1 at the
-     * rightmost, or NaN before any. Says which end a scan finished at -- where whoever
-     * held the phone is standing.
-     */
-    val lastPlace: Float
-        get() {
-            if (previous.isEmpty() || tracks.isEmpty()) return Float.NaN
-            val min = tracks.values.minOf { it.col }
-            val max = tracks.values.maxOf { it.col }
-            if (max == min) return 0.5f
-            return ((previous.map { it.track.col }.average().toFloat() - min) / (max - min)).coerceIn(0f, 1f)
-        }
-
     companion object {
         /** The mode's id, as the landing page and the debug broadcast name it. */
         const val ID = "link"

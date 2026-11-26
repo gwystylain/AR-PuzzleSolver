@@ -822,7 +822,6 @@ class MainActivity : ComponentActivity() {
                                     onFinish = { link.finishScan() },
                                     onRescan = { link.rescan() },
                                     onCorrect = { panel, cell -> link.correctCell(panel, cell) },
-                                    onStart = { link.setStart(it) },
                                     onNext = { link.nextStep() },
                                     onBack = { link.previousStep() },
                                     onJump = { link.jumpToPanel(it) },
